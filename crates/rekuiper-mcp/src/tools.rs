@@ -798,7 +798,12 @@ pub async fn execute_tool(
             let mut parser = Parser::new(sql);
             match parser.parse_select() {
                 Ok(stmt) => {
-                    let info = json!({
+                    let mut sources = vec![stmt.from.clone()];
+                    for j in &stmt.joins {
+                        sources.push(j.target.clone());
+                    }
+                    let is_multi_stream = !stmt.joins.is_empty();
+                    let mut info = json!({
                         "valid": true,
                         "statement_type": "SELECT",
                         "projected_fields_count": stmt.fields.len(),
@@ -806,13 +811,28 @@ pub async fn execute_tool(
                         "has_group_by": !stmt.group_by.is_empty(),
                         "has_window": stmt.window.is_some(),
                         "has_having": stmt.having.is_some(),
-                        "sources": stmt.from,
+                        "sources": sources,
+                        "is_multi_stream_join": is_multi_stream,
                     });
+                    if is_multi_stream {
+                        info["multi_stream_policy_requirement"] = json!("All joined streams must share identical BUFFER_FULL_POLICY ('block' or 'dropOldest') to prevent asymmetric backpressure deadlocks.");
+                    }
                     CallToolResult::ok(serde_json::to_string_pretty(&info).unwrap_or_default())
                 }
                 Err(err) => {
                     let mut p_stream = Parser::new(sql);
                     if let Ok(create_stmt) = p_stream.parse_create_stream() {
+                        for (k, v) in &create_stmt.options {
+                            if k.eq_ignore_ascii_case("buffer_full_policy")
+                                && !v.eq_ignore_ascii_case("block")
+                                && !v.eq_ignore_ascii_case("dropOldest")
+                            {
+                                return CallToolResult::err(format!(
+                                    "Invalid BUFFER_FULL_POLICY: '{}', must be 'block' or 'dropOldest'",
+                                    v
+                                ));
+                            }
+                        }
                         let info = json!({
                             "valid": true,
                             "statement_type": "CREATE STREAM",

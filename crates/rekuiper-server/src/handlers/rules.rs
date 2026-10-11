@@ -572,6 +572,51 @@ pub fn reject_invalid_rule(
             );
         }
     }
+    // Check multi-stream BUFFER_FULL_POLICY consistency across joined streams
+    let mut stream_policies: Vec<(&str, String)> = Vec::new();
+    let get_policy = |stream: &rekuiper_core::model::StreamDefinition| -> String {
+        stream
+            .options
+            .iter()
+            .find_map(|(k, v)| {
+                if k.eq_ignore_ascii_case("buffer_full_policy") {
+                    Some(v.clone())
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_else(|| "dropOldest".to_string())
+    };
+
+    if let Some(s) = state.stream_manager.get_stream(&stmt.from) {
+        stream_policies.push((&stmt.from, get_policy(&s)));
+    }
+    for j in &stmt.joins {
+        if let Some(s) = state.stream_manager.get_stream(&j.target) {
+            stream_policies.push((&j.target, get_policy(&s)));
+        }
+    }
+
+    if stream_policies.len() > 1 {
+        let (first_name, ref first_policy) = stream_policies[0];
+        for (stream_name, policy) in &stream_policies[1..] {
+            if !policy.eq_ignore_ascii_case(first_policy) {
+                return Some(
+                    (
+                        StatusCode::BAD_REQUEST,
+                        Json(json!({
+                            "error": 1000,
+                            "message": format!(
+                                "conflicting BUFFER_FULL_POLICY in joined streams: stream '{}' uses '{}', but stream '{}' uses '{}'",
+                                first_name, first_policy, stream_name, policy
+                            )
+                        })),
+                    )
+                        .into_response(),
+                );
+            }
+        }
+    }
     // Validation uses 422 for unresolved sources/functions; creation/update use 400.
     // Both paths reject the same invalid rule rather than skipping the checks.
     let resolution_status = if validation {

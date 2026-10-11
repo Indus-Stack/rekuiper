@@ -2645,4 +2645,67 @@ mod tests {
         invalid_enabled.insert("mqtt".to_string(), serde_json::json!({"server": "tcp://127.0.0.1:1883"}));
         assert!(crate::handlers::rules::validate_sink_actions(&[invalid_enabled]).is_err());
     }
+
+    #[tokio::test]
+    async fn test_reject_invalid_rule_conflicting_buffer_full_policy() {
+        use crate::handlers::rules::reject_invalid_rule;
+        use crate::state::AppState;
+        use rekuiper_core::model::StreamDefinition;
+
+        let sm = StreamManager::new();
+        let bus = StreamBus::new();
+        let mut opts1 = HashMap::new();
+        opts1.insert("BUFFER_FULL_POLICY".to_string(), "block".to_string());
+        sm.create_stream(StreamDefinition {
+            name: "stream_block".to_string(),
+            sql: "CREATE STREAM stream_block () WITH (BUFFER_FULL_POLICY=\"block\")".to_string(),
+            stream_fields: Vec::new(),
+            options: opts1.clone(),
+        })
+        .await
+        .unwrap();
+
+        let mut opts2 = HashMap::new();
+        opts2.insert("BUFFER_FULL_POLICY".to_string(), "dropOldest".to_string());
+        sm.create_stream(StreamDefinition {
+            name: "stream_drop".to_string(),
+            sql: "CREATE STREAM stream_drop () WITH (BUFFER_FULL_POLICY=\"dropOldest\")".to_string(),
+            stream_fields: Vec::new(),
+            options: opts2,
+        })
+        .await
+        .unwrap();
+
+        sm.create_stream(StreamDefinition {
+            name: "stream_block2".to_string(),
+            sql: "CREATE STREAM stream_block2 () WITH (BUFFER_FULL_POLICY=\"block\")".to_string(),
+            stream_fields: Vec::new(),
+            options: opts1,
+        })
+        .await
+        .unwrap();
+
+        let state = AppState::new(
+            "test".to_string(),
+            rekuiper_conf::KuiperConfig::default(),
+            sm,
+            TableManager::new(),
+            RuleManager::new(bus.clone()),
+            bus,
+        );
+
+        // Conflicting: block + dropOldest
+        let mut parser_conflict = Parser::new(
+            "SELECT * FROM stream_block INNER JOIN stream_drop ON stream_block.id = stream_drop.id GROUP BY TumblingWindow(ss, 10)",
+        );
+        let stmt_conflict = parser_conflict.parse_select().unwrap();
+        assert!(reject_invalid_rule(&state, &stmt_conflict, None, false).is_some());
+
+        // Matching: block + block
+        let mut parser_match = Parser::new(
+            "SELECT * FROM stream_block INNER JOIN stream_block2 ON stream_block.id = stream_block2.id GROUP BY TumblingWindow(ss, 10)",
+        );
+        let stmt_match = parser_match.parse_select().unwrap();
+        assert!(reject_invalid_rule(&state, &stmt_match, None, false).is_none());
+    }
 }
