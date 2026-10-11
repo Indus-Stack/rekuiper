@@ -73,6 +73,7 @@ mod tests {
                 group_id: None,
                 partition: 0,
                 key: None,
+                offset_reset: "latest".to_string(),
             },
         };
         let mut data = HashMap::new();

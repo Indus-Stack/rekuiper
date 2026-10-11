@@ -25,10 +25,30 @@ pub struct KafkaConfig {
     /// Record field supplying the produce message key (sink side).
     #[serde(default)]
     pub key: Option<String>,
+    /// Offset reset policy: `"earliest"` or `"latest"` (default `"latest"`).
+    #[serde(default = "default_offset_reset", alias = "offset_reset")]
+    pub offset_reset: String,
 }
 
 fn default_kafka_brokers() -> String {
     "127.0.0.1:9092".to_string()
+}
+
+fn default_offset_reset() -> String {
+    "latest".to_string()
+}
+
+impl Default for KafkaConfig {
+    fn default() -> Self {
+        Self {
+            brokers: default_kafka_brokers(),
+            topic: None,
+            group_id: None,
+            partition: 0,
+            key: None,
+            offset_reset: default_offset_reset(),
+        }
+    }
 }
 
 impl KafkaConfig {
@@ -179,10 +199,12 @@ impl KafkaSource {
                     return;
                 }
             };
-            let mut offset = partition_client
-                .get_offset(OffsetAt::Latest)
-                .await
-                .unwrap_or(0);
+            let offset_at = if self.config.offset_reset.eq_ignore_ascii_case("earliest") {
+                OffsetAt::Earliest
+            } else {
+                OffsetAt::Latest
+            };
+            let mut offset = partition_client.get_offset(offset_at).await.unwrap_or(0);
             loop {
                 tokio::select! {
                     fetched = partition_client.fetch_records(offset, 1..1_000_000, 1000) => {
@@ -248,5 +270,24 @@ fn decode_kafka_payload(payload: &[u8]) -> Result<Vec<StreamRecord>> {
             Ok(records)
         }
         _ => anyhow::bail!("Kafka message must be a JSON object or array"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_kafka_config_offset_reset_defaults_and_aliases() {
+        let default_cfg: KafkaConfig = serde_json::from_str("{}").expect("parse default config");
+        assert_eq!(default_cfg.offset_reset, "latest");
+
+        let camel_cfg: KafkaConfig = serde_json::from_str(r#"{"offsetReset": "earliest"}"#)
+            .expect("parse camelCase offsetReset");
+        assert_eq!(camel_cfg.offset_reset, "earliest");
+
+        let snake_cfg: KafkaConfig = serde_json::from_str(r#"{"offset_reset": "earliest"}"#)
+            .expect("parse snake_case offset_reset");
+        assert_eq!(snake_cfg.offset_reset, "earliest");
     }
 }

@@ -89,7 +89,7 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
                 "properties": {
                     "sql": {
                         "type": "string",
-                        "description": "The complete rekuiper DDL statement specifying the stream name, optional typed field definitions, and datasource options in the WITH clause. Examples: 'CREATE STREAM telemetry (temp float, humidity float, status string) WITH (TYPE=\"mqtt\", FORMAT=\"json\", DATASOURCE=\"factory/line1/sensors\", CONF_KEY=\"broker_tls\")' or 'CREATE STREAM httpDemo () WITH (TYPE=\"httppush\", DATASOURCE=\"/api/data\", FORMAT=\"json\")'"
+                        "description": "The complete rekuiper DDL statement specifying the stream name, optional typed field definitions, and datasource options in the WITH clause. Examples: 'CREATE STREAM telemetry (temp float, humidity float, status string) WITH (TYPE=\"mqtt\", FORMAT=\"json\", DATASOURCE=\"factory/line1/sensors\", CONF_KEY=\"broker_tls\")' or 'CREATE STREAM kafkaDemo () WITH (TYPE=\"kafka\", DATASOURCE=\"events\", OFFSET_RESET=\"earliest\")' or 'CREATE STREAM httpDemo () WITH (TYPE=\"httppush\", DATASOURCE=\"/api/data\", FORMAT=\"json\")'"
                     }
                 },
                 "required": ["sql"]

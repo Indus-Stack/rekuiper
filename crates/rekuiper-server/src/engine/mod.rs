@@ -1305,6 +1305,7 @@ pub(crate) fn resolve_kafka_source(
         group_id: None,
         partition: 0,
         key: None,
+        offset_reset: "latest".to_string(),
     };
     if let Some(key) = def.options.get("CONF_KEY") {
         if !key.is_empty() {
@@ -1323,6 +1324,15 @@ pub(crate) fn resolve_kafka_source(
                     }
                 }
             }
+        }
+    }
+    if let Some(reset) = def
+        .options
+        .get("OFFSET_RESET")
+        .or_else(|| def.options.get("OFFSETRESET"))
+    {
+        if !reset.trim().is_empty() {
+            config.offset_reset = reset.trim().to_string();
         }
     }
     match def.options.get("DATASOURCE").cloned() {
