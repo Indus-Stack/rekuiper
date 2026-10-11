@@ -402,6 +402,44 @@ mod tests {
         assert!(err.to_string().contains("Unsupported SQL sink URL scheme"));
     }
 
+    #[test]
+    fn test_is_valid_sql_identifier() {
+        assert!(super::is_valid_sql_identifier("temperature"));
+        assert!(super::is_valid_sql_identifier("_private_id"));
+        assert!(super::is_valid_sql_identifier("device123"));
+        assert!(super::is_valid_sql_identifier("A_b_1"));
+
+        assert!(!super::is_valid_sql_identifier(""));
+        assert!(!super::is_valid_sql_identifier("123abc"));
+        assert!(!super::is_valid_sql_identifier("temp-celsius"));
+        assert!(!super::is_valid_sql_identifier("temp celsius"));
+        assert!(!super::is_valid_sql_identifier("col;DROP TABLE"));
+        assert!(!super::is_valid_sql_identifier("field.subfield"));
+    }
+
+    #[tokio::test]
+    async fn test_sql_sink_rejects_invalid_dynamic_identifiers() {
+        let sink = super::SqlSink {
+            config: super::SqlConnectorConfig {
+                url: "sqlite::memory:".to_string(),
+                table: "readings".to_string(),
+                fields: Vec::new(), // dynamic fields mode
+                ..Default::default()
+            },
+        };
+        let mut data = HashMap::new();
+        data.insert("valid_col".to_string(), json!(100));
+        data.insert("invalid-col".to_string(), json!(200));
+
+        let err = sink
+            .insert_record(&StreamRecord::new(data))
+            .await
+            .unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("Invalid dynamic field name 'invalid-col'"));
+    }
+
     #[tokio::test]
     async fn test_pg_paths_fail_loudly_without_broker() {
         // D8: postgres URLs must attempt a real connection and surface the
