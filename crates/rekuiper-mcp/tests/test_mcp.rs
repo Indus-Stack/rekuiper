@@ -300,6 +300,7 @@ async fn test_resources_and_prompts() {
     assert!(uris.contains(&"rekuiper://schemas/image"));
     assert!(uris.contains(&"rekuiper://schemas/random"));
     assert!(uris.contains(&"rekuiper://schemas/zmq"));
+    assert!(uris.contains(&"rekuiper://schemas/video"));
 
     // Read static schema resource
     let req_read_res = JsonRpcRequest {
@@ -399,6 +400,21 @@ async fn test_resources_and_prompts() {
     assert!(text_zmq.contains("tcp://127.0.0.1:5563"));
     assert!(text_zmq.contains("events"));
     assert!(text.contains("rabbitmq"));
+
+    let req_read_video = JsonRpcRequest {
+        jsonrpc: "2.0".to_string(),
+        id: Some(json!(38)),
+        method: "resources/read".to_string(),
+        params: Some(json!({
+            "uri": "rekuiper://schemas/video"
+        })),
+    };
+    let resp_video = handler.handle_request(req_read_video).await.unwrap();
+    let res_video = resp_video.result.unwrap();
+    let text_video = res_video["contents"][0]["text"].as_str().unwrap();
+    assert!(text_video.contains("rtsp://localhost:8554/stream"));
+    assert!(text_video.contains("mjpeg"));
+    assert!(text_video.contains("rtsp_transport"));
 
     // Prompts list
     let req_prompt = JsonRpcRequest {

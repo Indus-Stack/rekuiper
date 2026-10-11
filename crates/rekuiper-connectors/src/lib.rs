@@ -64,6 +64,10 @@ pub use image_sink::*;
 pub mod zmq;
 pub use zmq::*;
 
+pub mod video;
+pub use video::*;
+
+
 #[async_trait]
 pub trait Sink: Send + Sync {
     async fn send(&self, record: &StreamRecord) -> Result<()>;

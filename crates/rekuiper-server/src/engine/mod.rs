@@ -16,8 +16,8 @@ use rekuiper_conf::KuiperConfig;
 use rekuiper_connectors::{
     FileSource, FileSourceConfig, HttpPullConfig, HttpPullSource, KafkaConfig, KafkaSource,
     MqttConfig, MqttSource, PayloadFormat, RabbitMqConfig, RabbitMqSource, RedisSubSource,
-    SimulatorConfig, SimulatorSource, SqlConnectorConfig, SqlSource, WebSocketConfig,
-    WebSocketSource, ZmqSource, ZmqSourceConfig,
+    SimulatorConfig, SimulatorSource, SqlConnectorConfig, SqlSource, VideoSource,
+    VideoSourceConfig, WebSocketConfig, WebSocketSource, ZmqSource, ZmqSourceConfig,
 };
 use rekuiper_core::model::{RuleStatus, StreamField, StreamRecord};
 use rekuiper_core::{
@@ -1023,6 +1023,58 @@ pub(crate) fn bootstrap_stream_sources(
             let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
             register_rule_stream_source(state, stream_name, rule_id, cancel_tx);
             ZmqSource::new(config, stream_tx).spawn(cancel_rx);
+            return;
+        }
+    }
+
+    // Video source streams extract camera frames via FFmpeg into the stream bus.
+    if let Some(def) = state.stream_manager.get_stream(stream_name) {
+        let is_video = def
+            .options
+            .get("TYPE")
+            .is_some_and(|t| t.eq_ignore_ascii_case("video"));
+        if is_video {
+            let mut config = VideoSourceConfig::default();
+            if let Some(url) = def
+                .options
+                .get("URL")
+                .or_else(|| def.options.get("SERVER"))
+                .or_else(|| def.options.get("DATASOURCE"))
+            {
+                config.url = url.clone();
+            }
+            if let Some(interval) = def.options.get("INTERVAL") {
+                config.set_interval_str(interval);
+            }
+            if let Some(codec) = def.options.get("CODEC") {
+                config.codec = codec.clone();
+            }
+            if let Some(debug) = def
+                .options
+                .get("DEBUG_RESP")
+                .or_else(|| def.options.get("DEBUGRESP"))
+            {
+                config.debug_resp = debug.eq_ignore_ascii_case("true");
+            }
+            if let Some(ffmpeg) = def
+                .options
+                .get("FFMPEG_PATH")
+                .or_else(|| def.options.get("FFMPEGPATH"))
+            {
+                config.ffmpeg_path = ffmpeg.clone();
+            }
+            if let Some(key) = def.options.get("CONF_KEY").cloned() {
+                let lookup = format!("video/{}", key);
+                if let Some(conf_val) = state.source_configs.read().get(&lookup).cloned() {
+                    if let Ok(c) = serde_json::from_value::<VideoSourceConfig>(conf_val) {
+                        config = c;
+                    }
+                }
+            }
+            let stream_tx = state.stream_bus.get_or_create(stream_name);
+            let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
+            register_rule_stream_source(state, stream_name, rule_id, cancel_tx);
+            VideoSource::new(config, stream_tx).spawn(cancel_rx);
             return;
         }
     }

@@ -129,6 +129,12 @@ pub fn get_resource_definitions() -> Vec<ResourceDefinition> {
             description: Some("Configuration template for ZeroMQ PUB/SUB socket sink and source actions.".to_string()),
             mime_type: Some("application/json".to_string()),
         },
+        ResourceDefinition {
+            uri: "rekuiper://schemas/video".to_string(),
+            name: "Video Source Schema".to_string(),
+            description: Some("Configuration template for Video source stream extracting camera frames via FFmpeg with MJPEG encoding.".to_string()),
+            mime_type: Some("application/json".to_string()),
+        },
     ]
 }
 
@@ -282,6 +288,17 @@ pub async fn read_resource(
             "topic": "events",
             "mode": "connect",
             "sendSingle": true
+        }))
+        .unwrap_or_default(),
+        "rekuiper://schemas/video" => serde_json::to_string_pretty(&json!({
+            "url": "rtsp://localhost:8554/stream",
+            "interval": 1000,
+            "codec": "mjpeg",
+            "debugResp": false,
+            "inputArgs": {
+                "rtsp_transport": "tcp"
+            },
+            "ffmpegPath": "ffmpeg"
         }))
         .unwrap_or_default(),
         "rekuiper://metrics" => {

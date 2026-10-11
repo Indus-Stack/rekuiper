@@ -596,6 +596,7 @@ const BUILTIN_SOURCES: &[&str] = &[
     "redisSub",
     "simulator",
     "sql",
+    "video",
     "websocket",
     "zmq",
 ];
