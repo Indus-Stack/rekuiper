@@ -12,7 +12,8 @@ Key highlights:
 - **Fail-Fast Data Import Validation**: Enforced upfront payload validation on `POST /async/data/import`. The endpoint returns HTTP 400 Bad Request with a clear message if the request body is empty or malformed.
 - **REST API Response Envelopes**: Standardized all error responses to uniform JSON envelopes (`{"error": <code>, "message": "..."}`) with `application/json` content type. Documented intentional RFC 9110 HTTP status superiorities in `concepts/ekuiper_compatibility.md`.
 - **CLI Subcommands and POSIX Exit Codes**: Added `explain rule` and `query` subcommands. Extended `show`, `drop`, and `create schema` subcommands. Standardized POSIX exit codes and formatted text table outputs.
-- **Model Context Protocol (MCP) Parity**: Added `explain_rule` tool and updated `import_data` tool with partial merge mode and fail-fast validation in ASD-STE100.
+- **Listener Security Hardening (PR #4089 Parity)**: Hardened default `restIp`, `ip`, and `httpServerIp` network listener bindings to secure loopback `127.0.0.1`. Docker entrypoints configure `0.0.0.0` automatically, while native daemons are protected from unauthenticated external network exposure.
+- **Model Context Protocol (MCP) Parity**: Added `explain_rule` tool and updated `import_data` tool with partial merge mode and fail-fast validation in ASD-STE100. Added `audit_security_posture` prompt.
 
 - Docker image: `ankurkrp/rekuiper:0.508-beta` (plus `latest`)
 - Helm chart: `deploy/chart/ekuiper` (`AppVersion: 0.508-beta`)

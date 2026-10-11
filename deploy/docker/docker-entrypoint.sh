@@ -23,4 +23,8 @@ fi
 
 KUIPER_HOME=${KUIPER_HOME:-"/kuiper"}
 
+# In containerized environments, default listener IPs to 0.0.0.0 so mapped host ports are reachable
+export KUIPER__BASIC__RESTIP=${KUIPER__BASIC__RESTIP:-"0.0.0.0"}
+export KUIPER__BASIC__HTTPSERVERIP=${KUIPER__BASIC__HTTPSERVERIP:-"0.0.0.0"}
+
 exec "$@"

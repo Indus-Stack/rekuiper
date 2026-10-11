@@ -141,25 +141,33 @@ Specify a timezone name from the [IANA Time Zone Database](https://www.iana.org/
 
 ```yaml
 basic:
-  ip: 0.0.0.0
+  ip: 127.0.0.1
   port: 20498
 ```
 
-Configures the listening address and TCP port for the rekuiper CLI server daemon.
+Configures the listening address and TCP port for the rekuiper CLI server daemon. Defaults to `127.0.0.1` for local-only execution security.
 
 ## REST Service Configuration
 
 ```yaml
 basic:
-  restIp: 0.0.0.0
+  restIp: 127.0.0.1
   restPort: 9081
+  httpServerIp: 127.0.0.1
+  httpServerPort: 10081
   restTls:
     certfile: /var/https-server.crt
     keyfile: /var/https-server.key
 ```
 
-- `restPort`: The HTTP port for the REST API server.
+- `restIp`: The network IP address bound by the REST API server. Defaults to `127.0.0.1` (PR #4089 security hardening).
+- `restPort`: The HTTP port for the REST API server (default `9081`).
+- `httpServerIp`: The network IP address bound by the ruletest SSE streaming server. Defaults to `127.0.0.1`.
+- `httpServerPort`: The port for the ruletest SSE streaming server (default `10081`).
 - `restTls`: Paths to TLS certificates and private keys. When configured, the REST API listens on HTTPS.
+
+> [!NOTE]
+> For security hardening, rekuiper defaults all listeners (`ip`, `restIp`, `httpServerIp`) to loopback (`127.0.0.1`), preventing unintentional exposure over external networks when authentication is disabled. When deploying inside Docker containers or edge gateways requiring external access, explicitly configure `restIp: 0.0.0.0` and `httpServerIp: 0.0.0.0` in `kuiper.yaml`, or set environment variables `KUIPER__BASIC__RESTIP=0.0.0.0` and `KUIPER__BASIC__HTTPSERVERIP=0.0.0.0`.
 
 ### REST Authentication
 
@@ -168,7 +176,7 @@ basic:
   authentication: false
 ```
 
-When `true`, rekuiper requires JWT RSA256 tokens for REST API calls. Refer to [REST Authentication](../api/restapi/authentication.md).
+When `true`, rekuiper requires JWT RSA256 tokens for REST API calls. Refer to [REST Authentication](../api/restapi/authentication.md). Production deployments exposed on `0.0.0.0` should always enable authentication.
 
 ## Rule Patrol Interval
 

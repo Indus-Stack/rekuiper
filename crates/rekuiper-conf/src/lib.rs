@@ -53,7 +53,7 @@ fn default_port() -> u16 {
     20498
 }
 fn default_rest_ip() -> String {
-    "0.0.0.0".to_string()
+    "127.0.0.1".to_string()
 }
 fn default_rest_port() -> u16 {
     9081
@@ -71,7 +71,7 @@ fn default_prometheus_port() -> u16 {
     20499
 }
 fn default_http_server_ip() -> String {
-    "0.0.0.0".to_string()
+    "127.0.0.1".to_string()
 }
 fn default_http_server_port() -> u16 {
     10081
@@ -356,6 +356,16 @@ mod tests {
             "false".to_string(),
         )];
         apply_env_overrides_from_iter(&mut config, vars_rekuiper);
+        assert!(!config.basic.enable_private_net);
+    }
+
+    #[test]
+    fn default_config_binds_to_loopback() {
+        let config = KuiperConfig::default();
+        assert_eq!(config.basic.ip, "127.0.0.1");
+        assert_eq!(config.basic.rest_ip, "127.0.0.1");
+        assert_eq!(config.basic.http_server_ip, "127.0.0.1");
+        assert_eq!(config.basic.rest_port, 9081);
         assert!(!config.basic.enable_private_net);
     }
 }

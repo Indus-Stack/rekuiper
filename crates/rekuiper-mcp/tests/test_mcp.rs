@@ -333,6 +333,21 @@ async fn test_resources_and_prompts() {
     assert!(prompts.contains(&"generate_vector_search_rule"));
     assert!(prompts.contains(&"configure_rabbitmq_pipeline"));
     assert!(prompts.contains(&"create_wasm_plugin_rule"));
+    assert!(prompts.contains(&"audit_security_posture"));
+
+    let req_get_prompt = JsonRpcRequest {
+        jsonrpc: "2.0".to_string(),
+        id: Some(json!(35)),
+        method: "prompts/get".to_string(),
+        params: Some(json!({
+            "name": "audit_security_posture"
+        })),
+    };
+    let resp_get = handler.handle_request(req_get_prompt).await.unwrap();
+    let res_get = resp_get.result.unwrap();
+    let msgs = res_get["messages"].as_array().unwrap();
+    assert!(!msgs.is_empty());
+    assert!(msgs[0]["content"]["text"].as_str().unwrap().contains("127.0.0.1"));
 }
 
 #[tokio::test]

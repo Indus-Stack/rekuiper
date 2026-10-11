@@ -585,7 +585,7 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
         // =========================================================================
         ToolDefinition {
             name: "get_configs".to_string(),
-            description: "Retrieves global runtime configuration parameters for the rekuiper daemon, including logging level, default source/sink timeouts, buffer capacities, and TLS settings.".to_string(),
+            description: "Retrieves global runtime configuration parameters for the rekuiper daemon, including network listener bindings (restIp, ip, httpServerIp hardened to 127.0.0.1 by default), logging level, default source/sink timeouts, buffer capacities, and TLS settings.".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {}
