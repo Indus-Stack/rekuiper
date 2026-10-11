@@ -24,6 +24,20 @@ pub(crate) struct CommonSinkOpts {
     pub(crate) linger_interval: u64,
 }
 
+pub fn is_action_disabled(action: &HashMap<String, Value>, opts: &Value) -> bool {
+    let parse_bool = |v: &Value| {
+        if let Some(b) = v.as_bool() {
+            Some(b)
+        } else if let Some(s) = v.as_str() {
+            s.parse::<bool>().ok()
+        } else {
+            None
+        }
+    };
+    action.get("disabled").and_then(parse_bool).unwrap_or(false)
+        || opts.get("disabled").and_then(parse_bool).unwrap_or(false)
+}
+
 pub(crate) fn parse_common_opts(
     opts: &Value,
     rule_send_nil_field: bool,
@@ -353,6 +367,9 @@ pub(crate) fn prepare_actions(
     let mut out = Vec::new();
     for action in actions {
         for (kind, opts) in action {
+            if kind == "disabled" || is_action_disabled(action, opts) {
+                continue;
+            }
             match kind.as_str() {
                 "log" => out.push(PreparedAction::Log),
                 "nop" => out.push(PreparedAction::Nop),
@@ -885,7 +902,10 @@ pub(crate) const SINK_TICK: std::time::Duration = std::time::Duration::from_mill
 pub(crate) fn action_cache_configs(actions: &[HashMap<String, Value>]) -> Vec<Option<CacheConfig>> {
     let mut out = Vec::new();
     for action in actions {
-        for opts in action.values() {
+        for (kind, opts) in action {
+            if kind == "disabled" || is_action_disabled(action, opts) {
+                continue;
+            }
             out.push(
                 opts.as_object()
                     .map(|o| o.clone().into_iter().collect::<HashMap<String, Value>>())
@@ -1906,6 +1926,9 @@ async fn dispatch_rule_actions_legacy(
 ) {
     for action in actions {
         for (kind, opts) in action {
+            if kind == "disabled" || is_action_disabled(action, opts) {
+                continue;
+            }
             match kind.as_str() {
                 "log" => {
                     tracing::info!("[RULE {}] Matched record: {:?}", rule_id, output.data);

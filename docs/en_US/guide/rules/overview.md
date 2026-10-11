@@ -75,6 +75,29 @@ In the `actions` array, the object key specifies the sink connector type, and th
 
 rekuiper includes built-in sinks such as `mqtt`, `rest`, and `file`. You can also add custom sink plugins. Refer to [Sinks](../sinks/overview.md) for details.
 
+##### Disabling Actions
+
+You can temporarily mute or disable an action without deleting its configuration by specifying `"disabled": true` either inside the connector properties or as a top-level action attribute:
+
+```json
+{
+  "actions": [
+    {
+      "log": {}
+    },
+    {
+      "mqtt": {
+        "server": "tcp://127.0.0.1:1883",
+        "topic": "factory/alerts",
+        "disabled": true
+      }
+    }
+  ]
+}
+```
+
+When an action is disabled, rekuiper ignores it during pipeline execution, skipping connector initialization and buffer allocations.
+
 ### Graph Model
 
 The `graph` property provides an alternative method to define a rule. The property defines a DAG in JSON format. This model maps directly to graphical user interfaces.

@@ -2614,4 +2614,35 @@ mod tests {
             _ => panic!("expected PreparedAction::EdgeX"),
         }
     }
+
+    #[test]
+    fn test_prepare_actions_respects_disabled_flag() {
+        let confs = test_source_configs(&[]);
+        let mut action_enabled = HashMap::new();
+        action_enabled.insert("log".to_string(), serde_json::json!({}));
+
+        let mut action_disabled_inner = HashMap::new();
+        action_disabled_inner.insert("log".to_string(), serde_json::json!({"disabled": true}));
+
+        let mut action_disabled_outer = HashMap::new();
+        action_disabled_outer.insert("log".to_string(), serde_json::json!({}));
+        action_disabled_outer.insert("disabled".to_string(), serde_json::json!(true));
+
+        let actions = vec![action_enabled, action_disabled_inner, action_disabled_outer];
+        let prepared = prepare_actions(&actions, "rule_disabled_test", &confs, None);
+        assert_eq!(prepared.len(), 1);
+        let cache_confs = action_cache_configs(&actions);
+        assert_eq!(cache_confs.len(), 1);
+    }
+
+    #[test]
+    fn test_validate_sink_actions_skips_disabled() {
+        let mut invalid_disabled = HashMap::new();
+        invalid_disabled.insert("mqtt".to_string(), serde_json::json!({"disabled": true}));
+        assert!(crate::handlers::rules::validate_sink_actions(&[invalid_disabled]).is_ok());
+
+        let mut invalid_enabled = HashMap::new();
+        invalid_enabled.insert("mqtt".to_string(), serde_json::json!({"server": "tcp://127.0.0.1:1883"}));
+        assert!(crate::handlers::rules::validate_sink_actions(&[invalid_enabled]).is_err());
+    }
 }

@@ -430,6 +430,9 @@ pub fn validate_sink_actions(actions: &[HashMap<String, Value>]) -> Result<(), S
             rekuiper_connectors::validate_data_template(tpl)?;
         }
         for (kind, opts) in action {
+            if kind == "disabled" || crate::engine::sinks::is_action_disabled(action, opts) {
+                continue;
+            }
             if let Some(tpl) = opts.get("dataTemplate").and_then(|v| v.as_str()) {
                 rekuiper_connectors::validate_data_template(tpl)?;
             }
