@@ -591,6 +591,7 @@ const BUILTIN_SOURCES: &[&str] = &[
     "memory",
     "mqtt",
     "neuron",
+    "random",
     "redis",
     "redisSub",
     "simulator",

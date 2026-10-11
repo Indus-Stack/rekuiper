@@ -16,7 +16,8 @@ Key highlights:
 - **Native TDengine 3.x REST Sink**: Implemented pure Rust built-in `tdengine` / `tdengine3` sink connecting to TDengine 3.x REST service (`/rest/sql`). Supports regular table inserts, dynamic table templates, super tables (`USING <sTable> TAGS (...)`), and MCP resource schemas without requiring `libtaos.so`.
 - **Native Apache IoTDB Sink**: Implemented pure Rust built-in `iotdb` sink connecting directly to Apache IoTDB REST service (`/rest/v1/insertRecord`). Supports dynamic tree model device path templates, explicit or projected measurement arrays, batch tablet aggregation, and MCP resource inspection.
 - **Native Image Sink**: Implemented pure Rust built-in `image` sink writing binary camera frames (JPEG/PNG) to disk with automated age (`maxAge`) and count (`maxCount`) retention pruning.
-- **Model Context Protocol (MCP) Parity**: Added `explain_rule` tool and updated `import_data` tool with partial merge mode and fail-fast validation in ASD-STE100. Added `audit_security_posture` prompt, `rekuiper://schemas/influx`, `rekuiper://schemas/tdengine`, `rekuiper://schemas/iotdb`, and `rekuiper://schemas/image` resources.
+- **Random Source Compatibility Alias**: Added native backward-compatibility alias mapping `TYPE="random"` stream DDL directly to the high-performance Simulator source engine with `random/` and `simulator/` configuration resolution.
+- **Model Context Protocol (MCP) Parity**: Added `explain_rule` tool and updated `import_data` tool with partial merge mode and fail-fast validation in ASD-STE100. Added `audit_security_posture` prompt, `rekuiper://schemas/influx`, `rekuiper://schemas/tdengine`, `rekuiper://schemas/iotdb`, `rekuiper://schemas/image`, and `rekuiper://schemas/random` resources.
 
 - Docker image: `ankurkrp/rekuiper:0.508-beta` (plus `latest`)
 - Helm chart: `deploy/chart/ekuiper` (`AppVersion: 0.508-beta`)

@@ -67,6 +67,7 @@ pub async fn list_source_metadata() -> impl IntoResponse {
         "memory",
         "mqtt",
         "neuron",
+        "random",
         "redis",
         "redisSub",
         "simulator",

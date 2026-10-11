@@ -996,11 +996,14 @@ pub(crate) fn bootstrap_stream_sources(
         let is_simulator = def
             .options
             .get("TYPE")
-            .is_some_and(|t| t.eq_ignore_ascii_case("simulator"));
+            .is_some_and(|t| t.eq_ignore_ascii_case("simulator") || t.eq_ignore_ascii_case("random"));
         if is_simulator {
-            if let Some(key) = def.options.get("CONF_KEY").cloned() {
-                let lookup = format!("simulator/{}", key);
-                if let Some(conf_val) = state.source_configs.read().get(&lookup).cloned() {
+            let key = def.options.get("CONF_KEY").cloned().unwrap_or_else(|| "default".to_string());
+            let lookup = format!("simulator/{}", key);
+            let lookup_random = format!("random/{}", key);
+            let conf_val = state.source_configs.read().get(&lookup).cloned()
+                .or_else(|| state.source_configs.read().get(&lookup_random).cloned());
+            if let Some(conf_val) = conf_val {
                     match serde_json::from_value::<SimulatorConfig>(conf_val) {
                         Ok(conf) => {
                             let stream_name_str = stream_name.to_string();
@@ -1043,7 +1046,6 @@ pub(crate) fn bootstrap_stream_sources(
                         }
                     }
                 }
-            }
         }
     }
 }

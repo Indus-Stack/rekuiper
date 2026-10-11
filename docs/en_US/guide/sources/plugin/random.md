@@ -1,63 +1,35 @@
 # Random Source Connector
 
-::: warning Status: Replaced by Built-in Simulator Source in rekuiper
-The legacy `random` source plugin is replaced by the native **[Simulator Source Connector](../builtin/simulator.md)** in rekuiper.
+In `rekuiper`, the legacy `random` source connector is natively supported as a backward-compatible alias to the built-in [Simulator Source Connector](../builtin/simulator.md).
 
-rekuiper includes a built-in Simulator source that generates synthetic sensor telemetry with configurable intervals, data payloads, and repetition loops without external plugins.
-:::
+Streams created with `TYPE = "random"` run directly on the high-performance native generator without requiring legacy Go C-shared dynamic plugins.
 
-## Overview (Legacy Reference Only)
+## Stream Definition
 
-In legacy eKuiper (Go), the Random source plugin generated synthetic mock records based on a pattern configuration. This page is preserved only as a reference for existing rules.
-
-## Recommended Migration: Use the Simulator Source
-
-To generate mock data in rekuiper, use the built-in `simulator` connector.
-
-### Define a Simulated Stream in rekuiper
+Define a random mock stream using standard SQL DDL:
 
 ```sql
-CREATE STREAM mock_sensor_stream () WITH (
-  TYPE = "simulator"
+CREATE STREAM mock_stream () WITH (
+  TYPE = "random",
+  CONF_KEY = "demo"
 );
 ```
 
-Configure mock payloads and emission intervals in `$rekuiper/etc/sources/simulator.yaml`:
+If `CONF_KEY` is omitted, the stream defaults to the `default` configuration key.
+
+## Configuration
+
+Configurations can be supplied either under `random/<key>` or `simulator/<key>`:
 
 ```yaml
-default:
+demo:
   data:
     - temperature: 22.5
       humidity: 50.2
     - temperature: 25.1
       humidity: 48.9
-  interval: 500
+  interval: 1000
   loop: true
 ```
 
-For full details, refer to the [Simulator Source Connector](../builtin/simulator.md) documentation.
-
----
-
-## Legacy Configuration (eKuiper Go)
-
-In legacy eKuiper, configuration was defined in `etc/sources/random.yaml`:
-
-```yaml
-default:
-  interval: 1000
-  seed: 1
-  pattern:
-    count: 50
-  deduplicate: 0
-```
-
-### Legacy Stream Definition
-
-```sql
-CREATE STREAM demo () WITH (
-  DATASOURCE = "demo",
-  FORMAT = "JSON",
-  TYPE = "random"
-);
-```
+For full configuration properties, see the [Simulator Source Connector](../builtin/simulator.md) guide.

@@ -117,6 +117,12 @@ pub fn get_resource_definitions() -> Vec<ResourceDefinition> {
             description: Some("Configuration template for Image sink action writing binary camera frames with retention pruning.".to_string()),
             mime_type: Some("application/json".to_string()),
         },
+        ResourceDefinition {
+            uri: "rekuiper://schemas/random".to_string(),
+            name: "Random / Simulator Source Schema".to_string(),
+            description: Some("Configuration template for mock telemetry source streams with data replay and frequency intervals.".to_string()),
+            mime_type: Some("application/json".to_string()),
+        },
     ]
 }
 
@@ -254,6 +260,15 @@ pub async fn read_resource(
             "fileName": "frame_{{.deviceId}}_{{.ts}}.png",
             "maxAge": 72,
             "maxCount": 1000
+        }))
+        .unwrap_or_default(),
+        "rekuiper://schemas/random" => serde_json::to_string_pretty(&json!({
+            "data": [
+                {"temperature": 22.5, "humidity": 50.2},
+                {"temperature": 25.1, "humidity": 48.9}
+            ],
+            "interval": 1000,
+            "loop": true
         }))
         .unwrap_or_default(),
         "rekuiper://metrics" => {
