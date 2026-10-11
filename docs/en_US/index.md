@@ -2,10 +2,10 @@
 
 > High-performance stream processing engine for edge devices, written in Rust.
 
-[![Release](https://img.shields.io/badge/release-v0.508--beta-blue.svg)](https://github.com/ankur-paan/rekuiper/releases)
+[![Release](https://img.shields.io/badge/release-v0.509--beta-blue.svg)](https://github.com/ankur-paan/rekuiper/releases)
 [![Rust CI](https://img.shields.io/badge/Rust%20CI-passing-brightgreen.svg)](https://github.com/ankur-paan/rekuiper/actions/workflows/ci.yml)
 [![License: MIT or Apache-2.0](https://img.shields.io/badge/license-MIT%20%2F%20Apache--2.0-yellow.svg)](https://github.com/ankur-paan/rekuiper/blob/main/LICENSE)
-[![Docker](https://img.shields.io/badge/docker-ankurkrp%2Frekuiper%3A0.508--beta-blue.svg)](https://hub.docker.com/r/ankurkrp/rekuiper)
+[![Docker](https://img.shields.io/badge/docker-ankurkrp%2Frekuiper%3A0.509--beta-blue.svg)](https://hub.docker.com/r/ankurkrp/rekuiper)
 
 rekuiper is a stream processing engine for edge devices, written in Rust. It implements the eKuiper REST API, SQL dialect, rule format, and `kuiper` CLI. Existing eKuiper streams, rules, and tools, including [eKuiper Manager](https://github.com/ankur-paan/ekuiper-manager), operate without modification.
 
@@ -73,7 +73,7 @@ docker run -d \
   -p 9081:9081 \
   -p 20498:20498 \
   -p 20499:20499 \
-  ankurkrp/rekuiper:0.508-beta
+  ankurkrp/rekuiper:0.509-beta
 ```
 
 Check health:

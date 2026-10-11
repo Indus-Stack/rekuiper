@@ -1,3 +1,26 @@
+# Release Notes - rekuiper v0.509-beta
+
+`rekuiper` v0.509-beta delivers native pure-Rust video source ingestion, ZeroMQ streaming connectors, upstream eKuiper bugfix parities, dynamic identifier validation, and CI/workspace hardening.
+
+Key highlights:
+- **Native Pure-Rust Video Source Connector**: Added built-in `video` source ingesting live RTSP/HTTP/file camera streams via FFmpeg standard input/output image piping with fractional/integer frame rate sampling (`interval`), custom input arguments, and dynamic image record conversion.
+- **Native Pure-Rust ZeroMQ Sink and Source**: Added pure-Rust built-in ZeroMQ streaming connector (`zmq`) using standard `zeromq` crate (0 C dependencies). Supports SUB/PUB and PULL/PUSH patterns with bind or connect topologies, dynamic topics, and structured payload decoding.
+- **Image Sink Retention Pruning**: Implemented robust age (`maxAge`) and count (`maxCount`) retention directory pruning for the native `image` sink.
+- **Simulator & Random Source Parity**: Supported millisecond duration string (`50ms`, `1s`) and numeric interval parsing with `CONF_KEY` resolution and stream DDL inline overrides.
+- **Upstream eKuiper Parity Features**:
+  - `DEFAULT` column values in stream DDL (`CREATE STREAM s (id BIGINT DEFAULT 100)`) with automatic ingress default filling (#PR-4025 parity).
+  - Joined stream `BUFFER_FULL_POLICY` validation and enforcement (#PR-4133 parity).
+  - Disabled sink action option (`disable: true`) skipping action execution without rule disruption (#PR-4100 parity).
+  - Dynamic SQL sink identifier validation and sanitization (#PR-4080 parity).
+  - Kafka `offsetReset` configuration options (#PR-4190 parity).
+  - Default loopback binding (`127.0.0.1`) for network listeners (#PR-4089 security parity).
+- **Hardened CI & Linter Compliance**: Fixed clippy lints across `video` and `sinks`, resolved duration assertions, and formatted the entire workspace for strict CI pipeline validation.
+
+- Docker image: `ankurkrp/rekuiper:0.509-beta` (plus `latest`)
+- Helm chart: `deploy/chart/ekuiper` (`AppVersion: 0.509-beta`)
+
+---
+
 # Release Notes - rekuiper v0.508-beta
 
 `rekuiper` v0.508-beta achieves upstream LF Edge eKuiper parity across sink options, dynamic templates, DDL validation, built-in SQL functions, HTTPPush listeners, REST API envelopes, CLI tools, and Prometheus metrics.
