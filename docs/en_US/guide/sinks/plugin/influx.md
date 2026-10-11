@@ -14,11 +14,11 @@ The `influx` sink publishes processed stream records directly to InfluxDB v1.x d
 | :--- | :--- | :--- |
 | `addr` | False | Network address of the InfluxDB server (e.g., `http://127.0.0.1:8086`). |
 | `database` | False | Target InfluxDB database name. |
-| `measurement` | False | Target measurement table name. Supports dynamic data templates (e.g., `"{{.device}}"`). |
+| `measurement` | False | Target measurement table name. Supports dynamic data templates (e.g., <code v-pre>"{{.device}}"</code>). |
 | `username` | True | HTTP Basic Authentication username. |
 | `password` | True | HTTP Basic Authentication password. |
 | `precision` | True | Timestamp precision (`ms`, `s`, `us`, `ns`). Default is `ms`. |
-| `tags` | True | Key-value mapping of tag names to template strings (e.g., `{"host": "{{.host}}", "zone": "east"}`). |
+| `tags` | True | Key-value mapping of tag names to template strings (e.g., <code v-pre>{"host": "{{.host}}", "zone": "east"}</code>). |
 | `fields` | True | Array of field property names to write. If omitted, all non-tag payload fields are written. |
 | `tsFieldName` | True | Payload property name containing the record timestamp. If omitted, the engine uses current epoch time. |
 | `sendSingle` | True | Whether to emit records individually (`true`) or in array batches (`false`). Default is `true`. |

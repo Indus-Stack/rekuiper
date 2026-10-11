@@ -14,7 +14,7 @@ Configure the `iotdb` sink action using the following properties:
 
 | Property Name | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `device` | String | **Yes** | - | Target IoTDB device path (e.g. `root.factory.d1`). Supports dynamic data templates (e.g. `root.factory.{{.deviceId}}`). |
+| `device` | String | **Yes** | - | Target IoTDB device path (e.g. `root.factory.d1`). Supports dynamic data templates (e.g. <code v-pre>root.factory.{{.deviceId}}</code>). |
 | `addr` | String | No | `http://127.0.0.1:18080` | IoTDB REST service address (`host:port` or URL). |
 | `username` | String | No | `root` | Authentication username. |
 | `password` | String | No | `root` | Authentication password. |

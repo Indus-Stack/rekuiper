@@ -10,10 +10,10 @@ Configure the `image` sink action using the following properties:
 
 | Property Name | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `path` | String | **Yes** | - | Target directory path for saved images (e.g. `/tmp/images` or `/tmp/images/{{.deviceId}}`). |
+| `path` | String | **Yes** | - | Target directory path for saved images (e.g. `/tmp/images` or <code v-pre>/tmp/images/{{.deviceId}}</code>). |
 | `format` | String | No | `jpeg` | Image format: `jpeg`, `jpg`, or `png`. |
 | `imageField` | String | No | auto | Name of the field containing binary bytes or a base64 encoded string. If omitted, searches `image`, `image_bytes`, `data`, and `payload`. |
-| `fileName` | String | No | auto | Optional file name template (e.g. `frame_{{.deviceId}}_{{.ts}}.png`). If omitted, generates `<uuid>.<format>`. |
+| `fileName` | String | No | auto | Optional file name template (e.g. <code v-pre>frame_{{.deviceId}}_{{.ts}}.png</code>). If omitted, generates `uuid.format`. |
 | `maxAge` | Integer | No | `72` | Maximum retention time in hours. Files older than this threshold are pruned. |
 | `maxCount` | Integer | No | `1000` | Maximum number of stored image files in the target directory. When exceeded, the oldest files are removed. |
 

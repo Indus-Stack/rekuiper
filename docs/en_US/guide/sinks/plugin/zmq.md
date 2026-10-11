@@ -12,7 +12,7 @@ The ZeroMQ sink publishes rule execution results to a ZeroMQ PUB socket over TCP
 | :--- | :--- | :--- | :--- | :--- |
 | `server` | string | False | `"tcp://127.0.0.1:5563"` | The ZeroMQ endpoint URL address (such as `tcp://127.0.0.1:5563`). |
 | `url` | string | True | None | Alias for `server`. |
-| `topic` | string | True | None | The ZeroMQ topic name to publish to. Supports Golang-style data template interpolation (e.g. `"devices/{{.deviceId}}"`). |
+| `topic` | string | True | None | The ZeroMQ topic name to publish to. Supports Golang-style data template interpolation (e.g. <code v-pre>"devices/{{.deviceId}}"</code>). |
 | `mode` | string | True | `"connect"` | Connection mode: `"connect"` (connects to an external ZeroMQ broker or subscriber) or `"bind"` (binds locally and listens for subscribers). |
 | `sendSingle` | bool | True | `true` | If true, sends each record individually. If false, sends arrays in batch mode. |
 | `dataTemplate` | string | True | None | Golang-style template string to format output payloads prior to publication. |

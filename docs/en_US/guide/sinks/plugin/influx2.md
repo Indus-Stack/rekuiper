@@ -16,9 +16,9 @@ The `influx2` sink publishes processed stream records directly to InfluxDB v2.x 
 | `org` | False | Target InfluxDB v2 organization name. |
 | `bucket` | False | Target InfluxDB v2 bucket name. |
 | `token` | True | InfluxDB API authentication token. |
-| `measurement` | False | Target measurement table name. Supports dynamic data templates (e.g., `"{{.device}}"`). |
+| `measurement` | False | Target measurement table name. Supports dynamic data templates (e.g., <code v-pre>"{{.device}}"</code>). |
 | `precision` | True | Timestamp precision (`ms`, `s`, `us`, `ns`). Default is `ms`. |
-| `tags` | True | Key-value mapping of tag names to template strings (e.g., `{"host": "{{.host}}", "site": "plant_1"}`). |
+| `tags` | True | Key-value mapping of tag names to template strings (e.g., <code v-pre>{"host": "{{.host}}", "site": "plant_1"}</code>). |
 | `fields` | True | Array of field property names to write. If omitted, all non-tag payload fields are written. |
 | `tsFieldName` | True | Payload property name containing the record timestamp. If omitted, the engine uses current epoch time. |
 | `sendSingle` | True | Whether to emit records individually (`true`) or in array batches (`false`). Default is `true`. |

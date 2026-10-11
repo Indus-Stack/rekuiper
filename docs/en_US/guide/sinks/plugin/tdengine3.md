@@ -15,7 +15,7 @@ Configure the `tdengine` or `tdengine3` sink action using the following properti
 | Property Name | Type | Required | Default | Description |
 |---|---|---|---|---|
 | `database` | String | **Yes** | - | Target TDengine database name. |
-| `table` | String | **Yes** | - | Target table name. Supports dynamic data templates (e.g. `d_{{.deviceId}}`). |
+| `table` | String | **Yes** | - | Target table name. Supports dynamic data templates (e.g. <code v-pre>d_{{.deviceId}}</code>). |
 | `host` | String | No | `localhost` | TDengine REST server hostname or IP address. |
 | `port` | Integer | No | `6041` | TDengine REST service port. |
 | `user` | String | No | `root` | Authentication username. |
@@ -56,7 +56,7 @@ Writes sensor telemetry directly to table `readings` in database `factory`:
 
 ### Super Table with Automatic Sub-Table Creation
 
-Uses dynamic table naming (`m_{{.deviceId}}`) and automatically instantiates sub-tables from super table `meters` with tag `deviceId`:
+Uses dynamic table naming (<code v-pre>m_{{.deviceId}}</code>) and automatically instantiates sub-tables from super table `meters` with tag `deviceId`:
 
 ```json
 {
