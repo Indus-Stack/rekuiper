@@ -833,10 +833,22 @@ pub async fn execute_tool(
                                 ));
                             }
                         }
+                        let fields_json = create_stmt
+                            .fields
+                            .iter()
+                            .map(|f| {
+                                json!({
+                                    "name": f.name,
+                                    "type": f.data_type,
+                                    "default": f.default_value
+                                })
+                            })
+                            .collect::<Vec<_>>();
                         let info = json!({
                             "valid": true,
                             "statement_type": "CREATE STREAM",
                             "stream_name": create_stmt.name,
+                            "fields": fields_json,
                             "options": create_stmt.options,
                         });
                         return CallToolResult::ok(

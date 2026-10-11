@@ -28,6 +28,7 @@ pub fn to_stream_fields(cols: Vec<StreamColumn>) -> Vec<StreamField> {
         .map(|c| StreamField {
             name: c.name,
             field_type: c.data_type,
+            default_value: c.default_value,
         })
         .collect()
 }
