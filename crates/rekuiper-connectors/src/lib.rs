@@ -61,6 +61,9 @@ pub use iotdb::*;
 pub mod image_sink;
 pub use image_sink::*;
 
+pub mod zmq;
+pub use zmq::*;
+
 #[async_trait]
 pub trait Sink: Send + Sync {
     async fn send(&self, record: &StreamRecord) -> Result<()>;

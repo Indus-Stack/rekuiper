@@ -541,6 +541,16 @@ pub fn validate_sink_actions(actions: &[HashMap<String, Value>]) -> Result<(), S
                     }
                 }
             }
+            if kind.eq_ignore_ascii_case("zmq") || kind.eq_ignore_ascii_case("zeromq") {
+                let server = opts
+                    .get("server")
+                    .or_else(|| opts.get("url"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                if server.is_empty() {
+                    return Err(format!("{} sink is missing property server", kind));
+                }
+            }
         }
     }
     Ok(())
@@ -1875,5 +1885,23 @@ mod tests {
             }))
         ])];
         assert!(validate_sink_actions(&valid_image).is_ok());
+    }
+
+    #[test]
+    fn test_validate_sink_actions_zmq() {
+        let invalid_zmq = vec![HashMap::from([
+            ("zmq".to_string(), json!({
+                "topic": "events"
+            }))
+        ])];
+        assert!(validate_sink_actions(&invalid_zmq).is_err());
+
+        let valid_zmq = vec![HashMap::from([
+            ("zmq".to_string(), json!({
+                "server": "tcp://127.0.0.1:5563",
+                "topic": "events"
+            }))
+        ])];
+        assert!(validate_sink_actions(&valid_zmq).is_ok());
     }
 }

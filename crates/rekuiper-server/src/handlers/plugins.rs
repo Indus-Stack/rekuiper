@@ -597,6 +597,7 @@ const BUILTIN_SOURCES: &[&str] = &[
     "simulator",
     "sql",
     "websocket",
+    "zmq",
 ];
 
 const BUILTIN_SINKS: &[&str] = &[
@@ -619,6 +620,7 @@ const BUILTIN_SINKS: &[&str] = &[
     "tdengine",
     "tdengine3",
     "websocket",
+    "zmq",
 ];
 
 pub fn is_builtin_source(name: &str) -> bool {

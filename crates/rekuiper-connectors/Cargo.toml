@@ -35,6 +35,8 @@ webpki-roots = "0.26"
 parquet = { version = "53", default-features = false, features = ["arrow", "snap"] }
 arrow = { version = "53", default-features = false }
 lapin = { version = "2.3", default-features = false, features = ["rustls"] }
+zeromq = { version = "0.6", default-features = false, features = ["tokio-runtime", "tcp-transport"] }
+bytes = "1"
 
 [dev-dependencies]
 tokio-rustls = "0.25"

@@ -123,6 +123,12 @@ pub fn get_resource_definitions() -> Vec<ResourceDefinition> {
             description: Some("Configuration template for mock telemetry source streams with data replay and frequency intervals.".to_string()),
             mime_type: Some("application/json".to_string()),
         },
+        ResourceDefinition {
+            uri: "rekuiper://schemas/zmq".to_string(),
+            name: "ZeroMQ Action Schema".to_string(),
+            description: Some("Configuration template for ZeroMQ PUB/SUB socket sink and source actions.".to_string()),
+            mime_type: Some("application/json".to_string()),
+        },
     ]
 }
 
@@ -269,6 +275,13 @@ pub async fn read_resource(
             ],
             "interval": 1000,
             "loop": true
+        }))
+        .unwrap_or_default(),
+        "rekuiper://schemas/zmq" => serde_json::to_string_pretty(&json!({
+            "server": "tcp://127.0.0.1:5563",
+            "topic": "events",
+            "mode": "connect",
+            "sendSingle": true
         }))
         .unwrap_or_default(),
         "rekuiper://metrics" => {

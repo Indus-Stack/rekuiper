@@ -1,68 +1,64 @@
 # ZeroMQ Sink
 
-::: danger Status: Unsupported in rekuiper (Legacy eKuiper Go Plugin)
-The ZeroMQ sink was implemented as a Go C-shared dynamic plugin (`.so`) in legacy eKuiper.
-
-**rekuiper is written in Rust and does NOT support or load Go dynamic plugins (`.so`).** The ZeroMQ sink is not implemented in rekuiper.
-
-**Supported Alternatives in rekuiper**:
-- For publish-subscribe messaging, use the built-in [MQTT Sink](../builtin/mqtt.md).
-- For AMQP messaging, use the built-in [RabbitMQ Sink](../builtin/rabbitmq.md).
-- For low-latency streaming, use the built-in [WebSocket Sink](../builtin/websocket.md).
-- For high-throughput log streams, use the built-in [Kafka Sink](../builtin/kafka.md).
+::: tip Status: Supported as Built-in Connector in rekuiper
+rekuiper includes a native, pure-Rust ZeroMQ sink connector implementing the ZMTP wire protocol directly over TCP. You do not need to install `libzmq`, compile C/C++ bindings, or deploy legacy Go dynamic plugin (`.so`) files.
 :::
 
-## Overview (Legacy Reference Only)
+The ZeroMQ sink publishes rule execution results to a ZeroMQ PUB socket over TCP.
 
-In legacy eKuiper (Go), the ZeroMQ sink published query results to a ZeroMQ topic over TCP. This page is preserved only as an architectural reference for users who migrate from legacy Go eKuiper deployments.
+## Configuration Parameters
 
-## Legacy Configuration Parameters
+| Property Name | Type | Optional | Default Value | Description |
+| :--- | :--- | :--- | :--- | :--- |
+| `server` | string | False | `"tcp://127.0.0.1:5563"` | The ZeroMQ endpoint URL address (such as `tcp://127.0.0.1:5563`). |
+| `url` | string | True | None | Alias for `server`. |
+| `topic` | string | True | None | The ZeroMQ topic name to publish to. Supports Golang-style data template interpolation (e.g. `"devices/{{.deviceId}}"`). |
+| `mode` | string | True | `"connect"` | Connection mode: `"connect"` (connects to an external ZeroMQ broker or subscriber) or `"bind"` (binds locally and listens for subscribers). |
+| `sendSingle` | bool | True | `true` | If true, sends each record individually. If false, sends arrays in batch mode. |
+| `dataTemplate` | string | True | None | Golang-style template string to format output payloads prior to publication. |
 
-In legacy eKuiper, the action configuration used these properties:
+Common sink properties (such as `sendSingle`, `dataTemplate`, and `resendDestination`) are fully supported. Refer to [Common Sink Properties](../overview.md#common-properties).
 
-| Property Name | Optional | Description |
-| :--- | :--- | :--- |
-| `server` | False | The ZeroMQ server URL address (such as `tcp://127.0.0.1:5563`). |
-| `topic` | True | The ZeroMQ topic name to publish to. |
+## Wire Protocol Framing
 
-Common sink properties (such as `sendSingle` and `dataTemplate`) were also supported. Refer to [Common Sink Properties](../overview.md#common-properties).
+ZeroMQ PUB/SUB follows standard multi-frame encapsulation:
+1. When `topic` is configured: Frame 0 contains the UTF-8 topic prefix (enabling ZeroMQ subscriber prefix filtering), and Frame 1 contains the JSON message payload bytes.
+2. When `topic` is omitted: A single frame containing the JSON payload bytes is emitted.
 
-## Legacy Rule Example
+## Sample Usage
+
+### Basic Publication
 
 ```json
 {
-  "id": "rule_legacy_zmq",
-  "sql": "SELECT * FROM demo WHERE temperature > 50",
+  "id": "rule_zmq_alerts",
+  "sql": "SELECT deviceId, temperature FROM demo WHERE temperature > 50",
   "actions": [
     {
       "zmq": {
         "server": "tcp://127.0.0.1:5563",
-        "topic": "temp"
+        "topic": "alerts/temp",
+        "sendSingle": true
       }
     }
   ]
 }
 ```
 
-## Migration Path to rekuiper
-
-To migrate rules that used ZeroMQ to rekuiper:
-
-1. Replace the `zmq` action with a supported built-in sink such as `mqtt` or `websocket`:
+### Dynamic Topic Interpolation with Data Template
 
 ```json
 {
-  "id": "rule_migrated",
-  "sql": "SELECT * FROM demo WHERE temperature > 50",
+  "id": "rule_zmq_templated",
+  "sql": "SELECT deviceId, pressure, ts FROM demo",
   "actions": [
     {
-      "mqtt": {
-        "server": "tcp://127.0.0.1:1883",
-        "topic": "temp"
+      "zmq": {
+        "server": "tcp://127.0.0.1:5563",
+        "topic": "telemetry/{{.deviceId}}",
+        "dataTemplate": "{\"dev\":\"{{.deviceId}}\",\"val\":{{.pressure}},\"time\":{{.ts}}}"
       }
     }
   ]
 }
 ```
-
-2. If your downstream consumer requires ZeroMQ, deploy a lightweight bridge process (for example, MQTT-to-ZeroMQ or WebSocket-to-ZeroMQ) outside of rekuiper.

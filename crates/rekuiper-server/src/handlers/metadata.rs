@@ -73,6 +73,7 @@ pub async fn list_source_metadata() -> impl IntoResponse {
         "simulator",
         "sql",
         "websocket",
+        "zmq",
     ]))
 }
 
@@ -97,6 +98,7 @@ pub async fn list_sink_metadata() -> impl IntoResponse {
         "tdengine",
         "tdengine3",
         "websocket",
+        "zmq",
     ]))
 }
 

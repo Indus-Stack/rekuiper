@@ -17,7 +17,7 @@ use rekuiper_connectors::{
     FileSource, FileSourceConfig, HttpPullConfig, HttpPullSource, KafkaConfig, KafkaSource,
     MqttConfig, MqttSource, PayloadFormat, RabbitMqConfig, RabbitMqSource, RedisSubSource,
     SimulatorConfig, SimulatorSource, SqlConnectorConfig, SqlSource, WebSocketConfig,
-    WebSocketSource,
+    WebSocketSource, ZmqSource, ZmqSourceConfig,
 };
 use rekuiper_core::model::{RuleStatus, StreamField, StreamRecord};
 use rekuiper_core::{
@@ -986,6 +986,43 @@ pub(crate) fn bootstrap_stream_sources(
             let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
             register_rule_stream_source(state, stream_name, rule_id, cancel_tx);
             RabbitMqSource::new(config, stream_tx).spawn(cancel_rx);
+            return;
+        }
+    }
+
+    // ZeroMQ source streams subscribe to a ZeroMQ endpoint into the stream bus.
+    if let Some(def) = state.stream_manager.get_stream(stream_name) {
+        let is_zmq = def
+            .options
+            .get("TYPE")
+            .is_some_and(|t| t.eq_ignore_ascii_case("zmq") || t.eq_ignore_ascii_case("zeromq"));
+        if is_zmq {
+            let mut config = ZmqSourceConfig::default();
+            if let Some(srv) = def.options.get("SERVER").or_else(|| def.options.get("URL")) {
+                config.server = srv.clone();
+            }
+            if let Some(topic) = def
+                .options
+                .get("DATASOURCE")
+                .or_else(|| def.options.get("TOPIC"))
+            {
+                config.topic = Some(topic.clone());
+            }
+            if let Some(mode) = def.options.get("MODE") {
+                config.mode = mode.clone();
+            }
+            if let Some(key) = def.options.get("CONF_KEY").cloned() {
+                let lookup = format!("zmq/{}", key);
+                if let Some(conf_val) = state.source_configs.read().get(&lookup).cloned() {
+                    if let Ok(c) = serde_json::from_value::<ZmqSourceConfig>(conf_val) {
+                        config = c;
+                    }
+                }
+            }
+            let stream_tx = state.stream_bus.get_or_create(stream_name);
+            let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
+            register_rule_stream_source(state, stream_name, rule_id, cancel_tx);
+            ZmqSource::new(config, stream_tx).spawn(cancel_rx);
             return;
         }
     }

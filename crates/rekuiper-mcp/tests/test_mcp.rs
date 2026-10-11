@@ -299,6 +299,7 @@ async fn test_resources_and_prompts() {
     assert!(uris.contains(&"rekuiper://schemas/iotdb"));
     assert!(uris.contains(&"rekuiper://schemas/image"));
     assert!(uris.contains(&"rekuiper://schemas/random"));
+    assert!(uris.contains(&"rekuiper://schemas/zmq"));
 
     // Read static schema resource
     let req_read_res = JsonRpcRequest {
@@ -383,6 +384,20 @@ async fn test_resources_and_prompts() {
     let text_random = res_random["contents"][0]["text"].as_str().unwrap();
     assert!(text_random.contains("interval"));
     assert!(text_random.contains("loop"));
+
+    let req_read_zmq = JsonRpcRequest {
+        jsonrpc: "2.0".to_string(),
+        id: Some(json!(37)),
+        method: "resources/read".to_string(),
+        params: Some(json!({
+            "uri": "rekuiper://schemas/zmq"
+        })),
+    };
+    let resp_zmq = handler.handle_request(req_read_zmq).await.unwrap();
+    let res_zmq = resp_zmq.result.unwrap();
+    let text_zmq = res_zmq["contents"][0]["text"].as_str().unwrap();
+    assert!(text_zmq.contains("tcp://127.0.0.1:5563"));
+    assert!(text_zmq.contains("events"));
     assert!(text.contains("rabbitmq"));
 
     // Prompts list

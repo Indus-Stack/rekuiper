@@ -354,6 +354,11 @@ pub(crate) enum PreparedAction {
         config: Box<rekuiper_connectors::ImageSinkConfig>,
         opts: CommonSinkOpts,
     },
+    Zmq {
+        config: Box<rekuiper_connectors::ZmqSinkConfig>,
+        template: Option<String>,
+        opts: CommonSinkOpts,
+    },
     Unknown {
         kind: String,
     },
@@ -374,6 +379,7 @@ impl PreparedAction {
             PreparedAction::Tdengine { opts, .. } => Some(opts),
             PreparedAction::Iotdb { opts, .. } => Some(opts),
             PreparedAction::Image { opts, .. } => Some(opts),
+            PreparedAction::Zmq { opts, .. } => Some(opts),
             _ => None,
         }
     }
@@ -794,6 +800,25 @@ pub(crate) fn prepare_actions(
                         }),
                     }
                 }
+                "zmq" | "zeromq" => {
+                    match serde_json::from_value::<rekuiper_connectors::ZmqSinkConfig>(opts.clone()) {
+                        Ok(config) => {
+                            let template = opts
+                                .get("dataTemplate")
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.to_string());
+                            let common_opts = parse_common_opts(opts, rule_send_nil_field, true);
+                            out.push(PreparedAction::Zmq {
+                                config: Box::new(config),
+                                template,
+                                opts: common_opts,
+                            });
+                        }
+                        Err(_) => out.push(PreparedAction::Unknown {
+                            kind: "zmq".to_string(),
+                        }),
+                    }
+                }
                 other => out.push(PreparedAction::Unknown {
                     kind: other.to_string(),
                 }),
@@ -1018,6 +1043,7 @@ pub(crate) struct ActionRuntime {
     pub(crate) mqtt: Option<MqttSink>,
     pub(crate) sql: Option<SqlSink>,
     pub(crate) rabbitmq: Option<RabbitMqSink>,
+    pub(crate) zmq: Option<rekuiper_connectors::ZmqSink>,
     pub(crate) cache: Option<SinkCache>,
     /// Earliest time the next resend may be attempted.
     pub(crate) retry_at: tokio::time::Instant,
@@ -1034,6 +1060,7 @@ impl ActionRuntime {
             mqtt: None,
             sql: None,
             rabbitmq: None,
+            zmq: None,
             cache,
             retry_at: tokio::time::Instant::now(),
             last_warn: None,
@@ -2038,6 +2065,83 @@ pub(crate) async fn send_action(
                 config.save_image(&output.data).await.map_err(|e| SendError::Retry(e))?;
             }
             Ok(())
+        }
+        PreparedAction::Zmq {
+            config,
+            template,
+            opts,
+        } => {
+            if rt.zmq.is_none() {
+                rt.zmq = Some(rekuiper_connectors::ZmqSink::new((**config).clone()));
+            }
+            let sink = rt.zmq.as_ref().unwrap();
+
+            let resolve_topic = |data_map: &HashMap<String, Value>| {
+                let default_top = config.topic.as_deref().unwrap_or("");
+                let t = destination.unwrap_or(default_top);
+                if t.contains("{{") {
+                    apply_data_template(t, &record_template_map(data_map))
+                } else {
+                    t.to_string()
+                }
+            };
+
+            if let Some(Value::Array(arr)) = output.data.get(BATCH_ROWS_KEY) {
+                if opts.send_single {
+                    for row in arr {
+                        let row_map: HashMap<String, Value> = match row {
+                            Value::Object(m) => m.clone().into_iter().collect(),
+                            _ => HashMap::new(),
+                        };
+                        let topic = resolve_topic(&row_map);
+                        let payload = if let Some(tpl) = template {
+                            render_sink_template_row(tpl, row).into_bytes()
+                        } else {
+                            let formatted = format_record_for_sink_val(row, opts);
+                            serde_json::to_vec(&formatted).map_err(|e| {
+                                SendError::Permanent(format!("zmq payload encode: {}", e))
+                            })?
+                        };
+                        sink.send_raw(Some(&topic), &payload)
+                            .await
+                            .map_err(|e| SendError::Retry(format!("zmq action failed: {}", e)))?;
+                    }
+                    Ok(())
+                } else {
+                    let topic = resolve_topic(&output.data);
+                    let payload = if let Some(tpl) = template {
+                        render_sink_template_batch(tpl, arr).into_bytes()
+                    } else {
+                        let formatted_arr: Vec<Value> = arr
+                            .iter()
+                            .map(|r| format_record_for_sink_val(r, opts))
+                            .collect();
+                        serde_json::to_vec(&Value::Array(formatted_arr)).map_err(|e| {
+                            SendError::Permanent(format!("zmq payload encode: {}", e))
+                        })?
+                    };
+                    sink.send_raw(Some(&topic), &payload)
+                        .await
+                        .map_err(|e| SendError::Retry(format!("zmq action failed: {}", e)))?;
+                    Ok(())
+                }
+            } else {
+                let topic = resolve_topic(&output.data);
+                let payload = match template {
+                    Some(tpl) => {
+                        render_sink_template(tpl, &output.data, opts.send_single).into_bytes()
+                    }
+                    None => {
+                        let formatted = format_record_for_sink(&output.data, opts);
+                        serde_json::to_vec(&to_sink_payload(formatted, opts.send_single)).map_err(
+                            |e| SendError::Permanent(format!("zmq payload encode: {}", e)),
+                        )?
+                    }
+                };
+                sink.send_raw(Some(&topic), &payload)
+                    .await
+                    .map_err(|e| SendError::Retry(format!("zmq action failed: {}", e)))
+            }
         }
         PreparedAction::Unknown { kind } => {
             tracing::debug!("[RULE {}] unknown action '{}', ignoring", ctx.rule_id, kind);
