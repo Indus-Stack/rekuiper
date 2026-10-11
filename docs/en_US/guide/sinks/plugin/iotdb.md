@@ -1,56 +1,70 @@
-# IoTDB Sink
+# Apache IoTDB Sink
 
-::: danger Status: Unsupported in rekuiper (Legacy eKuiper Go Plugin)
-The native Thrift RPC `iotdb` sink was a Go dynamic plugin (`Iotdb.so`) in legacy eKuiper. **rekuiper is implemented in Rust and does not load Go dynamic plugins.**
+The `iotdb` sink enables writing stream processing outputs directly into [Apache IoTDB](https://iotdb.apache.org/) time-series databases using IoTDB's native RESTful service.
 
-To integrate with Apache IoTDB in rekuiper, use one of the supported production alternatives below:
-- **[REST Sink](../builtin/rest.md)**: Send data directly to the Apache IoTDB REST API (`/api/v1/insertTablet` or `/api/v1/insertRecord`).
-- **[MQTT Sink](../builtin/mqtt.md)**: Publish messages to an MQTT broker ingested by the Apache IoTDB MQTT service.
-:::
+In `rekuiper`, the Apache IoTDB connector is implemented in pure Rust without external dynamic dependencies, supporting high performance, connection pooling, dynamic device templates, and automatic batch tablet aggregation.
 
-## Overview
+## Prerequisites
 
-The legacy IoTDB sink used a Go Thrift RPC client to write tree-model or table-model records to an Apache IoTDB server.
+Ensure the Apache IoTDB REST service is enabled in IoTDB configuration (`iotdb-datanode.properties`: `enable_rest_service=true`, default port `18080`).
 
-## Recommended Alternative: REST Sink Integration
+## Configuration Properties
 
-Apache IoTDB includes a built-in REST service. You can send processed records directly from rekuiper to IoTDB using the built-in [REST Sink](../builtin/rest.md).
+Configure the `iotdb` sink action using the following properties:
 
-### Example REST Sink Action
+| Property Name | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `device` | String | **Yes** | - | Target IoTDB device path (e.g. `root.factory.d1`). Supports dynamic data templates (e.g. `root.factory.{{.deviceId}}`). |
+| `addr` | String | No | `http://127.0.0.1:18080` | IoTDB REST service address (`host:port` or URL). |
+| `username` | String | No | `root` | Authentication username. |
+| `password` | String | No | `root` | Authentication password. |
+| `measurements` | Array | No | - | List of measurement column names to insert. If omitted, all non-timestamp fields are included. |
+| `tsFieldName` | String | No | `ts` | Name of the timestamp column in milliseconds. If omitted or not present, server wall clock is used. |
+
+## Examples
+
+### Static Device Path Insert
+
+Writes high-frequency telemetry into device `root.ln.wf01.wt01`:
 
 ```json
 {
-  "id": "rule_iotdb_rest",
-  "sql": "SELECT deviceId, temperature, humidity, ts FROM sensorStream WHERE temperature > 40.0",
+  "id": "rule_iotdb_static",
+  "sql": "SELECT temperature, humidity, pressure, ts FROM sensorStream",
   "actions": [
     {
-      "rest": {
-        "url": "http://127.0.0.1:18080/api/v1/insertRecord",
-        "method": "POST",
-        "headers": {
-          "Content-Type": "application/json",
-          "Authorization": "Basic cm9vdDpyb290"
-        },
-        "dataTemplate": "{\"device\":\"root.factory.{{.deviceId}}\",\"timestamps\":[{{.ts}}],\"measurements\":[\"temperature\",\"humidity\"],\"values\":[[{{.temperature}},{{.humidity}}]]}",
-        "sendSingle": true
+      "iotdb": {
+        "addr": "http://127.0.0.1:18080",
+        "username": "root",
+        "password": "root",
+        "device": "root.ln.wf01.wt01",
+        "measurements": ["temperature", "humidity", "pressure"],
+        "tsFieldName": "ts"
       }
     }
   ]
 }
 ```
 
-## Legacy Configuration Reference
+### Dynamic Device Template
 
-For teams migrating legacy eKuiper rule configurations, the former properties are preserved below for reference:
+Uses Golang-style data template syntax to route telemetry dynamically to devices based on incoming `deviceId`:
 
-| Property Name | Legacy Default | Description |
-|---|---|---|
-| `addr` | `127.0.0.1:6667` | IoTDB server address in `host:port` format. |
-| `username` | `root` | Username for authentication. |
-| `password` | `root` | Password for authentication. |
-| `model` | `tree` | Data model: `tree` or `table`. |
-| `device` | `""` | Device path for tree model (e.g. `root.sg1.dev1`). |
-| `measurements` | `[]` | List of measurement or column names. |
-| `dataTypes` | `[]` | Target data types (`INT32`, `INT64`, `FLOAT`, `DOUBLE`, `BOOLEAN`, `TEXT`, `STRING`, `TIMESTAMP`). |
-| `tsFieldName` | `""` | Field containing the timestamp in milliseconds. |
-| `batchSize` | `10` | Tablet batch size. |
+```json
+{
+  "id": "rule_iotdb_dynamic",
+  "sql": "SELECT deviceId, voltage, current, ts FROM powerStream",
+  "actions": [
+    {
+      "iotdb": {
+        "addr": "http://127.0.0.1:18080",
+        "username": "root",
+        "password": "password",
+        "device": "root.station.{{.deviceId}}",
+        "measurements": ["voltage", "current"],
+        "tsFieldName": "ts"
+      }
+    }
+  ]
+}
+```

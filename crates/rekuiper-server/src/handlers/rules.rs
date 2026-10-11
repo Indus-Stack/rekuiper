@@ -522,6 +522,12 @@ pub fn validate_sink_actions(actions: &[HashMap<String, Value>]) -> Result<(), S
                     return Err(format!("{} sink is missing property table", kind));
                 }
             }
+            if kind.eq_ignore_ascii_case("iotdb") {
+                let device = opts.get("device").and_then(|v| v.as_str()).unwrap_or("");
+                if device.is_empty() {
+                    return Err("iotdb sink is missing property device".to_string());
+                }
+            }
         }
     }
     Ok(())
@@ -1820,5 +1826,23 @@ mod tests {
             }))
         ])];
         assert!(validate_sink_actions(&valid_td).is_ok());
+    }
+
+    #[test]
+    fn test_validate_sink_actions_iotdb() {
+        let invalid_iotdb = vec![HashMap::from([
+            ("iotdb".to_string(), json!({
+                "addr": "127.0.0.1:18080"
+            }))
+        ])];
+        assert!(validate_sink_actions(&invalid_iotdb).is_err());
+
+        let valid_iotdb = vec![HashMap::from([
+            ("iotdb".to_string(), json!({
+                "addr": "127.0.0.1:18080",
+                "device": "root.factory.device1"
+            }))
+        ])];
+        assert!(validate_sink_actions(&valid_iotdb).is_ok());
     }
 }

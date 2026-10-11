@@ -14,7 +14,8 @@ Key highlights:
 - **CLI Subcommands and POSIX Exit Codes**: Added `explain rule` and `query` subcommands. Extended `show`, `drop`, and `create schema` subcommands. Standardized POSIX exit codes and formatted text table outputs.
 - **Native InfluxDB v1 & v2 Sinks**: Implemented built-in `influx` and `influx2` sinks compiling directly into the engine binary with zero C dynamic dependencies. Supports InfluxDB Line Protocol serialization, dynamic measurements, tag templates, token authentication, and MCP schema inspection.
 - **Native TDengine 3.x REST Sink**: Implemented pure Rust built-in `tdengine` / `tdengine3` sink connecting to TDengine 3.x REST service (`/rest/sql`). Supports regular table inserts, dynamic table templates, super tables (`USING <sTable> TAGS (...)`), and MCP resource schemas without requiring `libtaos.so`.
-- **Model Context Protocol (MCP) Parity**: Added `explain_rule` tool and updated `import_data` tool with partial merge mode and fail-fast validation in ASD-STE100. Added `audit_security_posture` prompt, `rekuiper://schemas/influx`, and `rekuiper://schemas/tdengine` resources.
+- **Native Apache IoTDB Sink**: Implemented pure Rust built-in `iotdb` sink connecting directly to Apache IoTDB REST service (`/rest/v1/insertRecord`). Supports dynamic tree model device path templates, explicit or projected measurement arrays, batch tablet aggregation, and MCP resource inspection.
+- **Model Context Protocol (MCP) Parity**: Added `explain_rule` tool and updated `import_data` tool with partial merge mode and fail-fast validation in ASD-STE100. Added `audit_security_posture` prompt, `rekuiper://schemas/influx`, `rekuiper://schemas/tdengine`, and `rekuiper://schemas/iotdb` resources.
 
 - Docker image: `ankurkrp/rekuiper:0.508-beta` (plus `latest`)
 - Helm chart: `deploy/chart/ekuiper` (`AppVersion: 0.508-beta`)

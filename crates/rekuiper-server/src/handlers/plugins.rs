@@ -604,6 +604,7 @@ const BUILTIN_SINKS: &[&str] = &[
     "http",
     "influx",
     "influx2",
+    "iotdb",
     "kafka",
     "log",
     "memory",

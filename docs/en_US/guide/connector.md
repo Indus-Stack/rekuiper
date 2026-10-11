@@ -66,6 +66,7 @@ Use plugin sink connectors for external platforms and custom targets:
 - [InfluxDB sink](./sinks/plugin/influx.md): Writes time-series points to InfluxDB v1.x.
 - [InfluxDB v2 sink](./sinks/plugin/influx2.md): Writes time-series points to InfluxDB v2.x.
 - [TDengine 3 sink](./sinks/plugin/tdengine3.md): Writes time-series records to TDengine 3.x tables and super tables.
+- [Apache IoTDB sink](./sinks/plugin/iotdb.md): Writes time-series records to Apache IoTDB REST service.
 - [Image sink](./sinks/plugin/image.md): Writes binary image frames to local storage.
 - [ZeroMQ sink](./sinks/plugin/zmq.md): Publishes messages to ZeroMQ subscribers.
 - [Kafka sink](./sinks/plugin/kafka.md): Produces messages to Apache Kafka topics.

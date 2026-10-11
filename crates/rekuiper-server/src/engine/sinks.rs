@@ -346,6 +346,10 @@ pub(crate) enum PreparedAction {
         config: Box<rekuiper_connectors::TdengineConfig>,
         opts: CommonSinkOpts,
     },
+    Iotdb {
+        config: Box<rekuiper_connectors::IotdbConfig>,
+        opts: CommonSinkOpts,
+    },
     Unknown {
         kind: String,
     },
@@ -364,6 +368,7 @@ impl PreparedAction {
             PreparedAction::Influx { opts, .. } => Some(opts),
             PreparedAction::Influx2 { opts, .. } => Some(opts),
             PreparedAction::Tdengine { opts, .. } => Some(opts),
+            PreparedAction::Iotdb { opts, .. } => Some(opts),
             _ => None,
         }
     }
@@ -753,6 +758,20 @@ pub(crate) fn prepare_actions(
                         }
                         Err(_) => out.push(PreparedAction::Unknown {
                             kind: "tdengine3".to_string(),
+                        }),
+                    }
+                }
+                "iotdb" => {
+                    match serde_json::from_value::<rekuiper_connectors::IotdbConfig>(opts.clone()) {
+                        Ok(config) => {
+                            let common_opts = parse_common_opts(opts, rule_send_nil_field, true);
+                            out.push(PreparedAction::Iotdb {
+                                config: Box::new(config),
+                                opts: common_opts,
+                            });
+                        }
+                        Err(_) => out.push(PreparedAction::Unknown {
+                            kind: "iotdb".to_string(),
                         }),
                     }
                 }
@@ -1927,6 +1946,65 @@ pub(crate) async fn send_action(
                     Err(SendError::Retry(format!("tdengine write failed with {}: {}", status, err_text)))
                 }
                 Err(e) => Err(SendError::Retry(format!("tdengine write connection error: {}", e))),
+            }
+        }
+        PreparedAction::Iotdb { config, .. } => {
+            let default_url = config.endpoint_url();
+            let url = destination.unwrap_or(&default_url);
+            let payload = if let Some(Value::Array(arr)) = output.data.get(BATCH_ROWS_KEY) {
+                let mut device = String::new();
+                let mut timestamps = Vec::new();
+                let mut measurements = Vec::new();
+                let mut values = Vec::new();
+                for row in arr {
+                    if let Value::Object(m) = row {
+                        let row_map: HashMap<String, Value> = m.clone().into_iter().collect();
+                        if let Ok(single_payload) = config.build_insert_payload(&row_map) {
+                            if device.is_empty() {
+                                if let Some(d) = single_payload.get("device").and_then(|v| v.as_str()) {
+                                    device = d.to_string();
+                                }
+                            }
+                            if measurements.is_empty() {
+                                if let Some(m_arr) = single_payload.get("measurements").and_then(|v| v.as_array()) {
+                                    measurements = m_arr.clone();
+                                }
+                            }
+                            if let Some(t_arr) = single_payload.get("timestamps").and_then(|v| v.as_array()) {
+                                timestamps.extend(t_arr.clone());
+                            }
+                            if let Some(v_arr) = single_payload.get("values").and_then(|v| v.as_array()) {
+                                values.extend(v_arr.clone());
+                            }
+                        }
+                    }
+                }
+                serde_json::json!({
+                    "device": device,
+                    "timestamps": timestamps,
+                    "measurements": measurements,
+                    "values": values
+                })
+            } else {
+                config.build_insert_payload(&output.data).map_err(|e| SendError::Retry(format!("iotdb payload generation error: {}", e)))?
+            };
+
+            let res = ctx.http_client
+                .post(url)
+                .header(reqwest::header::AUTHORIZATION, config.basic_auth_header())
+                .header(reqwest::header::CONTENT_TYPE, "application/json")
+                .json(&payload)
+                .send()
+                .await;
+
+            match res {
+                Ok(resp) if resp.status().is_success() => Ok(()),
+                Ok(resp) => {
+                    let status = resp.status();
+                    let err_text = resp.text().await.unwrap_or_default();
+                    Err(SendError::Retry(format!("iotdb write failed with {}: {}", status, err_text)))
+                }
+                Err(e) => Err(SendError::Retry(format!("iotdb write connection error: {}", e))),
             }
         }
         PreparedAction::Unknown { kind } => {

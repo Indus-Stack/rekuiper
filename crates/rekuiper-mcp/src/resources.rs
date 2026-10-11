@@ -105,6 +105,12 @@ pub fn get_resource_definitions() -> Vec<ResourceDefinition> {
             description: Some("Configuration template for TDengine 3.x timeseries sink action supporting tables and super tables.".to_string()),
             mime_type: Some("application/json".to_string()),
         },
+        ResourceDefinition {
+            uri: "rekuiper://schemas/iotdb".to_string(),
+            name: "Apache IoTDB Action Schema".to_string(),
+            description: Some("Configuration template for Apache IoTDB REST timeseries sink action with device tree paths and measurements.".to_string()),
+            mime_type: Some("application/json".to_string()),
+        },
     ]
 }
 
@@ -224,6 +230,15 @@ pub async fn read_resource(
             "fields": ["temp", "voltage", "current"],
             "tsFieldName": "ts",
             "provideTs": true
+        }))
+        .unwrap_or_default(),
+        "rekuiper://schemas/iotdb" => serde_json::to_string_pretty(&json!({
+            "addr": "http://127.0.0.1:18080",
+            "username": "root",
+            "password": "root",
+            "device": "root.factory.{{.deviceId}}",
+            "measurements": ["temperature", "humidity", "pressure"],
+            "tsFieldName": "ts"
         }))
         .unwrap_or_default(),
         "rekuiper://metrics" => {

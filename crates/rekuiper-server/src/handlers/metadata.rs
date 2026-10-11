@@ -82,6 +82,7 @@ pub async fn list_sink_metadata() -> impl IntoResponse {
         "http",
         "influx",
         "influx2",
+        "iotdb",
         "kafka",
         "log",
         "memory",
