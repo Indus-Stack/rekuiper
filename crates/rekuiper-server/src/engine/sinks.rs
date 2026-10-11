@@ -342,6 +342,10 @@ pub(crate) enum PreparedAction {
         config: Box<rekuiper_connectors::Influx2Config>,
         opts: CommonSinkOpts,
     },
+    Tdengine {
+        config: Box<rekuiper_connectors::TdengineConfig>,
+        opts: CommonSinkOpts,
+    },
     Unknown {
         kind: String,
     },
@@ -359,6 +363,7 @@ impl PreparedAction {
             PreparedAction::RabbitMq { opts, .. } => Some(opts),
             PreparedAction::Influx { opts, .. } => Some(opts),
             PreparedAction::Influx2 { opts, .. } => Some(opts),
+            PreparedAction::Tdengine { opts, .. } => Some(opts),
             _ => None,
         }
     }
@@ -734,6 +739,20 @@ pub(crate) fn prepare_actions(
                         }
                         Err(_) => out.push(PreparedAction::Unknown {
                             kind: "influx2".to_string(),
+                        }),
+                    }
+                }
+                "tdengine" | "tdengine3" => {
+                    match serde_json::from_value::<rekuiper_connectors::TdengineConfig>(opts.clone()) {
+                        Ok(config) => {
+                            let common_opts = parse_common_opts(opts, rule_send_nil_field, true);
+                            out.push(PreparedAction::Tdengine {
+                                config: Box::new(config),
+                                opts: common_opts,
+                            });
+                        }
+                        Err(_) => out.push(PreparedAction::Unknown {
+                            kind: "tdengine3".to_string(),
                         }),
                     }
                 }
@@ -1868,6 +1887,46 @@ pub(crate) async fn send_action(
                     Err(SendError::Retry(format!("influx2 write failed with {}: {}", status, err_text)))
                 }
                 Err(e) => Err(SendError::Retry(format!("influx2 write connection error: {}", e))),
+            }
+        }
+        PreparedAction::Tdengine { config, .. } => {
+            let default_url = config.endpoint_url();
+            let url = destination.unwrap_or(&default_url);
+            let sql_statements = if let Some(Value::Array(arr)) = output.data.get(BATCH_ROWS_KEY) {
+                let mut stmts = Vec::new();
+                for row in arr {
+                    if let Value::Object(m) = row {
+                        let row_map: HashMap<String, Value> = m.clone().into_iter().collect();
+                        if let Ok(sql) = config.build_insert_sql(&row_map) {
+                            stmts.push(sql);
+                        }
+                    }
+                }
+                stmts.join("; ")
+            } else {
+                config.build_insert_sql(&output.data).map_err(|e| SendError::Retry(format!("tdengine sql generation error: {}", e)))?
+            };
+
+            if sql_statements.trim().is_empty() {
+                return Ok(());
+            }
+
+            let res = ctx.http_client
+                .post(url)
+                .header(reqwest::header::AUTHORIZATION, config.basic_auth_header())
+                .header(reqwest::header::CONTENT_TYPE, "text/plain; charset=utf-8")
+                .body(sql_statements)
+                .send()
+                .await;
+
+            match res {
+                Ok(resp) if resp.status().is_success() => Ok(()),
+                Ok(resp) => {
+                    let status = resp.status();
+                    let err_text = resp.text().await.unwrap_or_default();
+                    Err(SendError::Retry(format!("tdengine write failed with {}: {}", status, err_text)))
+                }
+                Err(e) => Err(SendError::Retry(format!("tdengine write connection error: {}", e))),
             }
         }
         PreparedAction::Unknown { kind } => {

@@ -99,6 +99,12 @@ pub fn get_resource_definitions() -> Vec<ResourceDefinition> {
             description: Some("Configuration template for InfluxDB v1 and v2 timeseries sink actions with measurement, tags, and line protocol options.".to_string()),
             mime_type: Some("application/json".to_string()),
         },
+        ResourceDefinition {
+            uri: "rekuiper://schemas/tdengine".to_string(),
+            name: "TDengine 3.x Action Schema".to_string(),
+            description: Some("Configuration template for TDengine 3.x timeseries sink action supporting tables and super tables.".to_string()),
+            mime_type: Some("application/json".to_string()),
+        },
     ]
 }
 
@@ -204,6 +210,20 @@ pub async fn read_resource(
                 },
                 "tsFieldName": "ts"
             }
+        }))
+        .unwrap_or_default(),
+        "rekuiper://schemas/tdengine" => serde_json::to_string_pretty(&json!({
+            "host": "127.0.0.1",
+            "port": 6041,
+            "user": "root",
+            "password": "password",
+            "database": "power",
+            "table": "m_{{.deviceId}}",
+            "sTable": "meters",
+            "tagFields": ["deviceId"],
+            "fields": ["temp", "voltage", "current"],
+            "tsFieldName": "ts",
+            "provideTs": true
         }))
         .unwrap_or_default(),
         "rekuiper://metrics" => {

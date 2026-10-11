@@ -512,6 +512,16 @@ pub fn validate_sink_actions(actions: &[HashMap<String, Value>]) -> Result<(), S
                     return Err("influx2 sink is missing property measurement".to_string());
                 }
             }
+            if kind.eq_ignore_ascii_case("tdengine") || kind.eq_ignore_ascii_case("tdengine3") {
+                let database = opts.get("database").and_then(|v| v.as_str()).unwrap_or("");
+                if database.is_empty() {
+                    return Err(format!("{} sink is missing property database", kind));
+                }
+                let table = opts.get("table").and_then(|v| v.as_str()).unwrap_or("");
+                if table.is_empty() {
+                    return Err(format!("{} sink is missing property table", kind));
+                }
+            }
         }
     }
     Ok(())
@@ -1792,5 +1802,23 @@ mod tests {
             }))
         ])];
         assert!(validate_sink_actions(&valid_influx2).is_ok());
+    }
+
+    #[test]
+    fn test_validate_sink_actions_tdengine() {
+        let invalid_td = vec![HashMap::from([
+            ("tdengine3".to_string(), json!({
+                "database": "power"
+            }))
+        ])];
+        assert!(validate_sink_actions(&invalid_td).is_err());
+
+        let valid_td = vec![HashMap::from([
+            ("tdengine3".to_string(), json!({
+                "database": "power",
+                "table": "meters"
+            }))
+        ])];
+        assert!(validate_sink_actions(&valid_td).is_ok());
     }
 }

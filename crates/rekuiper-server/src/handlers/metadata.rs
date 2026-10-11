@@ -91,6 +91,8 @@ pub async fn list_sink_metadata() -> impl IntoResponse {
         "redis",
         "redisPub",
         "rest",
+        "tdengine",
+        "tdengine3",
         "websocket",
     ]))
 }

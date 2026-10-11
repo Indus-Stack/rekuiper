@@ -52,6 +52,9 @@ pub use sql::*;
 pub mod influx;
 pub use influx::*;
 
+pub mod tdengine;
+pub use tdengine::*;
+
 #[async_trait]
 pub trait Sink: Send + Sync {
     async fn send(&self, record: &StreamRecord) -> Result<()>;

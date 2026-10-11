@@ -20,10 +20,11 @@ rekuiper includes the following built-in sink connectors:
 - [SQL sink](./plugin/sql.md): Inserts or updates records in relational databases through SQL.
 - [InfluxDB sink](./plugin/influx.md): Publishes timeseries points directly to InfluxDB v1.x via Line Protocol.
 - [InfluxDB v2 sink](./plugin/influx2.md): Publishes timeseries points directly to InfluxDB v2.x via Line Protocol.
+- [TDengine 3 sink](./plugin/tdengine3.md): Ingests timeseries records into TDengine 3.x tables and super tables.
 - [WebSocket sink](./builtin/websocket.md): Streams events to connected WebSocket clients.
 
 > [!NOTE]
-> Legacy Go C-shared dynamic plugins (`.so`) are not supported in rekuiper. High-demand connectors like Kafka, SQL, InfluxDB, and WebSocket are built into the binary. For custom integrations, use WebAssembly (Wasm) or an external HTTP service.
+> Legacy Go C-shared dynamic plugins (`.so`) are not supported in rekuiper. High-demand connectors like Kafka, SQL, InfluxDB, TDengine 3, and WebSocket are built into the binary. For custom integrations, use WebAssembly (Wasm) or an external HTTP service.
 
 ## Updatable Sinks
 

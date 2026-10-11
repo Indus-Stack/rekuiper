@@ -613,6 +613,8 @@ const BUILTIN_SINKS: &[&str] = &[
     "redis",
     "redisPub",
     "rest",
+    "tdengine",
+    "tdengine3",
     "websocket",
 ];
 

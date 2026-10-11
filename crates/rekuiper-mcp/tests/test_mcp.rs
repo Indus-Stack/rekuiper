@@ -295,6 +295,7 @@ async fn test_resources_and_prompts() {
     assert!(uris.contains(&"rekuiper://schemas/parquet"));
     assert!(uris.contains(&"rekuiper://schemas/edgex"));
     assert!(uris.contains(&"rekuiper://schemas/influx"));
+    assert!(uris.contains(&"rekuiper://schemas/tdengine"));
 
     // Read static schema resource
     let req_read_res = JsonRpcRequest {
@@ -323,6 +324,20 @@ async fn test_resources_and_prompts() {
     let text_influx = res_influx["contents"][0]["text"].as_str().unwrap();
     assert!(text_influx.contains("influx_v1"));
     assert!(text_influx.contains("influx_v2"));
+
+    let req_read_td = JsonRpcRequest {
+        jsonrpc: "2.0".to_string(),
+        id: Some(json!(33)),
+        method: "resources/read".to_string(),
+        params: Some(json!({
+            "uri": "rekuiper://schemas/tdengine"
+        })),
+    };
+    let resp_td = handler.handle_request(req_read_td).await.unwrap();
+    let res_td = resp_td.result.unwrap();
+    let text_td = res_td["contents"][0]["text"].as_str().unwrap();
+    assert!(text_td.contains("sTable"));
+    assert!(text_td.contains("tagFields"));
     assert!(text.contains("rabbitmq"));
 
     // Prompts list
