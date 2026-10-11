@@ -334,6 +334,14 @@ pub(crate) enum PreparedAction {
         config: Box<MqttConfig>,
         template: Option<String>,
     },
+    Influx {
+        config: Box<rekuiper_connectors::InfluxConfig>,
+        opts: CommonSinkOpts,
+    },
+    Influx2 {
+        config: Box<rekuiper_connectors::Influx2Config>,
+        opts: CommonSinkOpts,
+    },
     Unknown {
         kind: String,
     },
@@ -349,6 +357,8 @@ impl PreparedAction {
             PreparedAction::Redis { opts, .. } => Some(opts),
             PreparedAction::Kafka { opts, .. } => Some(opts),
             PreparedAction::RabbitMq { opts, .. } => Some(opts),
+            PreparedAction::Influx { opts, .. } => Some(opts),
+            PreparedAction::Influx2 { opts, .. } => Some(opts),
             _ => None,
         }
     }
@@ -698,6 +708,34 @@ pub(crate) fn prepare_actions(
                         config: Box::new(config),
                         template: action_template(opts).map(|s| s.to_string()),
                     });
+                }
+                "influx" => {
+                    match serde_json::from_value::<rekuiper_connectors::InfluxConfig>(opts.clone()) {
+                        Ok(config) => {
+                            let common_opts = parse_common_opts(opts, rule_send_nil_field, true);
+                            out.push(PreparedAction::Influx {
+                                config: Box::new(config),
+                                opts: common_opts,
+                            });
+                        }
+                        Err(_) => out.push(PreparedAction::Unknown {
+                            kind: "influx".to_string(),
+                        }),
+                    }
+                }
+                "influx2" => {
+                    match serde_json::from_value::<rekuiper_connectors::Influx2Config>(opts.clone()) {
+                        Ok(config) => {
+                            let common_opts = parse_common_opts(opts, rule_send_nil_field, true);
+                            out.push(PreparedAction::Influx2 {
+                                config: Box::new(config),
+                                opts: common_opts,
+                            });
+                        }
+                        Err(_) => out.push(PreparedAction::Unknown {
+                            kind: "influx2".to_string(),
+                        }),
+                    }
                 }
                 other => out.push(PreparedAction::Unknown {
                     kind: other.to_string(),
@@ -1722,6 +1760,115 @@ pub(crate) async fn send_action(
             sink.send_raw_to(destination.unwrap_or(&config.topic), payload)
                 .await
                 .map_err(|e| SendError::Retry(format!("edgex action failed: {}", e)))
+        }
+        PreparedAction::Influx { config, .. } => {
+            let default_url = config.write_url();
+            let url = destination.unwrap_or(&default_url);
+            let line = if let Some(Value::Array(arr)) = output.data.get(BATCH_ROWS_KEY) {
+                let mut lines = Vec::new();
+                for row in arr {
+                    if let Value::Object(m) = row {
+                        let row_map: HashMap<String, Value> = m.clone().into_iter().collect();
+                        if let Some(l) = rekuiper_connectors::record_to_line_protocol(
+                            &row_map,
+                            &config.measurement,
+                            config.tags.as_ref(),
+                            config.fields.as_deref(),
+                            config.ts_field_name.as_deref(),
+                            &config.precision,
+                        ) {
+                            lines.push(l);
+                        }
+                    }
+                }
+                lines.join("\n")
+            } else {
+                rekuiper_connectors::record_to_line_protocol(
+                    &output.data,
+                    &config.measurement,
+                    config.tags.as_ref(),
+                    config.fields.as_deref(),
+                    config.ts_field_name.as_deref(),
+                    &config.precision,
+                ).unwrap_or_default()
+            };
+
+            if line.is_empty() {
+                return Ok(());
+            }
+
+            let res = ctx.http_client
+                .post(url)
+                .header(reqwest::header::CONTENT_TYPE, "text/plain; charset=utf-8")
+                .body(line)
+                .send()
+                .await;
+
+            match res {
+                Ok(resp) if resp.status().is_success() => Ok(()),
+                Ok(resp) => {
+                    let status = resp.status();
+                    let err_text = resp.text().await.unwrap_or_default();
+                    Err(SendError::Retry(format!("influx write failed with {}: {}", status, err_text)))
+                }
+                Err(e) => Err(SendError::Retry(format!("influx write connection error: {}", e))),
+            }
+        }
+        PreparedAction::Influx2 { config, .. } => {
+            let default_url = config.write_url();
+            let url = destination.unwrap_or(&default_url);
+            let line = if let Some(Value::Array(arr)) = output.data.get(BATCH_ROWS_KEY) {
+                let mut lines = Vec::new();
+                for row in arr {
+                    if let Value::Object(m) = row {
+                        let row_map: HashMap<String, Value> = m.clone().into_iter().collect();
+                        if let Some(l) = rekuiper_connectors::record_to_line_protocol(
+                            &row_map,
+                            &config.measurement,
+                            config.tags.as_ref(),
+                            config.fields.as_deref(),
+                            config.ts_field_name.as_deref(),
+                            &config.precision,
+                        ) {
+                            lines.push(l);
+                        }
+                    }
+                }
+                lines.join("\n")
+            } else {
+                rekuiper_connectors::record_to_line_protocol(
+                    &output.data,
+                    &config.measurement,
+                    config.tags.as_ref(),
+                    config.fields.as_deref(),
+                    config.ts_field_name.as_deref(),
+                    &config.precision,
+                ).unwrap_or_default()
+            };
+
+            if line.is_empty() {
+                return Ok(());
+            }
+
+            let mut req = ctx.http_client
+                .post(url)
+                .header(reqwest::header::CONTENT_TYPE, "text/plain; charset=utf-8");
+
+            if let Some(ref token) = config.token {
+                req = req.header("Authorization", format!("Token {}", token));
+            }
+
+            let res = req.body(line).send().await;
+
+            match res {
+                Ok(resp) if resp.status().is_success() => Ok(()),
+                Ok(resp) => {
+                    let status = resp.status();
+                    let err_text = resp.text().await.unwrap_or_default();
+                    Err(SendError::Retry(format!("influx2 write failed with {}: {}", status, err_text)))
+                }
+                Err(e) => Err(SendError::Retry(format!("influx2 write connection error: {}", e))),
+            }
         }
         PreparedAction::Unknown { kind } => {
             tracing::debug!("[RULE {}] unknown action '{}', ignoring", ctx.rule_id, kind);

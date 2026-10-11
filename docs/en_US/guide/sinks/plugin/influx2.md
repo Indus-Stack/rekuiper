@@ -1,76 +1,50 @@
 # InfluxDB v2 Sink
 
-::: danger Status: Unsupported in rekuiper (Legacy eKuiper Go Plugin)
-The InfluxDB v2 sink was implemented as a Go C-shared dynamic plugin (`.so`) in legacy eKuiper.
-
-**rekuiper is written in Rust and does NOT support or load Go dynamic plugins (`.so`).** The native InfluxDB v2 plugin is not implemented in rekuiper.
-
-**Supported Alternatives in rekuiper**:
-- **REST Sink (Direct InfluxDB v2 API)**: Post line protocol data directly to `/api/v2/write?org={org}&bucket={bucket}` with an authorization header using the built-in [REST Sink](../builtin/rest.md).
-- **SQL Sink**: Store timeseries points in PostgreSQL (with TimescaleDB) or SQLite using the built-in [SQL Sink](../builtin/sql.md).
+::: tip Status: Supported as Built-in Connector in rekuiper
+The InfluxDB v2.x sink is compiled natively into the rekuiper engine binary. It provides zero-copy serialization of stream records into InfluxDB Line Protocol and posts directly to `/api/v2/write` with token authentication.
 :::
 
-## Direct HTTP Write Example with Built-in REST Sink
+## Overview
 
-You can publish data to InfluxDB v2 without any plugins by using the built-in REST sink:
+The `influx2` sink publishes processed stream records directly to InfluxDB v2.x instances (including InfluxDB Cloud) using Line Protocol over HTTP. It formats measurement tags, fields, and timestamps automatically, with support for batching and connection pooling.
 
-```json
-{
-  "id": "rule_influx2_rest",
-  "sql": "SELECT concat('air_quality,location=', location, ' co2=', co2, ',temp=', temp) AS line FROM sensor_stream",
-  "actions": [
-    {
-      "rest": {
-        "url": "http://influxdb.internal:8086/api/v2/write?org=my-org&bucket=iot-metrics&precision=ms",
-        "method": "POST",
-        "headers": {
-          "Authorization": "Token your-influx-api-token",
-          "Content-Type": "text/plain; charset=utf-8"
-        },
-        "dataTemplate": "{{.line}}",
-        "sendSingle": true
-      }
-    }
-  ]
-}
-```
-
----
-
-## Overview (Legacy Reference Only)
-
-In legacy eKuiper (Go), the InfluxDB v2 sink wrote records directly to InfluxDB v2.x using Go client libraries. This section is preserved only as an architectural reference.
-
-### Legacy Configuration Properties
+## Configuration Properties
 
 | Property Name | Optional | Description |
 | :--- | :--- | :--- |
-| `addr` | False | Network address of the InfluxDB v2 server (such as `http://127.0.0.1:8086`). |
-| `org` | False | Target InfluxDB organization name. |
-| `bucket` | False | Target InfluxDB bucket name. |
-| `token` | True | API token for InfluxDB v2 authentication. |
-| `measurement` | False | Target measurement name. |
-| `tags` | True | JSON mapping of tag key-values. |
-| `fields` | True | Array of field names to write. |
-| `precision` | True | Timestamp precision (`ns`, `us`, `ms`, `s`). |
-| `tsFieldName` | True | Field name containing the timestamp. |
+| `addr` | False | Network address of the InfluxDB v2 server (e.g., `http://127.0.0.1:8086` or InfluxDB Cloud URL). |
+| `org` | False | Target InfluxDB v2 organization name. |
+| `bucket` | False | Target InfluxDB v2 bucket name. |
+| `token` | True | InfluxDB API authentication token. |
+| `measurement` | False | Target measurement table name. Supports dynamic data templates (e.g., `"{{.device}}"`). |
+| `precision` | True | Timestamp precision (`ms`, `s`, `us`, `ns`). Default is `ms`. |
+| `tags` | True | Key-value mapping of tag names to template strings (e.g., `{"host": "{{.host}}", "site": "plant_1"}`). |
+| `fields` | True | Array of field property names to write. If omitted, all non-tag payload fields are written. |
+| `tsFieldName` | True | Payload property name containing the record timestamp. If omitted, the engine uses current epoch time. |
+| `sendSingle` | True | Whether to emit records individually (`true`) or in array batches (`false`). Default is `true`. |
 
-### Legacy Rule Example
+## Example Rule Configuration
+
+The following rule publishes air quality metrics to InfluxDB v2:
 
 ```json
 {
-  "id": "influx2_legacy",
-  "sql": "SELECT * FROM demo_stream WHERE temperature > 50",
+  "id": "rule_influx2_air_quality",
+  "sql": "SELECT location, co2, temp, ts FROM sensorStream",
   "actions": [
     {
       "influx2": {
-        "addr": "http://192.168.100.245:8086",
-        "org": "admin",
-        "bucket": "bucketName",
-        "token": "my-api-token",
-        "measurement": "test",
-        "tags": "{\"tag1\":\"value1\"}",
-        "fields": ["humidity", "temperature", "pressure"]
+        "addr": "http://127.0.0.1:8086",
+        "org": "my_org",
+        "bucket": "iot_metrics",
+        "token": "my-secret-influx-token",
+        "measurement": "air_quality",
+        "tags": {
+          "location": "{{.location}}"
+        },
+        "fields": ["co2", "temp"],
+        "tsFieldName": "ts",
+        "precision": "ms"
       }
     }
   ]

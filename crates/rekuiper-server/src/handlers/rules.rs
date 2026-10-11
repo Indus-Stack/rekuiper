@@ -480,6 +480,38 @@ pub fn validate_sink_actions(actions: &[HashMap<String, Value>]) -> Result<(), S
                     }
                 }
             }
+            if kind.eq_ignore_ascii_case("influx") {
+                let addr = opts.get("addr").and_then(|v| v.as_str()).unwrap_or("");
+                if addr.is_empty() {
+                    return Err("influx sink is missing property addr".to_string());
+                }
+                let database = opts.get("database").and_then(|v| v.as_str()).unwrap_or("");
+                if database.is_empty() {
+                    return Err("influx sink is missing property database".to_string());
+                }
+                let measurement = opts.get("measurement").and_then(|v| v.as_str()).unwrap_or("");
+                if measurement.is_empty() {
+                    return Err("influx sink is missing property measurement".to_string());
+                }
+            }
+            if kind.eq_ignore_ascii_case("influx2") {
+                let addr = opts.get("addr").and_then(|v| v.as_str()).unwrap_or("");
+                if addr.is_empty() {
+                    return Err("influx2 sink is missing property addr".to_string());
+                }
+                let org = opts.get("org").and_then(|v| v.as_str()).unwrap_or("");
+                if org.is_empty() {
+                    return Err("influx2 sink is missing property org".to_string());
+                }
+                let bucket = opts.get("bucket").and_then(|v| v.as_str()).unwrap_or("");
+                if bucket.is_empty() {
+                    return Err("influx2 sink is missing property bucket".to_string());
+                }
+                let measurement = opts.get("measurement").and_then(|v| v.as_str()).unwrap_or("");
+                if measurement.is_empty() {
+                    return Err("influx2 sink is missing property measurement".to_string());
+                }
+            }
         }
     }
     Ok(())
@@ -1717,4 +1749,48 @@ pub async fn set_tracer_config(State(state): State<AppState>, body: Bytes) -> Re
         }
     }
     (StatusCode::OK, Json(json!({"message": "success"}))).into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_validate_sink_actions_influx() {
+        let invalid_influx = vec![HashMap::from([
+            ("influx".to_string(), json!({
+                "database": "db1",
+                "measurement": "m1"
+            }))
+        ])];
+        assert!(validate_sink_actions(&invalid_influx).is_err());
+
+        let valid_influx = vec![HashMap::from([
+            ("influx".to_string(), json!({
+                "addr": "http://127.0.0.1:8086",
+                "database": "db1",
+                "measurement": "m1"
+            }))
+        ])];
+        assert!(validate_sink_actions(&valid_influx).is_ok());
+
+        let invalid_influx2 = vec![HashMap::from([
+            ("influx2".to_string(), json!({
+                "addr": "http://127.0.0.1:8086",
+                "bucket": "b1",
+                "measurement": "m1"
+            }))
+        ])];
+        assert!(validate_sink_actions(&invalid_influx2).is_err());
+
+        let valid_influx2 = vec![HashMap::from([
+            ("influx2".to_string(), json!({
+                "addr": "http://127.0.0.1:8086",
+                "org": "o1",
+                "bucket": "b1",
+                "measurement": "m1"
+            }))
+        ])];
+        assert!(validate_sink_actions(&valid_influx2).is_ok());
+    }
 }

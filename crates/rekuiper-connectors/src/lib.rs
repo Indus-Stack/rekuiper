@@ -49,6 +49,9 @@ pub use simulator::*;
 pub mod sql;
 pub use sql::*;
 
+pub mod influx;
+pub use influx::*;
+
 #[async_trait]
 pub trait Sink: Send + Sync {
     async fn send(&self, record: &StreamRecord) -> Result<()>;

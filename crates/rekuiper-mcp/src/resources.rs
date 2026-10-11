@@ -93,6 +93,12 @@ pub fn get_resource_definitions() -> Vec<ResourceDefinition> {
             description: Some("Configuration template for EdgeX Foundry dual-port listening (59880 / 59881) for legacy and modern deployments.".to_string()),
             mime_type: Some("application/json".to_string()),
         },
+        ResourceDefinition {
+            uri: "rekuiper://schemas/influx".to_string(),
+            name: "InfluxDB v1 and v2 Action Schema".to_string(),
+            description: Some("Configuration template for InfluxDB v1 and v2 timeseries sink actions with measurement, tags, and line protocol options.".to_string()),
+            mime_type: Some("application/json".to_string()),
+        },
     ]
 }
 
@@ -168,6 +174,35 @@ pub async fn read_resource(
                 "port_alt": 59881,
                 "topic": "edgex/events/#",
                 "type": "redis"
+            }
+        }))
+        .unwrap_or_default(),
+        "rekuiper://schemas/influx" => serde_json::to_string_pretty(&json!({
+            "influx_v1": {
+                "addr": "http://127.0.0.1:8086",
+                "database": "telemetry",
+                "measurement": "sensor_readings",
+                "username": "admin",
+                "password": "password",
+                "precision": "ms",
+                "tags": {
+                    "device": "{{.device_id}}",
+                    "location": "factory_floor"
+                },
+                "fields": ["temperature", "humidity", "vibration"],
+                "tsFieldName": "ts"
+            },
+            "influx_v2": {
+                "addr": "http://127.0.0.1:8086",
+                "org": "my_org",
+                "bucket": "iot_bucket",
+                "token": "secret_token",
+                "measurement": "sensor_readings",
+                "precision": "ms",
+                "tags": {
+                    "device": "{{.device_id}}"
+                },
+                "tsFieldName": "ts"
             }
         }))
         .unwrap_or_default(),

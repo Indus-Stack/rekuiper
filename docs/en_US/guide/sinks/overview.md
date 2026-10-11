@@ -18,10 +18,12 @@ rekuiper includes the following built-in sink connectors:
 - [Nop sink](./builtin/nop.md): Discards output records for performance benchmarking.
 - [Kafka sink](./plugin/kafka.md): Publishes records directly to Apache Kafka topics.
 - [SQL sink](./plugin/sql.md): Inserts or updates records in relational databases through SQL.
+- [InfluxDB sink](./plugin/influx.md): Publishes timeseries points directly to InfluxDB v1.x via Line Protocol.
+- [InfluxDB v2 sink](./plugin/influx2.md): Publishes timeseries points directly to InfluxDB v2.x via Line Protocol.
 - [WebSocket sink](./builtin/websocket.md): Streams events to connected WebSocket clients.
 
 > [!NOTE]
-> Legacy Go C-shared dynamic plugins (`.so`) are not supported in rekuiper. High-demand connectors like Kafka and SQL are built into the binary. For custom integrations, use WebAssembly (Wasm) or an external HTTP service.
+> Legacy Go C-shared dynamic plugins (`.so`) are not supported in rekuiper. High-demand connectors like Kafka, SQL, InfluxDB, and WebSocket are built into the binary. For custom integrations, use WebAssembly (Wasm) or an external HTTP service.
 
 ## Updatable Sinks
 

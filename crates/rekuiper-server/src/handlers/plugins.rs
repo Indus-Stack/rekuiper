@@ -602,6 +602,8 @@ const BUILTIN_SINKS: &[&str] = &[
     "edgex",
     "file",
     "http",
+    "influx",
+    "influx2",
     "kafka",
     "log",
     "memory",
