@@ -436,12 +436,14 @@ pub fn validate_sink_actions(actions: &[HashMap<String, Value>]) -> Result<(), S
             if let Some(tpl) = opts.get("dataTemplate").and_then(|v| v.as_str()) {
                 rekuiper_connectors::validate_data_template(tpl)?;
             }
-            if let Some(fmt) = opts.get("format").and_then(|v| v.as_str()) {
-                if !SUPPORTED_FORMATS
-                    .iter()
-                    .any(|&f| f.eq_ignore_ascii_case(fmt))
-                {
-                    return Err(format!("format type {} not supported", fmt));
+            if !kind.eq_ignore_ascii_case("image") {
+                if let Some(fmt) = opts.get("format").and_then(|v| v.as_str()) {
+                    if !SUPPORTED_FORMATS
+                        .iter()
+                        .any(|&f| f.eq_ignore_ascii_case(fmt))
+                    {
+                        return Err(format!("format type {} not supported", fmt));
+                    }
                 }
             }
             if kind.eq_ignore_ascii_case("mqtt") {
@@ -526,6 +528,17 @@ pub fn validate_sink_actions(actions: &[HashMap<String, Value>]) -> Result<(), S
                 let device = opts.get("device").and_then(|v| v.as_str()).unwrap_or("");
                 if device.is_empty() {
                     return Err("iotdb sink is missing property device".to_string());
+                }
+            }
+            if kind.eq_ignore_ascii_case("image") {
+                let path = opts.get("path").and_then(|v| v.as_str()).unwrap_or("");
+                if path.is_empty() {
+                    return Err("image sink is missing property path".to_string());
+                }
+                if let Some(fmt) = opts.get("format").and_then(|v| v.as_str()) {
+                    if !matches!(fmt.to_lowercase().as_str(), "png" | "jpeg" | "jpg") {
+                        return Err(format!("image format type {} not supported", fmt));
+                    }
                 }
             }
         }
@@ -1844,5 +1857,23 @@ mod tests {
             }))
         ])];
         assert!(validate_sink_actions(&valid_iotdb).is_ok());
+    }
+
+    #[test]
+    fn test_validate_sink_actions_image() {
+        let invalid_image = vec![HashMap::from([
+            ("image".to_string(), json!({
+                "format": "png"
+            }))
+        ])];
+        assert!(validate_sink_actions(&invalid_image).is_err());
+
+        let valid_image = vec![HashMap::from([
+            ("image".to_string(), json!({
+                "path": "/tmp/images",
+                "format": "png"
+            }))
+        ])];
+        assert!(validate_sink_actions(&valid_image).is_ok());
     }
 }

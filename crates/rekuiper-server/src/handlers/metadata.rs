@@ -80,6 +80,7 @@ pub async fn list_sink_metadata() -> impl IntoResponse {
         "edgex",
         "file",
         "http",
+        "image",
         "influx",
         "influx2",
         "iotdb",

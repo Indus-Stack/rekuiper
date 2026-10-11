@@ -297,6 +297,7 @@ async fn test_resources_and_prompts() {
     assert!(uris.contains(&"rekuiper://schemas/influx"));
     assert!(uris.contains(&"rekuiper://schemas/tdengine"));
     assert!(uris.contains(&"rekuiper://schemas/iotdb"));
+    assert!(uris.contains(&"rekuiper://schemas/image"));
 
     // Read static schema resource
     let req_read_res = JsonRpcRequest {
@@ -353,6 +354,20 @@ async fn test_resources_and_prompts() {
     let text_iotdb = res_iotdb["contents"][0]["text"].as_str().unwrap();
     assert!(text_iotdb.contains("root.factory"));
     assert!(text_iotdb.contains("measurements"));
+
+    let req_read_image = JsonRpcRequest {
+        jsonrpc: "2.0".to_string(),
+        id: Some(json!(35)),
+        method: "resources/read".to_string(),
+        params: Some(json!({
+            "uri": "rekuiper://schemas/image"
+        })),
+    };
+    let resp_image = handler.handle_request(req_read_image).await.unwrap();
+    let res_image = resp_image.result.unwrap();
+    let text_image = res_image["contents"][0]["text"].as_str().unwrap();
+    assert!(text_image.contains("maxAge"));
+    assert!(text_image.contains("maxCount"));
     assert!(text.contains("rabbitmq"));
 
     // Prompts list

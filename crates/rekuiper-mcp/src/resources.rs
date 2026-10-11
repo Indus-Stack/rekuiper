@@ -111,6 +111,12 @@ pub fn get_resource_definitions() -> Vec<ResourceDefinition> {
             description: Some("Configuration template for Apache IoTDB REST timeseries sink action with device tree paths and measurements.".to_string()),
             mime_type: Some("application/json".to_string()),
         },
+        ResourceDefinition {
+            uri: "rekuiper://schemas/image".to_string(),
+            name: "Image Action Schema".to_string(),
+            description: Some("Configuration template for Image sink action writing binary camera frames with retention pruning.".to_string()),
+            mime_type: Some("application/json".to_string()),
+        },
     ]
 }
 
@@ -239,6 +245,15 @@ pub async fn read_resource(
             "device": "root.factory.{{.deviceId}}",
             "measurements": ["temperature", "humidity", "pressure"],
             "tsFieldName": "ts"
+        }))
+        .unwrap_or_default(),
+        "rekuiper://schemas/image" => serde_json::to_string_pretty(&json!({
+            "path": "/tmp/images/{{.deviceId}}",
+            "format": "png",
+            "imageField": "image",
+            "fileName": "frame_{{.deviceId}}_{{.ts}}.png",
+            "maxAge": 72,
+            "maxCount": 1000
         }))
         .unwrap_or_default(),
         "rekuiper://metrics" => {

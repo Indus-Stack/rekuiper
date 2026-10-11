@@ -350,6 +350,10 @@ pub(crate) enum PreparedAction {
         config: Box<rekuiper_connectors::IotdbConfig>,
         opts: CommonSinkOpts,
     },
+    Image {
+        config: Box<rekuiper_connectors::ImageSinkConfig>,
+        opts: CommonSinkOpts,
+    },
     Unknown {
         kind: String,
     },
@@ -369,6 +373,7 @@ impl PreparedAction {
             PreparedAction::Influx2 { opts, .. } => Some(opts),
             PreparedAction::Tdengine { opts, .. } => Some(opts),
             PreparedAction::Iotdb { opts, .. } => Some(opts),
+            PreparedAction::Image { opts, .. } => Some(opts),
             _ => None,
         }
     }
@@ -772,6 +777,20 @@ pub(crate) fn prepare_actions(
                         }
                         Err(_) => out.push(PreparedAction::Unknown {
                             kind: "iotdb".to_string(),
+                        }),
+                    }
+                }
+                "image" => {
+                    match serde_json::from_value::<rekuiper_connectors::ImageSinkConfig>(opts.clone()) {
+                        Ok(config) => {
+                            let common_opts = parse_common_opts(opts, rule_send_nil_field, true);
+                            out.push(PreparedAction::Image {
+                                config: Box::new(config),
+                                opts: common_opts,
+                            });
+                        }
+                        Err(_) => out.push(PreparedAction::Unknown {
+                            kind: "image".to_string(),
                         }),
                     }
                 }
@@ -2006,6 +2025,19 @@ pub(crate) async fn send_action(
                 }
                 Err(e) => Err(SendError::Retry(format!("iotdb write connection error: {}", e))),
             }
+        }
+        PreparedAction::Image { config, .. } => {
+            if let Some(Value::Array(arr)) = output.data.get(BATCH_ROWS_KEY) {
+                for row in arr {
+                    if let Value::Object(m) = row {
+                        let row_map: HashMap<String, Value> = m.clone().into_iter().collect();
+                        config.save_image(&row_map).await.map_err(|e| SendError::Retry(e))?;
+                    }
+                }
+            } else {
+                config.save_image(&output.data).await.map_err(|e| SendError::Retry(e))?;
+            }
+            Ok(())
         }
         PreparedAction::Unknown { kind } => {
             tracing::debug!("[RULE {}] unknown action '{}', ignoring", ctx.rule_id, kind);

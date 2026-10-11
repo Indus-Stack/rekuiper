@@ -1,60 +1,41 @@
 # Image Sink
 
-::: danger Status: Unsupported in rekuiper (Legacy eKuiper Go Plugin)
-The Image sink was implemented as a Go C-shared dynamic plugin (`.so`) in legacy eKuiper.
+The `image` sink saves binary camera frame payloads (JPEG or PNG) directly to local storage directories with automated age-based (`maxAge`) and count-based (`maxCount`) retention pruning.
 
-**rekuiper is written in Rust and does NOT support or load Go dynamic plugins (`.so`).** The Image sink is not implemented in rekuiper.
+In `rekuiper`, the Image sink is built into the binary in pure Rust using asynchronous file I/O (`tokio::fs`) with zero C dynamic dependencies.
 
-**Supported Alternatives in rekuiper**:
-- To write binary payloads to disk, use the built-in [File Sink](../builtin/file.md) with raw binary encoding.
-- To transmit image payloads across networks, use the built-in [REST Sink](../builtin/rest.md) or [MQTT Sink](../builtin/mqtt.md).
-:::
+## Configuration Properties
 
-## Overview (Legacy Reference Only)
+Configure the `image` sink action using the following properties:
 
-In legacy eKuiper (Go), the Image sink stored raw binary image data (JPEG or PNG) to a local directory with automated age and count retention policies. This page is preserved only as an architectural reference for users who migrate from legacy Go eKuiper deployments.
+| Property Name | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `path` | String | **Yes** | - | Target directory path for saved images (e.g. `/tmp/images` or `/tmp/images/{{.deviceId}}`). |
+| `format` | String | No | `jpeg` | Image format: `jpeg`, `jpg`, or `png`. |
+| `imageField` | String | No | auto | Name of the field containing binary bytes or a base64 encoded string. If omitted, searches `image`, `image_bytes`, `data`, and `payload`. |
+| `fileName` | String | No | auto | Optional file name template (e.g. `frame_{{.deviceId}}_{{.ts}}.png`). If omitted, generates `<uuid>.<format>`. |
+| `maxAge` | Integer | No | `72` | Maximum retention time in hours. Files older than this threshold are pruned. |
+| `maxCount` | Integer | No | `1000` | Maximum number of stored image files in the target directory. When exceeded, the oldest files are removed. |
 
-## Legacy Configuration Parameters
+## Examples
 
-| Property Name | Optional | Description |
-| :--- | :--- | :--- |
-| `path` | False | Target directory path for saved images (such as `./tmp`). |
-| `format` | False | Image format: `jpeg` or `png`. |
-| `maxAge` | True | Maximum retention time in hours. Default was `72`. |
-| `maxCount` | True | Maximum number of stored image files. Default was `1000`. |
+### Storing Frame with Dynamic Path and Custom Name
 
-## Legacy Rule Example
+Writes frames from camera streams into device-specific directories with custom file names:
 
 ```json
 {
-  "id": "rule_legacy_image",
-  "sql": "SELECT * FROM camera_stream",
+  "id": "rule_camera_save",
+  "sql": "SELECT deviceId, image, ts FROM cameraStream",
   "actions": [
     {
       "image": {
-        "path": "/tmp/images",
+        "path": "/data/captures/{{.deviceId}}",
         "format": "png",
-        "maxCount": 1000,
-        "maxAge": 72
-      }
-    }
-  ]
-}
-```
-
-## Migration Path to rekuiper
-
-In rekuiper, write binary records to disk using the built-in File sink or post them to an external storage service using the REST sink:
-
-```json
-{
-  "id": "rule_image_file",
-  "sql": "SELECT image_bytes FROM camera_stream",
-  "actions": [
-    {
-      "file": {
-        "path": "data/images/capture.bin",
-        "format": "binary"
+        "imageField": "image",
+        "fileName": "{{.deviceId}}_{{.ts}}.png",
+        "maxAge": 24,
+        "maxCount": 500
       }
     }
   ]

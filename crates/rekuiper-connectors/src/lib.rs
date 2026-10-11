@@ -58,6 +58,9 @@ pub use tdengine::*;
 pub mod iotdb;
 pub use iotdb::*;
 
+pub mod image_sink;
+pub use image_sink::*;
+
 #[async_trait]
 pub trait Sink: Send + Sync {
     async fn send(&self, record: &StreamRecord) -> Result<()>;

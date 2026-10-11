@@ -602,6 +602,7 @@ const BUILTIN_SINKS: &[&str] = &[
     "edgex",
     "file",
     "http",
+    "image",
     "influx",
     "influx2",
     "iotdb",
