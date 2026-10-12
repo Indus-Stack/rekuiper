@@ -42,8 +42,8 @@ fn default_ts_field_name() -> String {
 }
 
 impl IotdbConfig {
-    /// Generates the Apache IoTDB REST API endpoint URL.
-    pub fn endpoint_url(&self) -> String {
+    /// Generates the Apache IoTDB REST API single record endpoint URL.
+    pub fn record_endpoint_url(&self) -> String {
         let trimmed = self.addr.trim();
         let base = if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
             trimmed.to_string()
@@ -58,6 +58,27 @@ impl IotdbConfig {
         }
     }
 
+    /// Generates the Apache IoTDB REST API batch tablet endpoint URL.
+    pub fn tablet_endpoint_url(&self) -> String {
+        let trimmed = self.addr.trim();
+        let base = if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
+            trimmed.to_string()
+        } else {
+            format!("http://{}", trimmed)
+        };
+        let base = base.trim_end_matches('/');
+        if base.contains("/rest/") || base.contains("/api/") {
+            base.to_string()
+        } else {
+            format!("{}/rest/v1/insertTablet", base)
+        }
+    }
+
+    /// Generates the Apache IoTDB REST API endpoint URL (defaulting to single record).
+    pub fn endpoint_url(&self) -> String {
+        self.record_endpoint_url()
+    }
+
     /// Computes HTTP Basic Authentication header value.
     pub fn basic_auth_header(&self) -> String {
         let auth_str = format!("{}:{}", self.username, self.password);
@@ -65,7 +86,7 @@ impl IotdbConfig {
         format!("Basic {}", encoded)
     }
 
-    /// Formats an event record into an Apache IoTDB REST record insertion payload.
+    /// Formats an event record into an Apache IoTDB REST single record insertion payload (`/rest/v1/insertRecord`).
     pub fn build_insert_payload(&self, record: &HashMap<String, Value>) -> Result<Value, String> {
         if record.is_empty() {
             return Err("record data is empty".to_string());
@@ -113,8 +134,9 @@ impl IotdbConfig {
                 .unwrap_or(0)
         };
 
-        // 3. Resolve measurements and values
+        // 3. Resolve measurements, dataTypes, and values
         let mut measurements: Vec<String> = Vec::new();
+        let mut data_types: Vec<String> = Vec::new();
         let mut values: Vec<Value> = Vec::new();
 
         if let Some(ref m_list) = self.measurements {
@@ -124,6 +146,7 @@ impl IotdbConfig {
                 }
                 if let Some(val) = record.get(m) {
                     measurements.push(m.clone());
+                    data_types.push(infer_iotdb_data_type(val).to_string());
                     values.push(val.clone());
                 } else {
                     return Err(format!("measurement '{}' not found in record", m));
@@ -138,6 +161,7 @@ impl IotdbConfig {
                 }
                 if let Some(val) = record.get(k) {
                     measurements.push(k.clone());
+                    data_types.push(infer_iotdb_data_type(val).to_string());
                     values.push(val.clone());
                 }
             }
@@ -149,13 +173,14 @@ impl IotdbConfig {
 
         Ok(serde_json::json!({
             "device": device,
-            "timestamps": [ts],
+            "timestamp": ts,
             "measurements": measurements,
-            "values": [values]
+            "dataTypes": data_types,
+            "values": values
         }))
     }
 
-    /// Formats a batch of stream records into properly grouped IoTDB insert payloads.
+    /// Formats a batch of stream records into properly grouped IoTDB tablet payloads (`/rest/v1/insertTablet`).
     /// Records sharing the same device and measurement schema are batched together.
     pub fn build_batch_insert_payloads(
         &self,
@@ -167,6 +192,7 @@ impl IotdbConfig {
         struct TabletGroup {
             device: String,
             measurements: Vec<String>,
+            data_types: Vec<String>,
             timestamps: Vec<i64>,
             values: Vec<Vec<Value>>,
         }
@@ -187,9 +213,7 @@ impl IotdbConfig {
                 .unwrap_or("")
                 .to_string();
             let ts = single
-                .get("timestamps")
-                .and_then(|t| t.as_array())
-                .and_then(|a| a.first())
+                .get("timestamp")
                 .and_then(|v| v.as_i64())
                 .unwrap_or(0);
             let measurements: Vec<String> = single
@@ -201,17 +225,24 @@ impl IotdbConfig {
                         .collect()
                 })
                 .unwrap_or_default();
+            let data_types: Vec<String> = single
+                .get("dataTypes")
+                .and_then(|dt| dt.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                        .collect()
+                })
+                .unwrap_or_default();
             let row_vals: Vec<Value> = single
                 .get("values")
-                .and_then(|v| v.as_array())
-                .and_then(|a| a.first())
                 .and_then(|v| v.as_array())
                 .cloned()
                 .unwrap_or_default();
 
             let mut found = false;
             for g in &mut groups {
-                if g.device == dev && g.measurements == measurements {
+                if g.device == dev && g.measurements == measurements && g.data_types == data_types {
                     g.timestamps.push(ts);
                     g.values.push(row_vals.clone());
                     found = true;
@@ -222,6 +253,7 @@ impl IotdbConfig {
                 groups.push(TabletGroup {
                     device: dev,
                     measurements,
+                    data_types,
                     timestamps: vec![ts],
                     values: vec![row_vals],
                 });
@@ -233,14 +265,31 @@ impl IotdbConfig {
             .map(|g| {
                 serde_json::json!({
                     "device": g.device,
-                    "timestamps": g.timestamps,
                     "measurements": g.measurements,
+                    "dataTypes": g.data_types,
+                    "timestamps": g.timestamps,
                     "values": g.values
                 })
             })
             .collect();
 
         Ok(payloads)
+    }
+}
+
+/// Maps a JSON value to an Apache IoTDB REST v1 data type name.
+pub fn infer_iotdb_data_type(val: &Value) -> &'static str {
+    match val {
+        Value::Bool(_) => "BOOLEAN",
+        Value::Number(n) => {
+            if n.is_i64() || n.is_u64() {
+                "INT64"
+            } else {
+                "DOUBLE"
+            }
+        }
+        Value::String(_) => "TEXT",
+        _ => "TEXT",
     }
 }
 
@@ -268,9 +317,10 @@ mod tests {
 
         let payload = cfg.build_insert_payload(&record).unwrap();
         assert_eq!(payload["device"], "root.station.pump_01");
-        assert_eq!(payload["timestamps"], json!([1690000000000i64]));
+        assert_eq!(payload["timestamp"], json!(1690000000000i64));
         assert_eq!(payload["measurements"], json!(["pressure", "temp"]));
-        assert_eq!(payload["values"], json!([[101.3, 42.5]]));
+        assert_eq!(payload["dataTypes"], json!(["DOUBLE", "DOUBLE"]));
+        assert_eq!(payload["values"], json!([101.3, 42.5]));
     }
 
     #[test]
@@ -284,6 +334,14 @@ mod tests {
             ts_field_name: "ts".to_string(),
         };
 
+        assert_eq!(
+            cfg.record_endpoint_url(),
+            "http://iotdb-cluster:18080/rest/v1/insertRecord"
+        );
+        assert_eq!(
+            cfg.tablet_endpoint_url(),
+            "http://iotdb-cluster:18080/rest/v1/insertTablet"
+        );
         assert_eq!(
             cfg.endpoint_url(),
             "http://iotdb-cluster:18080/rest/v1/insertRecord"
@@ -310,11 +368,47 @@ mod tests {
 
         let payload = cfg.build_insert_payload(&record).unwrap();
         assert_eq!(payload["device"], "root.ln.wf01.wt01");
-        assert_eq!(payload["timestamps"], json!([1710000000000i64]));
+        assert_eq!(payload["timestamp"], json!(1710000000000i64));
         let m_arr = payload["measurements"].as_array().unwrap();
         assert_eq!(m_arr.len(), 3);
         assert!(m_arr.contains(&json!("active")));
         assert!(m_arr.contains(&json!("tag_str")));
         assert!(m_arr.contains(&json!("temp")));
+        let dt_arr = payload["dataTypes"].as_array().unwrap();
+        assert_eq!(dt_arr.len(), 3);
+        assert!(dt_arr.contains(&json!("BOOLEAN")));
+        assert!(dt_arr.contains(&json!("TEXT")));
+        assert!(dt_arr.contains(&json!("DOUBLE")));
+    }
+
+    #[test]
+    fn test_iotdb_build_batch_tablet_payload() {
+        let cfg = IotdbConfig {
+            addr: "127.0.0.1:18080".to_string(),
+            username: "root".to_string(),
+            password: "root".to_string(),
+            device: "root.sg.dev".to_string(),
+            measurements: Some(vec!["speed".to_string(), "status".to_string()]),
+            ts_field_name: "ts".to_string(),
+        };
+
+        let mut r1 = HashMap::new();
+        r1.insert("speed".to_string(), json!(120));
+        r1.insert("status".to_string(), json!("running"));
+        r1.insert("ts".to_string(), json!(1000i64));
+
+        let mut r2 = HashMap::new();
+        r2.insert("speed".to_string(), json!(135));
+        r2.insert("status".to_string(), json!("idle"));
+        r2.insert("ts".to_string(), json!(2000i64));
+
+        let batches = cfg.build_batch_insert_payloads(&[r1, r2]).unwrap();
+        assert_eq!(batches.len(), 1);
+        let b = &batches[0];
+        assert_eq!(b["device"], "root.sg.dev");
+        assert_eq!(b["measurements"], json!(["speed", "status"]));
+        assert_eq!(b["dataTypes"], json!(["INT64", "TEXT"]));
+        assert_eq!(b["timestamps"], json!([1000, 2000]));
+        assert_eq!(b["values"], json!([[120, "running"], [135, "idle"]]));
     }
 }

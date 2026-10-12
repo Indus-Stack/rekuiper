@@ -2,9 +2,11 @@
 
 The **Video source connector** ingests live RTSP camera feeds, HTTP video streams, and video files into `rekuiper` streaming pipelines. It extracts discrete image frames at a configurable cadence and emits them as stream events.
 
-> [!TIP]
-> **Native Pure-Rust Architecture (0 Dynamic C Dependencies)**
-> In legacy eKuiper, the video connector required compiling a dynamic C-shared Go plugin (`.so`). In `rekuiper`, the Video connector is a **built-in native component** with zero C library links. It spawns standard FFmpeg processes via asynchronous OS pipes and demuxes continuous MJPEG streams into discrete JPEG frames using high-performance pure-Rust SOI (`0xFF 0xD8`) and EOI (`0xFF 0xD9`) frame delimiter parsing.
+> [!NOTE]
+> **Architecture**
+> The video connector is a built-in component. It does not require a dynamic shared library.
+> It starts an FFmpeg process with asynchronous pipes.
+> It divides the video stream into discrete JPEG frames by reading SOI (`0xFF 0xD8`) and EOI (`0xFF 0xD9`) markers.
 
 ---
 

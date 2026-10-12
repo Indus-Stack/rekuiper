@@ -86,8 +86,11 @@ impl TdengineConfig {
         format!("Basic {}", encoded)
     }
 
-    /// Formats a single stream record into a TDengine INSERT clause (table [USING ...] (cols) VALUES (vals)).
-    pub fn build_insert_clause(&self, record: &HashMap<String, Value>) -> Result<String, String> {
+    /// Formats a single stream record into a TDengine table prefix and value tuple (`(prefix, "(v1, v2)")`).
+    pub fn build_insert_parts(
+        &self,
+        record: &HashMap<String, Value>,
+    ) -> Result<(String, String), String> {
         if record.is_empty() {
             return Err("record data is empty".to_string());
         }
@@ -201,21 +204,24 @@ impl TdengineConfig {
             }
         }
 
-        // 5. Construct statement clause
-        let mut sql = format!("{} ", table_trimmed);
+        // 5. Construct prefix and value tuple
+        let mut prefix = format!("{} ", table_trimmed);
         if let Some(st) = s_table {
-            sql.push_str(&format!("USING {} ", st));
+            prefix.push_str(&format!("USING {} ", st));
             if !tag_vals.is_empty() {
-                sql.push_str(&format!("TAGS ({}) ", tag_vals.join(", ")));
+                prefix.push_str(&format!("TAGS ({}) ", tag_vals.join(", ")));
             }
         }
-        sql.push_str(&format!(
-            "({}) VALUES ({})",
-            keys.join(", "),
-            vals.join(", ")
-        ));
+        prefix.push_str(&format!("({})", keys.join(", ")));
 
-        Ok(sql)
+        let values_tuple = format!("({})", vals.join(", "));
+        Ok((prefix, values_tuple))
+    }
+
+    /// Formats a single stream record into a TDengine INSERT clause (`table [USING ...] (cols) VALUES (vals)`).
+    pub fn build_insert_clause(&self, record: &HashMap<String, Value>) -> Result<String, String> {
+        let (prefix, values_tuple) = self.build_insert_parts(record)?;
+        Ok(format!("{} VALUES {}", prefix, values_tuple))
     }
 
     /// Formats a single stream record into a full TDengine INSERT SQL statement.
@@ -225,22 +231,42 @@ impl TdengineConfig {
     }
 
     /// Formats a batch of stream records into a single multi-row/multi-table TDengine INSERT statement.
+    /// Consecutive rows targeting the same table schema are grouped into multi-row `VALUES (...) (...)` clauses.
     pub fn build_batch_insert_sql(
         &self,
         records: &[HashMap<String, Value>],
     ) -> Result<String, String> {
-        let mut clauses = Vec::new();
-        for rec in records {
-            match self.build_insert_clause(rec) {
-                Ok(c) => clauses.push(c),
-                Err(e) => {
-                    tracing::warn!("TDengine batch record invalid: {}; skipping row", e);
-                }
-            }
-        }
-        if clauses.is_empty() {
+        if records.is_empty() {
             return Ok(String::new());
         }
+
+        let mut groups: Vec<(String, Vec<String>)> = Vec::new();
+        for rec in records {
+            let (prefix, values_tuple) = match self.build_insert_parts(rec) {
+                Ok(p) => p,
+                Err(e) => {
+                    tracing::warn!("TDengine batch record invalid: {}; skipping row", e);
+                    continue;
+                }
+            };
+            if let Some(last) = groups.last_mut() {
+                if last.0 == prefix {
+                    last.1.push(values_tuple);
+                    continue;
+                }
+            }
+            groups.push((prefix, vec![values_tuple]));
+        }
+
+        if groups.is_empty() {
+            return Ok(String::new());
+        }
+
+        let clauses: Vec<String> = groups
+            .into_iter()
+            .map(|(prefix, tuples)| format!("{} VALUES {}", prefix, tuples.join(" ")))
+            .collect();
+
         Ok(format!("INSERT INTO {}", clauses.join(" ")))
     }
 }
@@ -428,7 +454,24 @@ mod tests {
         let batch_sql = cfg.build_batch_insert_sql(&[r1, r2]).unwrap();
         assert_eq!(
             batch_sql,
-            "INSERT INTO t1 (ts, v) VALUES (now, 10) t1 (ts, v) VALUES (now, 20)"
+            "INSERT INTO t1 (ts, v) VALUES (now, 10) (now, 20)"
+        );
+
+        // Multi-table batch
+        let mut cfg_multi = cfg.clone();
+        cfg_multi.table = "m_{{.dev}}".to_string();
+        cfg_multi.fields = Some(vec!["v".to_string()]);
+        let mut r_dev1 = HashMap::new();
+        r_dev1.insert("dev".to_string(), json!("1"));
+        r_dev1.insert("v".to_string(), json!(100));
+        let mut r_dev2 = HashMap::new();
+        r_dev2.insert("dev".to_string(), json!("2"));
+        r_dev2.insert("v".to_string(), json!(200));
+
+        let multi_sql = cfg_multi.build_batch_insert_sql(&[r_dev1, r_dev2]).unwrap();
+        assert_eq!(
+            multi_sql,
+            "INSERT INTO m_1 (ts, v) VALUES (now, 100) m_2 (ts, v) VALUES (now, 200)"
         );
     }
 }

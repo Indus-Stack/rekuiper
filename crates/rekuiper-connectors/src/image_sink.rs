@@ -3,7 +3,7 @@ use base64::Engine;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::time::{Duration, SystemTime};
@@ -27,27 +27,78 @@ impl std::fmt::Display for ImageSinkError {
 
 impl std::error::Error for ImageSinkError {}
 
-static ACTIVE_PRUNE_DIRS: OnceLock<Mutex<HashSet<PathBuf>>> = OnceLock::new();
+#[derive(Debug, Clone)]
+struct PruneDirectoryState {
+    format: String,
+    max_age_secs: u64,
+    max_count: usize,
+    last_write: std::time::Instant,
+}
+
+static ACTIVE_PRUNE_DIRS: OnceLock<Mutex<HashMap<PathBuf, PruneDirectoryState>>> = OnceLock::new();
 
 fn ensure_prune_timer(dir: PathBuf, format: String, max_age_secs: u64, max_count: usize) {
-    let registry = ACTIVE_PRUNE_DIRS.get_or_init(|| Mutex::new(HashSet::new()));
+    let registry = ACTIVE_PRUNE_DIRS.get_or_init(|| Mutex::new(HashMap::new()));
     let mut dirs = registry.lock();
-    if dirs.insert(dir.clone()) {
-        tokio::spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_secs(15));
-            interval.tick().await;
-            loop {
-                interval.tick().await;
-                if !dir.exists() {
-                    if let Some(reg) = ACTIVE_PRUNE_DIRS.get() {
-                        reg.lock().remove(&dir);
-                    }
-                    break;
-                }
-                let _ = prune_directory(&dir, &format, max_age_secs, max_count).await;
-            }
-        });
+    if let Some(state) = dirs.get_mut(&dir) {
+        state.format = format;
+        state.max_age_secs = max_age_secs;
+        state.max_count = max_count;
+        state.last_write = std::time::Instant::now();
+        return;
     }
+
+    dirs.insert(
+        dir.clone(),
+        PruneDirectoryState {
+            format,
+            max_age_secs,
+            max_count,
+            last_write: std::time::Instant::now(),
+        },
+    );
+
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(15));
+        interval.tick().await;
+        loop {
+            interval.tick().await;
+
+            let settings = if let Some(reg) = ACTIVE_PRUNE_DIRS.get() {
+                reg.lock().get(&dir).cloned()
+            } else {
+                None
+            };
+
+            let Some(state) = settings else {
+                break;
+            };
+
+            if !dir.exists() {
+                if let Some(reg) = ACTIVE_PRUNE_DIRS.get() {
+                    reg.lock().remove(&dir);
+                }
+                break;
+            }
+
+            let _ = prune_directory(&dir, &state.format, state.max_age_secs, state.max_count).await;
+
+            // Auto-terminate timer when idle: if no writes occurred for idle timeout (e.g. 5 minutes or max_age_secs),
+            // de-register task so deleted rules and device templates do not leak persistent tasks.
+            let idle_threshold = Duration::from_secs(state.max_age_secs.max(300));
+            if state.last_write.elapsed() >= idle_threshold {
+                if let Some(reg) = ACTIVE_PRUNE_DIRS.get() {
+                    let mut dirs = reg.lock();
+                    if let Some(curr) = dirs.get(&dir) {
+                        if curr.last_write.elapsed() >= idle_threshold {
+                            dirs.remove(&dir);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    });
 }
 
 /// Image sink configuration.
@@ -209,10 +260,33 @@ impl ImageSinkConfig {
                 "image file name resolved to empty".to_string(),
             ));
         }
-        if file_trimmed.contains('/') || file_trimmed.contains('\\') || file_trimmed.contains("..")
+        if file_trimmed.contains('/')
+            || file_trimmed.contains('\\')
+            || file_trimmed.contains(':')
+            || file_trimmed.contains("..")
         {
             return Err(ImageSinkError::Validation(format!(
-                "invalid image file name '{}': path separators and '..' are prohibited",
+                "invalid image file name '{}': path separators, colons, and '..' are prohibited",
+                file_trimmed
+            )));
+        }
+
+        let file_path_obj = Path::new(file_trimmed);
+        let components: Vec<_> = file_path_obj.components().collect();
+        if components.len() != 1 || !matches!(components[0], std::path::Component::Normal(_)) {
+            return Err(ImageSinkError::Validation(format!(
+                "invalid image file name '{}': must be a single normal file component",
+                file_trimmed
+            )));
+        }
+
+        let stem = file_path_obj
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or(file_trimmed);
+        if is_windows_reserved_device_name(stem) {
+            return Err(ImageSinkError::Validation(format!(
+                "invalid image file name '{}': Windows reserved device names are prohibited",
                 file_trimmed
             )));
         }
@@ -247,20 +321,39 @@ impl ImageSinkConfig {
                 self.max_age * 3600,
                 self.max_count,
             );
-            if self.max_count > 0 {
-                let dir_clone = dir_path.clone();
-                let format_clone = self.format.clone();
-                let max_age_secs = self.max_age * 3600;
-                let max_count = self.max_count;
-                tokio::spawn(async move {
-                    let _ =
-                        prune_directory(&dir_clone, &format_clone, max_age_secs, max_count).await;
-                });
-            }
         }
 
         Ok(file_path)
     }
+}
+
+fn is_windows_reserved_device_name(name: &str) -> bool {
+    let upper = name.to_ascii_uppercase();
+    matches!(
+        upper.as_str(),
+        "CON"
+            | "PRN"
+            | "AUX"
+            | "NUL"
+            | "COM1"
+            | "COM2"
+            | "COM3"
+            | "COM4"
+            | "COM5"
+            | "COM6"
+            | "COM7"
+            | "COM8"
+            | "COM9"
+            | "LPT1"
+            | "LPT2"
+            | "LPT3"
+            | "LPT4"
+            | "LPT5"
+            | "LPT6"
+            | "LPT7"
+            | "LPT8"
+            | "LPT9"
+    )
 }
 
 pub(crate) async fn prune_directory(
@@ -501,5 +594,82 @@ mod tests {
         assert!(new_file.exists(), "New file should be kept");
 
         let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+    }
+
+    #[test]
+    fn test_image_windows_file_names_and_colons_rejected() {
+        let hostile_cases = vec![
+            "C:x.png",
+            "D:foo.jpg",
+            "file.png:stream",
+            "aux.png",
+            "AUX.PNG",
+            "con.jpg",
+            "prn.png",
+            "nul.jpeg",
+            "com1.png",
+            "lpt1.png",
+            "/absolute.png",
+            "\\absolute.png",
+            "../escape.png",
+        ];
+
+        for hostile in hostile_cases {
+            let mut record = HashMap::new();
+            record.insert("file".to_string(), json!(hostile));
+            let custom_cfg = ImageSinkConfig {
+                path: "/tmp/images".to_string(),
+                format: "png".to_string(),
+                image_field: None,
+                file_name: Some("{{.file}}".to_string()),
+                max_age: 0,
+                max_count: 0,
+            };
+            assert!(
+                custom_cfg.resolve_file_path(&record).is_err(),
+                "Hostile filename '{}' should be rejected",
+                hostile
+            );
+        }
+
+        // Valid file name passes
+        let mut valid_rec = HashMap::new();
+        valid_rec.insert("file".to_string(), json!("device_01_frame.png"));
+        let valid_cfg = ImageSinkConfig {
+            path: "/tmp/images".to_string(),
+            format: "png".to_string(),
+            image_field: None,
+            file_name: Some("{{.file}}".to_string()),
+            max_age: 0,
+            max_count: 0,
+        };
+        assert!(valid_cfg.resolve_file_path(&valid_rec).is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_dynamic_prune_timer_settings_update() {
+        let test_dir = std::env::temp_dir().join(format!("rekuiper_dyn_prune_{}", Uuid::new_v4()));
+
+        // Initial settings
+        ensure_prune_timer(test_dir.clone(), "png".to_string(), 7200, 100);
+        {
+            let reg = ACTIVE_PRUNE_DIRS.get().unwrap();
+            let dirs = reg.lock();
+            let state = dirs.get(&test_dir).expect("entry must exist");
+            assert_eq!(state.format, "png");
+            assert_eq!(state.max_age_secs, 7200);
+            assert_eq!(state.max_count, 100);
+        }
+
+        // Update settings dynamically
+        ensure_prune_timer(test_dir.clone(), "jpeg".to_string(), 3600, 50);
+        {
+            let reg = ACTIVE_PRUNE_DIRS.get().unwrap();
+            let dirs = reg.lock();
+            let state = dirs.get(&test_dir).expect("entry must exist");
+            assert_eq!(state.format, "jpeg");
+            assert_eq!(state.max_age_secs, 3600);
+            assert_eq!(state.max_count, 50);
+        }
     }
 }

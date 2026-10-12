@@ -2,7 +2,7 @@
 
 The `tdengine` (or `tdengine3`) sink enables writing stream processing outputs directly into [TDengine](https://tdengine.com/) 3.x instances using TDengine's native RESTful HTTP connector.
 
-In `rekuiper`, the TDengine connector is implemented in pure Rust without external C dynamic libraries (`libtaos.so`), enabling high throughput, low latency, and zero Cgo overhead.
+In `rekuiper`, the TDengine connector is a built-in component that connects to the TDengine REST service. It does not require `libtaos.so`.
 
 ## Prerequisites
 

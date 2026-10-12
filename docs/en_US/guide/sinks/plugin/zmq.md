@@ -1,7 +1,7 @@
 # ZeroMQ Sink
 
 ::: tip Status: Supported as Built-in Connector in rekuiper
-rekuiper includes a native, pure-Rust ZeroMQ sink connector implementing the ZMTP wire protocol directly over TCP. You do not need to install `libzmq`, compile C/C++ bindings, or deploy legacy Go dynamic plugin (`.so`) files.
+rekuiper includes a built-in ZeroMQ sink connector that implements the ZMTP protocol over TCP. It does not require an external dynamic library.
 :::
 
 The ZeroMQ sink publishes rule execution results to a ZeroMQ PUB socket over TCP.

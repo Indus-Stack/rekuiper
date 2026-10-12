@@ -192,7 +192,54 @@ pub fn split_jpegs(buf: &mut Vec<u8>) -> Vec<Vec<u8>> {
     frames
 }
 
-/// Native pure-Rust Video Source connector spawning FFmpeg to extract
+/// Allowed network streaming protocols for video source URL.
+/// Local filesystem paths (e.g. `file://`, `/etc/...`, `C:\...`) are prohibited to prevent local file exfiltration.
+pub const ALLOWED_VIDEO_SCHEMES: &[&str] = &[
+    "rtsp://", "rtsps://", "http://", "https://", "rtmp://", "rtmps://", "srt://", "udp://",
+    "tcp://",
+];
+
+/// Whitelist of safe input arguments passed to FFmpeg prior to `-i`.
+pub const ALLOWED_INPUT_ARGS: &[&str] = &[
+    "rtsp_transport",
+    "stimeout",
+    "rw_timeout",
+    "timeout",
+    "re",
+    "buffer_size",
+    "max_delay",
+    "analyzeduration",
+    "probesize",
+    "fflags",
+    "fpsprobesize",
+    "c:v",
+    "vcodec",
+    "f",
+    "framerate",
+    "r",
+    "video_size",
+    "s",
+    "an",
+    "sn",
+    "dn",
+];
+
+/// Returns true if the video source URL uses an allowed network streaming protocol.
+pub fn is_allowed_video_url(url: &str) -> bool {
+    let trimmed = url.trim();
+    let lower = trimmed.to_lowercase();
+    ALLOWED_VIDEO_SCHEMES
+        .iter()
+        .any(|scheme| lower.starts_with(scheme))
+}
+
+/// Returns true if the given input argument key is in the allowed whitelist.
+pub fn is_allowed_input_arg(key: &str) -> bool {
+    let clean = key.trim_start_matches('-').to_lowercase();
+    ALLOWED_INPUT_ARGS.contains(&clean.as_str())
+}
+
+/// Built-in Video Source connector spawning FFmpeg to extract
 /// frames from RTSP / HTTP video streams into stream records.
 pub struct VideoSource {
     pub config: VideoSourceConfig,
@@ -205,7 +252,15 @@ impl VideoSource {
     }
 
     /// Builds the FFmpeg Command with arguments matching upstream eKuiper `image2pipe` stream extraction.
-    pub fn build_command(&self) -> Command {
+    pub fn build_command(&self) -> Result<Command, String> {
+        let trimmed_url = self.config.url.trim();
+        if !trimmed_url.is_empty() && !is_allowed_video_url(trimmed_url) {
+            return Err(format!(
+                "invalid video source URL '{}': only streaming protocols (rtsp, rtsps, http, https, rtmp, rtmps, srt, udp, tcp) are allowed",
+                self.config.url
+            ));
+        }
+
         let ffmpeg_prog = if self.config.ffmpeg_path.is_empty() {
             "ffmpeg"
         } else {
@@ -232,6 +287,12 @@ impl VideoSource {
         let mut sorted_args: Vec<_> = self.config.input_args.iter().collect();
         sorted_args.sort_by_key(|(k, _)| *k);
         for (k, v) in sorted_args {
+            if !is_allowed_input_arg(k) {
+                return Err(format!(
+                    "forbidden or unrecognized FFmpeg input argument '{}': only network streaming parameters are allowed",
+                    k
+                ));
+            }
             let flag = if k.starts_with('-') {
                 k.clone()
             } else {
@@ -268,7 +329,7 @@ impl VideoSource {
 
         cmd.stdout(Stdio::piped());
         cmd.stderr(Stdio::piped());
-        cmd
+        Ok(cmd)
     }
 
     /// Helper to convert a decoded image frame into a standardized StreamRecord.
@@ -314,7 +375,16 @@ impl VideoSource {
                     "Starting video source pipeline for URL: {}",
                     self.config.url
                 );
-                let mut cmd = self.build_command();
+                let mut cmd = match self.build_command() {
+                    Ok(c) => c,
+                    Err(e) => {
+                        tracing::error!(
+                            "Video source validation failed: {}. Aborting video stream pipeline.",
+                            e
+                        );
+                        break;
+                    }
+                };
 
                 let mut child = match cmd.spawn() {
                     Ok(c) => c,
@@ -534,7 +604,7 @@ mod tests {
         let bus = rekuiper_core::StreamBus::default();
         let tx = bus.get_or_create("video_test");
         let source = VideoSource::new(cfg, tx.clone());
-        let cmd = source.build_command();
+        let cmd = source.build_command().unwrap();
 
         assert_eq!(cmd.as_std().get_program(), "/usr/local/bin/ffmpeg");
         let args: Vec<String> = cmd
@@ -564,7 +634,9 @@ mod tests {
         // Test interval = 500 ms -> fps=2
         let mut cfg500 = source.config.clone();
         cfg500.interval = 500;
-        let cmd500 = VideoSource::new(cfg500, tx.clone()).build_command();
+        let cmd500 = VideoSource::new(cfg500, tx.clone())
+            .build_command()
+            .unwrap();
         let args500: Vec<String> = cmd500
             .as_std()
             .get_args()
@@ -576,7 +648,9 @@ mod tests {
         // Test interval = 2000 ms -> fps=1/2
         let mut cfg2000 = source.config.clone();
         cfg2000.interval = 2000;
-        let cmd2000 = VideoSource::new(cfg2000, tx.clone()).build_command();
+        let cmd2000 = VideoSource::new(cfg2000, tx.clone())
+            .build_command()
+            .unwrap();
         let args2000: Vec<String> = cmd2000
             .as_std()
             .get_args()
@@ -588,7 +662,9 @@ mod tests {
         // Test interval = 2500 ms -> fps=0.400
         let mut cfg2500 = source.config.clone();
         cfg2500.interval = 2500;
-        let cmd2500 = VideoSource::new(cfg2500, tx.clone()).build_command();
+        let cmd2500 = VideoSource::new(cfg2500, tx.clone())
+            .build_command()
+            .unwrap();
         let args2500: Vec<String> = cmd2500
             .as_std()
             .get_args()
@@ -600,13 +676,104 @@ mod tests {
         // Test interval = 0 -> no -vf filter
         let mut cfg0 = source.config.clone();
         cfg0.interval = 0;
-        let cmd0 = VideoSource::new(cfg0, tx).build_command();
+        let cmd0 = VideoSource::new(cfg0, tx.clone()).build_command().unwrap();
         let args0: Vec<String> = cmd0
             .as_std()
             .get_args()
             .map(|a| a.to_string_lossy().to_string())
             .collect();
         assert!(!args0.contains(&"-vf".to_string()));
+    }
+
+    #[test]
+    fn test_video_source_disallowed_urls() {
+        let bus = rekuiper_core::StreamBus::default();
+        let tx = bus.get_or_create("video_url_test");
+
+        let hostile_urls = vec![
+            "/etc/passwd",
+            "/var/log/syslog",
+            "C:\\Windows\\system.ini",
+            "file:///etc/shadow",
+            "file://C:/secret.txt",
+            "relative/path/movie.mp4",
+        ];
+
+        for hostile in hostile_urls {
+            let cfg = VideoSourceConfig {
+                url: hostile.to_string(),
+                ..Default::default()
+            };
+            let source = VideoSource::new(cfg, tx.clone());
+            assert!(
+                source.build_command().is_err(),
+                "Hostile URL '{}' should be rejected",
+                hostile
+            );
+        }
+
+        // Allowed network streaming URLs
+        let allowed_urls = vec![
+            "rtsp://192.168.1.100:554/live",
+            "rtsps://camera.local:322/stream",
+            "http://10.0.0.1:8080/mjpeg",
+            "https://stream.server.org/live.m3u8",
+            "rtmp://live.stream.net/live",
+            "rtmps://live.stream.net/live",
+            "srt://127.0.0.1:9000",
+            "udp://239.255.0.1:1234",
+            "tcp://127.0.0.1:4000",
+        ];
+
+        for allowed in allowed_urls {
+            let cfg = VideoSourceConfig {
+                url: allowed.to_string(),
+                ..Default::default()
+            };
+            let source = VideoSource::new(cfg, tx.clone());
+            assert!(
+                source.build_command().is_ok(),
+                "Allowed URL '{}' should pass validation",
+                allowed
+            );
+        }
+    }
+
+    #[test]
+    fn test_video_source_input_args_whitelist() {
+        let bus = rekuiper_core::StreamBus::default();
+        let tx = bus.get_or_create("video_args_test");
+
+        // Forbidden arguments (script execution, file outputs, etc.)
+        let forbidden_args = vec!["filter_script", "y", "nostdin", "dumpgraph", "lavfi"];
+        for forbidden in forbidden_args {
+            let mut input_args = HashMap::new();
+            input_args.insert(forbidden.to_string(), "true".to_string());
+            let cfg = VideoSourceConfig {
+                url: "rtsp://camera:554/live".to_string(),
+                input_args,
+                ..Default::default()
+            };
+            let source = VideoSource::new(cfg, tx.clone());
+            assert!(
+                source.build_command().is_err(),
+                "Forbidden argument '{}' should be rejected",
+                forbidden
+            );
+        }
+
+        // Allowed network and codec options
+        let mut valid_args = HashMap::new();
+        valid_args.insert("rtsp_transport".to_string(), "tcp".to_string());
+        valid_args.insert("stimeout".to_string(), "5000000".to_string());
+        valid_args.insert("buffer_size".to_string(), "1024000".to_string());
+        let valid_cfg = VideoSourceConfig {
+            url: "rtsp://camera:554/live".to_string(),
+            input_args: valid_args,
+            ..Default::default()
+        };
+        let valid_source = VideoSource::new(valid_cfg, tx);
+        assert!(valid_source.build_command().is_ok());
     }
 
     #[test]

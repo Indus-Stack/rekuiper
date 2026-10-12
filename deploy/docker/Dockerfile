@@ -32,8 +32,10 @@ ENV KUIPER_HOME="/kuiper" \
 
 ARG KUIPER_USER="kuiper"
 ARG KUIPER_USER_ID="1001"
+ARG WITH_FFMPEG="true"
 
-RUN apk add --no-cache ca-certificates libgcc libssl3 sqlite-libs tzdata ffmpeg && \
+RUN apk add --no-cache ca-certificates libgcc libssl3 sqlite-libs tzdata && \
+    if [ "${WITH_FFMPEG}" = "true" ]; then apk add --no-cache ffmpeg; fi && \
     adduser -DH -s /sbin/nologin -u ${KUIPER_USER_ID} ${KUIPER_USER} && \
     mkdir -p ${KUIPER_HOME}/bin ${KUIPER_HOME}/etc ${KUIPER_HOME}/data ${KUIPER_HOME}/log && \
     chown -R ${KUIPER_USER}:${KUIPER_USER} ${KUIPER_HOME}

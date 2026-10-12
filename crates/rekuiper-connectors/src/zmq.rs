@@ -66,7 +66,7 @@ fn default_zmq_mode() -> String {
     "connect".to_string()
 }
 
-/// Native pure-Rust ZeroMQ Publisher Sink.
+/// ZeroMQ publisher sink.
 pub struct ZmqSink {
     pub config: ZmqSinkConfig,
     socket: Arc<Mutex<Option<PubSocket>>>,
@@ -210,7 +210,7 @@ pub fn decode_zmq_payload(payload: &[u8], topic: Option<&str>) -> Result<Vec<Str
     Ok(records)
 }
 
-/// Native pure-Rust ZeroMQ Subscriber Source.
+/// ZeroMQ subscriber source.
 pub struct ZmqSource {
     pub config: ZmqSourceConfig,
     pub tx: StreamSender,

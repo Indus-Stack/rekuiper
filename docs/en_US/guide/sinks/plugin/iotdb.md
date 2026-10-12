@@ -2,7 +2,7 @@
 
 The `iotdb` sink enables writing stream processing outputs directly into [Apache IoTDB](https://iotdb.apache.org/) time-series databases using IoTDB's native RESTful service.
 
-In `rekuiper`, the Apache IoTDB connector is implemented in pure Rust without external dynamic dependencies, supporting high performance, connection pooling, dynamic device templates, and automatic batch tablet aggregation.
+In `rekuiper`, the Apache IoTDB connector is a built-in component that connects to the IoTDB REST service. It supports dynamic device templates and batch tablet insertions.
 
 ## Prerequisites
 

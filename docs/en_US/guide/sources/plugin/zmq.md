@@ -1,7 +1,7 @@
 # ZeroMQ Source Connector
 
 ::: tip Status: Supported as Built-in Connector in rekuiper
-rekuiper includes a native, pure-Rust ZeroMQ source connector implementing the ZMTP wire protocol directly over TCP. You do not need to install `libzmq`, compile C/C++ bindings, or deploy legacy Go dynamic plugin (`.so`) files.
+rekuiper includes a built-in ZeroMQ source connector that implements the ZMTP protocol over TCP. It does not require an external dynamic library.
 :::
 
 The ZeroMQ source connector subscribes to ZeroMQ publishers over TCP using a SUB socket and ingests messages into the streaming processing engine.

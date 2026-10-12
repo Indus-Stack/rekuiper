@@ -2,7 +2,7 @@
 
 The `image` sink saves binary camera frame payloads (JPEG or PNG) directly to local storage directories with automated age-based (`maxAge`) and count-based (`maxCount`) retention pruning.
 
-In `rekuiper`, the Image sink is built into the binary in pure Rust using asynchronous file I/O (`tokio::fs`) with zero C dynamic dependencies.
+In `rekuiper`, the Image sink is a built-in component that writes image files using asynchronous disk operations.
 
 ## Configuration Properties
 

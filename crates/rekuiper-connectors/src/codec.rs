@@ -1,9 +1,9 @@
-//! Pure-Rust serialization codecs: binary blobs, delimiter-separated values
-//! and protobuf wire format. No C dependencies, no `protoc`.
+//! Serialization codecs for binary payloads, delimited values, and protobuf messages.
 //!
-//! The JSON mapping conventions mirror eKuiper: binary payloads travel as
-//! `{"_binary": "<base64>"}`, delimited rows map positionally onto headers,
-//! and protobuf messages map field names to JSON values.
+//! The JSON mapping conventions match eKuiper:
+//! - Binary payloads use `{"_binary": "<base64>"}`.
+//! - Delimited rows map by position to headers.
+//! - Protobuf messages map field names to JSON values.
 
 use anyhow::Result;
 use base64::Engine as _;
@@ -187,7 +187,7 @@ impl DelimitedCodec {
 }
 
 // ---------------------------------------------------------------------------
-// Protobuf wire codec (pure Rust)
+// Protobuf wire codec
 // ---------------------------------------------------------------------------
 
 /// One parsed `.proto` message field.
@@ -618,7 +618,7 @@ fn value_to_bool(v: &Value) -> Option<bool> {
     }
 }
 
-/// Pure-Rust protobuf wire codec operating on parsed message definitions.
+/// Protobuf wire codec that processes parsed message definitions.
 pub struct ProtobufCodec;
 
 impl ProtobufCodec {
