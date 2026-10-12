@@ -71,7 +71,8 @@ impl IotdbConfig {
             return Err("record data is empty".to_string());
         }
 
-        let record_val = Value::Object(record.iter().map(|(k, v)| (k.clone(), v.clone())).collect());
+        let record_val =
+            Value::Object(record.iter().map(|(k, v)| (k.clone(), v.clone())).collect());
 
         // 1. Resolve device name
         let device = if self.device.contains("{{") {
@@ -83,12 +84,27 @@ impl IotdbConfig {
             return Err("device path resolved to empty string".to_string());
         }
 
-        // 2. Resolve timestamp
+        // 2. Resolve timestamp strictly
         let ts = if let Some(v) = record.get(&self.ts_field_name) {
             match v {
-                Value::Number(n) => n.as_i64().unwrap_or_else(|| n.as_f64().map(|f| f as i64).unwrap_or(0)),
-                Value::String(s) => s.parse::<i64>().unwrap_or(0),
-                _ => 0,
+                Value::Number(n) => n
+                    .as_i64()
+                    .or_else(|| n.as_f64().map(|f| f as i64))
+                    .ok_or_else(|| {
+                        format!("invalid numeric timestamp in '{}'", self.ts_field_name)
+                    })?,
+                Value::String(s) => s.parse::<i64>().map_err(|_| {
+                    format!(
+                        "unparseable string timestamp '{}' in '{}'",
+                        s, self.ts_field_name
+                    )
+                })?,
+                other => {
+                    return Err(format!(
+                        "unsupported timestamp type {:?} in '{}'",
+                        other, self.ts_field_name
+                    ))
+                }
             }
         } else {
             SystemTime::now()
@@ -138,6 +154,94 @@ impl IotdbConfig {
             "values": [values]
         }))
     }
+
+    /// Formats a batch of stream records into properly grouped IoTDB insert payloads.
+    /// Records sharing the same device and measurement schema are batched together.
+    pub fn build_batch_insert_payloads(
+        &self,
+        records: &[HashMap<String, Value>],
+    ) -> Result<Vec<Value>, String> {
+        if records.is_empty() {
+            return Ok(Vec::new());
+        }
+        struct TabletGroup {
+            device: String,
+            measurements: Vec<String>,
+            timestamps: Vec<i64>,
+            values: Vec<Vec<Value>>,
+        }
+
+        let mut groups: Vec<TabletGroup> = Vec::new();
+
+        for rec in records {
+            let single = match self.build_insert_payload(rec) {
+                Ok(s) => s,
+                Err(e) => {
+                    tracing::warn!("IoTDB batch record invalid: {}; skipping row", e);
+                    continue;
+                }
+            };
+            let dev = single
+                .get("device")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let ts = single
+                .get("timestamps")
+                .and_then(|t| t.as_array())
+                .and_then(|a| a.first())
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0);
+            let measurements: Vec<String> = single
+                .get("measurements")
+                .and_then(|m| m.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let row_vals: Vec<Value> = single
+                .get("values")
+                .and_then(|v| v.as_array())
+                .and_then(|a| a.first())
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default();
+
+            let mut found = false;
+            for g in &mut groups {
+                if g.device == dev && g.measurements == measurements {
+                    g.timestamps.push(ts);
+                    g.values.push(row_vals.clone());
+                    found = true;
+                    break;
+                }
+            }
+            if !found {
+                groups.push(TabletGroup {
+                    device: dev,
+                    measurements,
+                    timestamps: vec![ts],
+                    values: vec![row_vals],
+                });
+            }
+        }
+
+        let payloads = groups
+            .into_iter()
+            .map(|g| {
+                serde_json::json!({
+                    "device": g.device,
+                    "timestamps": g.timestamps,
+                    "measurements": g.measurements,
+                    "values": g.values
+                })
+            })
+            .collect();
+
+        Ok(payloads)
+    }
 }
 
 #[cfg(test)]
@@ -180,7 +284,37 @@ mod tests {
             ts_field_name: "ts".to_string(),
         };
 
-        assert_eq!(cfg.endpoint_url(), "http://iotdb-cluster:18080/rest/v1/insertRecord");
+        assert_eq!(
+            cfg.endpoint_url(),
+            "http://iotdb-cluster:18080/rest/v1/insertRecord"
+        );
         assert_eq!(cfg.basic_auth_header(), "Basic YWRtaW46c2VjcmV0");
+    }
+
+    #[test]
+    fn test_iotdb_build_insert_payload_auto_measurements() {
+        let mut record = HashMap::new();
+        record.insert("temp".to_string(), json!(28.4));
+        record.insert("active".to_string(), json!(true));
+        record.insert("tag_str".to_string(), json!("ok"));
+        record.insert("ts".to_string(), json!(1710000000000i64));
+
+        let cfg = IotdbConfig {
+            addr: "127.0.0.1:18080".to_string(),
+            username: "root".to_string(),
+            password: "root".to_string(),
+            device: "root.ln.wf01.wt01".to_string(),
+            measurements: None,
+            ts_field_name: "ts".to_string(),
+        };
+
+        let payload = cfg.build_insert_payload(&record).unwrap();
+        assert_eq!(payload["device"], "root.ln.wf01.wt01");
+        assert_eq!(payload["timestamps"], json!([1710000000000i64]));
+        let m_arr = payload["measurements"].as_array().unwrap();
+        assert_eq!(m_arr.len(), 3);
+        assert!(m_arr.contains(&json!("active")));
+        assert!(m_arr.contains(&json!("tag_str")));
+        assert!(m_arr.contains(&json!("temp")));
     }
 }

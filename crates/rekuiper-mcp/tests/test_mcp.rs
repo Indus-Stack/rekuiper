@@ -453,7 +453,10 @@ async fn test_resources_and_prompts() {
     let res_get = resp_get.result.unwrap();
     let msgs = res_get["messages"].as_array().unwrap();
     assert!(!msgs.is_empty());
-    assert!(msgs[0]["content"]["text"].as_str().unwrap().contains("127.0.0.1"));
+    assert!(msgs[0]["content"]["text"]
+        .as_str()
+        .unwrap()
+        .contains("127.0.0.1"));
 }
 
 #[tokio::test]

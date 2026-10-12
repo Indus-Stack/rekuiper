@@ -290,4 +290,59 @@ mod tests {
             .expect("parse snake_case offset_reset");
         assert_eq!(snake_cfg.offset_reset, "earliest");
     }
+
+    #[test]
+    fn test_kafka_broker_list_parsing() {
+        let cfg = KafkaConfig {
+            brokers: "  10.0.0.1:9092, 10.0.0.2:9092, , 10.0.0.3:9092  ".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(
+            cfg.broker_list(),
+            vec![
+                "10.0.0.1:9092".to_string(),
+                "10.0.0.2:9092".to_string(),
+                "10.0.0.3:9092".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_value_to_key_bytes() {
+        assert_eq!(value_to_key_bytes(&Value::Null), Vec::<u8>::new());
+        assert_eq!(
+            value_to_key_bytes(&Value::String("dev1".to_string())),
+            b"dev1".to_vec()
+        );
+        assert_eq!(value_to_key_bytes(&serde_json::json!(42)), b"42".to_vec());
+        assert_eq!(
+            value_to_key_bytes(&serde_json::json!(true)),
+            b"true".to_vec()
+        );
+    }
+
+    #[test]
+    fn test_decode_kafka_payload() {
+        // Single object
+        let obj_payload = br#"{"sensor": "temp", "val": 25.5}"#;
+        let records = decode_kafka_payload(obj_payload).expect("decode object");
+        assert_eq!(records.len(), 1);
+        assert_eq!(
+            records[0].data.get("sensor"),
+            Some(&serde_json::json!("temp"))
+        );
+
+        // Array of objects
+        let arr_payload = br#"[{"id": 1}, {"id": 2}]"#;
+        let records = decode_kafka_payload(arr_payload).expect("decode array");
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0].data.get("id"), Some(&serde_json::json!(1)));
+        assert_eq!(records[1].data.get("id"), Some(&serde_json::json!(2)));
+
+        // Invalid JSON
+        assert!(decode_kafka_payload(b"not json").is_err());
+
+        // Invalid top-level scalar
+        assert!(decode_kafka_payload(b"123").is_err());
+    }
 }

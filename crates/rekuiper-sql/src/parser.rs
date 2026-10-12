@@ -278,9 +278,8 @@ impl<'a> Parser<'a> {
                 );
             }
 
-            let default_value = default_val.map(|s| {
-                s.trim().trim_end_matches([';', ',']).trim().to_string()
-            });
+            let default_value =
+                default_val.map(|s| s.trim().trim_end_matches([';', ',']).trim().to_string());
 
             fields.push(StreamColumn {
                 name,

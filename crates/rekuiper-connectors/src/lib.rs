@@ -67,7 +67,6 @@ pub use zmq::*;
 pub mod video;
 pub use video::*;
 
-
 #[async_trait]
 pub trait Sink: Send + Sync {
     async fn send(&self, record: &StreamRecord) -> Result<()>;
@@ -457,6 +456,29 @@ mod tests {
         assert!(err
             .to_string()
             .contains("Invalid dynamic field name 'invalid-col'"));
+    }
+
+    #[tokio::test]
+    async fn test_sql_sink_batch_rejects_invalid_dynamic_identifiers() {
+        let sink = super::SqlSink {
+            config: super::SqlConnectorConfig {
+                url: "sqlite::memory:".to_string(),
+                table: "readings".to_string(),
+                fields: Vec::new(), // dynamic fields mode
+                ..Default::default()
+            },
+        };
+        let mut d1 = HashMap::new();
+        d1.insert("val_a".to_string(), json!(1));
+        d1.insert(super::META_KEY.to_string(), json!({"topic": "demo"}));
+        let mut d2 = HashMap::new();
+        d2.insert("bad-name".to_string(), json!(2));
+        let recs = vec![StreamRecord::new(d1), StreamRecord::new(d2)];
+
+        let err = sink.insert_batch(&recs).await.unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("Invalid dynamic field name 'bad-name'"));
     }
 
     #[tokio::test]

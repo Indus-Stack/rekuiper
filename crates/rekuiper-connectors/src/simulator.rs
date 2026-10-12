@@ -114,3 +114,117 @@ impl SimulatorSource {
         sent
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_parse_interval_ms() {
+        // Integer numbers
+        assert_eq!(
+            parse_interval_ms(&json!(50)),
+            std::time::Duration::from_millis(50)
+        );
+        assert_eq!(
+            parse_interval_ms(&json!(-1)),
+            std::time::Duration::from_millis(10)
+        ); // Default on negative
+        assert_eq!(
+            parse_interval_ms(&json!(25.0)),
+            std::time::Duration::from_millis(25)
+        );
+
+        // Duration strings
+        assert_eq!(
+            parse_interval_ms(&json!("100ms")),
+            std::time::Duration::from_millis(100)
+        );
+        assert_eq!(
+            parse_interval_ms(&json!("2s")),
+            std::time::Duration::from_millis(2000)
+        );
+        assert_eq!(
+            parse_interval_ms(&json!("1.5s")),
+            std::time::Duration::from_millis(1500)
+        );
+        assert_eq!(
+            parse_interval_ms(&json!("1m")),
+            std::time::Duration::from_millis(60000)
+        );
+        assert_eq!(
+            parse_interval_ms(&json!("invalid")),
+            std::time::Duration::from_millis(10)
+        );
+        assert_eq!(
+            parse_interval_ms(&Value::Null),
+            std::time::Duration::from_millis(10)
+        );
+    }
+
+    #[tokio::test]
+    async fn test_simulator_source_run_no_loop() {
+        let mut rec1 = HashMap::new();
+        rec1.insert("temp".to_string(), json!(20.5));
+        let mut rec2 = HashMap::new();
+        rec2.insert("temp".to_string(), json!(21.0));
+
+        let cfg = SimulatorConfig {
+            data: vec![rec1, rec2],
+            interval: json!("1ms"),
+            loop_data: false,
+        };
+
+        let (tx, mut rx) = tokio::sync::mpsc::channel(10);
+        let source = SimulatorSource::new(cfg);
+        let handle = tokio::spawn(async move { source.run(tx).await });
+
+        let r1 = rx.recv().await.expect("receive rec1");
+        assert_eq!(r1.data.get("temp").unwrap(), &json!(20.5));
+        let r2 = rx.recv().await.expect("receive rec2");
+        assert_eq!(r2.data.get("temp").unwrap(), &json!(21.0));
+
+        let total_sent = handle.await.unwrap();
+        assert_eq!(total_sent, 2);
+    }
+
+    #[tokio::test]
+    async fn test_simulator_source_run_empty_data() {
+        let cfg = SimulatorConfig {
+            data: Vec::new(),
+            interval: json!(10),
+            loop_data: false,
+        };
+        let (tx, _rx) = tokio::sync::mpsc::channel(10);
+        let count = SimulatorSource::new(cfg).run(tx).await;
+        assert_eq!(count, 0);
+    }
+
+    #[tokio::test]
+    async fn test_simulator_source_run_receiver_drop() {
+        let mut rec = HashMap::new();
+        rec.insert("val".to_string(), json!(1));
+
+        let cfg = SimulatorConfig {
+            data: vec![rec],
+            interval: json!("2ms"),
+            loop_data: true,
+        };
+
+        let (tx, mut rx) = tokio::sync::mpsc::channel(2);
+        let source = SimulatorSource::new(cfg);
+        let handle = tokio::spawn(async move { source.run(tx).await });
+
+        // Read 1 item then drop receiver
+        let _ = rx.recv().await;
+        drop(rx);
+
+        // Runner should detect channel closure and exit cleanly
+        let res = tokio::time::timeout(std::time::Duration::from_millis(500), handle).await;
+        assert!(
+            res.is_ok(),
+            "Simulator run should terminate promptly when receiver is dropped"
+        );
+    }
+}

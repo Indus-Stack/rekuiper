@@ -801,7 +801,10 @@ mod schema_tests {
         let mut data_missing = HashMap::new();
         enforce_stream_schema(&mut data_missing, &fields);
         assert_eq!(data_missing.get("id"), Some(&Value::from(999i64)));
-        assert_eq!(data_missing.get("status"), Some(&Value::String("idle".to_string())));
+        assert_eq!(
+            data_missing.get("status"),
+            Some(&Value::String("idle".to_string()))
+        );
         assert_eq!(data_missing.get("temp"), Some(&Value::from(20.5f64)));
         assert_eq!(data_missing.get("active"), Some(&Value::Bool(true)));
         assert!(!data_missing.contains_key("extra"));
@@ -813,7 +816,10 @@ mod schema_tests {
         data_null.insert("temp".to_string(), Value::from(35.0f64));
         enforce_stream_schema(&mut data_null, &fields);
         assert_eq!(data_null.get("id"), Some(&Value::from(999i64)));
-        assert_eq!(data_null.get("status"), Some(&Value::String("idle".to_string())));
+        assert_eq!(
+            data_null.get("status"),
+            Some(&Value::String("idle".to_string()))
+        );
         assert_eq!(data_null.get("temp"), Some(&Value::from(35.0f64)));
     }
 }

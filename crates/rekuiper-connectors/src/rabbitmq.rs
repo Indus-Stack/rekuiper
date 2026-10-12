@@ -351,6 +351,32 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_rabbitmq_resolve_secrets_injects_credentials() {
+        let mut cfg = RabbitMqConfig {
+            server: "amqp://127.0.0.1:5672/vhost".to_string(),
+            username: Some("myuser".to_string()),
+            password: Some("mypass".to_string()),
+            ..Default::default()
+        };
+        cfg.resolve_secrets(&SecretResolver::from_env())
+            .await
+            .unwrap();
+        assert_eq!(cfg.server, "amqp://myuser:mypass@127.0.0.1:5672/vhost");
+
+        let mut cfg_ssl = RabbitMqConfig {
+            server: "amqps://rabbit.cloud.io:5671/vhost".to_string(),
+            username: Some("u".to_string()),
+            password: Some("p".to_string()),
+            ..Default::default()
+        };
+        cfg_ssl
+            .resolve_secrets(&SecretResolver::from_env())
+            .await
+            .unwrap();
+        assert_eq!(cfg_ssl.server, "amqps://u:p@rabbit.cloud.io:5671/vhost");
+    }
+
+    #[tokio::test]
     async fn test_rabbitmq_live_cloudamqp_sink_and_source() {
         use rekuiper_core::StreamBus;
         use std::collections::HashMap;

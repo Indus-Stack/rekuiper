@@ -17,6 +17,8 @@ services:
       - mqtt-broker
     environment:
       # Double-underscore variables map directly to etc/kuiper.yaml (KUIPER__<SECTION>__<KEY>)
+      - KUIPER__BASIC__RESTIP=${KUIPER__BASIC__RESTIP:-0.0.0.0}
+      - KUIPER__BASIC__HTTPSERVERIP=${KUIPER__BASIC__HTTPSERVERIP:-0.0.0.0}
       - KUIPER__BASIC__LOGLEVEL=${KUIPER__BASIC__LOGLEVEL:-info}
       - KUIPER__BASIC__CONSOLELOG=${KUIPER__BASIC__CONSOLELOG:-true}
       - KUIPER__BASIC__PROMETHEUS=${KUIPER__BASIC__PROMETHEUS:-true}

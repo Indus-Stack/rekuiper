@@ -116,12 +116,6 @@ impl InfluxConfig {
         if !self.precision.is_empty() {
             url.push_str(&format!("&precision={}", self.precision));
         }
-        if let Some(ref u) = self.username {
-            url.push_str(&format!("&u={}", url_encode(u)));
-        }
-        if let Some(ref p) = self.password {
-            url.push_str(&format!("&p={}", url_encode(p)));
-        }
         url
     }
 }
@@ -148,24 +142,36 @@ impl Influx2Config {
 pub fn escape_key(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
-        if c == ' ' || c == ',' || c == '=' {
-            out.push('\\');
+        match c {
+            ' ' | ',' | '=' => {
+                out.push('\\');
+                out.push(c);
+            }
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            _ => out.push(c),
         }
-        out.push(c);
     }
     out
 }
 
 /// Escapes string field values surrounded by double quotes.
-/// Internal quotes and backslashes are escaped.
+/// Internal quotes, backslashes, and newlines are escaped.
 pub fn escape_string_field(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);
     out.push('"');
     for c in s.chars() {
-        if c == '"' || c == '\\' {
-            out.push('\\');
+        match c {
+            '"' | '\\' => {
+                out.push('\\');
+                out.push(c);
+            }
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            _ => out.push(c),
         }
-        out.push(c);
     }
     out.push('"');
     out
@@ -185,7 +191,8 @@ pub fn record_to_line_protocol(
 ) -> Option<String> {
     // 1. Resolve measurement name (evaluate template if dynamic)
     let measurement = if measurement_template.contains("{{") {
-        let record_val = Value::Object(record.iter().map(|(k, v)| (k.clone(), v.clone())).collect());
+        let record_val =
+            Value::Object(record.iter().map(|(k, v)| (k.clone(), v.clone())).collect());
         apply_data_template_value(measurement_template, &record_val)
     } else {
         measurement_template.to_string()
@@ -197,12 +204,11 @@ pub fn record_to_line_protocol(
     // 2. Evaluate and sort tags
     let mut evaluated_tags: Vec<(String, String)> = Vec::new();
     if let Some(tags_map) = tags_spec {
-        let record_val = Value::Object(record.iter().map(|(k, v)| (k.clone(), v.clone())).collect());
+        let record_val =
+            Value::Object(record.iter().map(|(k, v)| (k.clone(), v.clone())).collect());
         for (k, v_tpl) in tags_map {
             let val = if v_tpl.contains("{{") {
                 apply_data_template_value(v_tpl, &record_val)
-            } else if let Some(v_direct) = record.get(v_tpl).and_then(|v| v.as_str()) {
-                v_direct.to_string()
             } else {
                 v_tpl.clone()
             };
@@ -215,9 +221,7 @@ pub fn record_to_line_protocol(
 
     // 3. Extract and filter fields
     let mut line_fields: Vec<(String, String)> = Vec::new();
-    let is_tag_key = |key: &str| -> bool {
-        tags_spec.is_some_and(|ts| ts.contains_key(key))
-    };
+    let is_tag_key = |key: &str| -> bool { tags_spec.is_some_and(|ts| ts.contains_key(key)) };
 
     let field_keys: Vec<String> = if let Some(filter) = fields_filter {
         filter.to_vec()
@@ -233,11 +237,7 @@ pub fn record_to_line_protocol(
         if let Some(val) = record.get(&k) {
             let formatted_val = match val {
                 Value::Number(n) => {
-                    if let Some(i) = n.as_i64() {
-                        format!("{}i", i)
-                    } else if let Some(u) = n.as_u64() {
-                        format!("{}i", u)
-                    } else if let Some(f) = n.as_f64() {
+                    if let Some(f) = n.as_f64() {
                         if f.is_nan() || f.is_infinite() {
                             continue;
                         }
@@ -247,7 +247,13 @@ pub fn record_to_line_protocol(
                     }
                 }
                 Value::String(s) => escape_string_field(s),
-                Value::Bool(b) => if *b { "true".to_string() } else { "false".to_string() },
+                Value::Bool(b) => {
+                    if *b {
+                        "true".to_string()
+                    } else {
+                        "false".to_string()
+                    }
+                }
                 _ => continue,
             };
             line_fields.push((k, formatted_val));
@@ -266,17 +272,20 @@ pub fn record_to_line_protocol(
         .unwrap_or(0);
 
     let raw_ts = if let Some(field) = ts_field_name {
-        record.get(field).and_then(|v| {
-            if let Some(i) = v.as_i64() {
-                Some(i)
-            } else if let Some(f) = v.as_f64() {
-                Some(f as i64)
-            } else if let Some(s) = v.as_str() {
-                s.parse::<i64>().ok()
-            } else {
-                None
-            }
-        }).unwrap_or(now_millis)
+        record
+            .get(field)
+            .and_then(|v| {
+                if let Some(i) = v.as_i64() {
+                    Some(i)
+                } else if let Some(f) = v.as_f64() {
+                    Some(f as i64)
+                } else if let Some(s) = v.as_str() {
+                    s.parse::<i64>().ok()
+                } else {
+                    None
+                }
+            })
+            .unwrap_or(now_millis)
     } else {
         now_millis
     };
@@ -332,7 +341,10 @@ mod tests {
     #[test]
     fn test_escape_string_field() {
         assert_eq!(escape_string_field("normal"), "\"normal\"");
-        assert_eq!(escape_string_field("a \"quoted\" word"), "\"a \\\"quoted\\\" word\"");
+        assert_eq!(
+            escape_string_field("a \"quoted\" word"),
+            "\"a \\\"quoted\\\" word\""
+        );
         assert_eq!(escape_string_field("path\\to"), "\"path\\\\to\"");
     }
 
@@ -350,22 +362,22 @@ mod tests {
         tags.insert("device_id".to_string(), "{{.device}}".to_string());
         tags.insert("site".to_string(), "factory_1".to_string());
 
-        let line = record_to_line_protocol(
-            &record,
-            "telemetry",
-            Some(&tags),
-            None,
-            Some("ts"),
-            "ms",
-        )
-        .unwrap();
+        let line =
+            record_to_line_protocol(&record, "telemetry", Some(&tags), None, Some("ts"), "ms")
+                .unwrap();
 
         assert!(line.starts_with("telemetry,device_id=sensor_01,site=factory_1 "));
         assert!(line.contains("active=true"));
-        assert!(line.contains("humidity=65i"));
+        assert!(line.contains("humidity=65"));
         assert!(line.contains("status=\"ok\""));
         assert!(line.contains("temp=23.5"));
         assert!(line.ends_with(" 1700000000000"));
+    }
+
+    #[test]
+    fn test_escape_newlines_in_line_protocol() {
+        assert_eq!(escape_key("tag\nkey"), "tag\\nkey");
+        assert_eq!(escape_string_field("line1\nline2"), "\"line1\\nline2\"");
     }
 
     #[test]
@@ -383,7 +395,7 @@ mod tests {
         };
         assert_eq!(
             v1.write_url(),
-            "http://localhost:8086/write?db=metrics&precision=s&u=admin&p=secret"
+            "http://localhost:8086/write?db=metrics&precision=s"
         );
 
         let v2 = Influx2Config {

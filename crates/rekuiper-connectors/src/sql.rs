@@ -418,7 +418,17 @@ impl SqlSink {
         let fields = if self.config.fields.is_empty() {
             let mut set = std::collections::BTreeSet::new();
             for r in records {
-                for k in r.data.keys() {
+                for k in r
+                    .data
+                    .keys()
+                    .filter(|k| *k != META_KEY && !k.starts_with("__"))
+                {
+                    if !is_valid_sql_identifier(k) {
+                        anyhow::bail!(
+                            "Invalid dynamic field name '{}': SQL sink requires identifiers matching [A-Za-z_][A-Za-z0-9_]* when fields is unset",
+                            k
+                        );
+                    }
                     set.insert(k.clone());
                 }
             }

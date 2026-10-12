@@ -430,7 +430,10 @@ pub fn validate_sink_actions(actions: &[HashMap<String, Value>]) -> Result<(), S
             rekuiper_connectors::validate_data_template(tpl)?;
         }
         for (kind, opts) in action {
-            if kind == "disabled" || crate::engine::sinks::is_action_disabled(action, opts) {
+            if kind == "disabled"
+                || kind == "disable"
+                || crate::engine::sinks::is_action_disabled(action, opts)
+            {
                 continue;
             }
             if let Some(tpl) = opts.get("dataTemplate").and_then(|v| v.as_str()) {
@@ -483,17 +486,20 @@ pub fn validate_sink_actions(actions: &[HashMap<String, Value>]) -> Result<(), S
                 }
             }
             if kind.eq_ignore_ascii_case("influx") {
-                let addr = opts.get("addr").and_then(|v| v.as_str()).unwrap_or("");
-                if addr.is_empty() {
-                    return Err("influx sink is missing property addr".to_string());
+                if let Some(addr) = opts.get("addr").and_then(|v| v.as_str()) {
+                    if addr.trim().is_empty() {
+                        return Err("influx sink is missing property addr".to_string());
+                    }
                 }
-                let database = opts.get("database").and_then(|v| v.as_str()).unwrap_or("");
-                if database.is_empty() {
-                    return Err("influx sink is missing property database".to_string());
+                if let Some(database) = opts.get("database").and_then(|v| v.as_str()) {
+                    if database.trim().is_empty() {
+                        return Err("influx sink is missing property database".to_string());
+                    }
                 }
-                let measurement = opts.get("measurement").and_then(|v| v.as_str()).unwrap_or("");
-                if measurement.is_empty() {
-                    return Err("influx sink is missing property measurement".to_string());
+                if let Some(measurement) = opts.get("measurement").and_then(|v| v.as_str()) {
+                    if measurement.trim().is_empty() {
+                        return Err("influx sink is missing property measurement".to_string());
+                    }
                 }
             }
             if kind.eq_ignore_ascii_case("influx2") {
@@ -509,7 +515,10 @@ pub fn validate_sink_actions(actions: &[HashMap<String, Value>]) -> Result<(), S
                 if bucket.is_empty() {
                     return Err("influx2 sink is missing property bucket".to_string());
                 }
-                let measurement = opts.get("measurement").and_then(|v| v.as_str()).unwrap_or("");
+                let measurement = opts
+                    .get("measurement")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
                 if measurement.is_empty() {
                     return Err("influx2 sink is missing property measurement".to_string());
                 }
@@ -645,26 +654,26 @@ pub fn reject_invalid_rule(
     }
     // Check multi-stream BUFFER_FULL_POLICY consistency across joined streams
     let mut stream_policies: Vec<(&str, String)> = Vec::new();
-    let get_policy = |stream: &rekuiper_core::model::StreamDefinition| -> String {
-        stream
-            .options
-            .iter()
-            .find_map(|(k, v)| {
-                if k.eq_ignore_ascii_case("buffer_full_policy") {
-                    Some(v.clone())
-                } else {
-                    None
-                }
-            })
-            .unwrap_or_else(|| "dropOldest".to_string())
+    let get_policy = |stream: &rekuiper_core::model::StreamDefinition| -> Option<String> {
+        stream.options.iter().find_map(|(k, v)| {
+            if k.eq_ignore_ascii_case("buffer_full_policy") {
+                Some(v.clone())
+            } else {
+                None
+            }
+        })
     };
 
     if let Some(s) = state.stream_manager.get_stream(&stmt.from) {
-        stream_policies.push((&stmt.from, get_policy(&s)));
+        if let Some(pol) = get_policy(&s) {
+            stream_policies.push((&stmt.from, pol));
+        }
     }
     for j in &stmt.joins {
         if let Some(s) = state.stream_manager.get_stream(&j.target) {
-            stream_policies.push((&j.target, get_policy(&s)));
+            if let Some(pol) = get_policy(&s) {
+                stream_policies.push((&j.target, pol));
+            }
         }
     }
 
@@ -1796,112 +1805,134 @@ mod tests {
 
     #[test]
     fn test_validate_sink_actions_influx() {
-        let invalid_influx = vec![HashMap::from([
-            ("influx".to_string(), json!({
+        let invalid_influx = vec![HashMap::from([(
+            "influx".to_string(),
+            json!({
+                "addr": "",
                 "database": "db1",
                 "measurement": "m1"
-            }))
-        ])];
+            }),
+        )])];
         assert!(validate_sink_actions(&invalid_influx).is_err());
 
-        let valid_influx = vec![HashMap::from([
-            ("influx".to_string(), json!({
+        let default_influx = vec![HashMap::from([(
+            "influx".to_string(),
+            json!({
+                "database": "db1",
+                "measurement": "m1"
+            }),
+        )])];
+        assert!(validate_sink_actions(&default_influx).is_ok());
+
+        let valid_influx = vec![HashMap::from([(
+            "influx".to_string(),
+            json!({
                 "addr": "http://127.0.0.1:8086",
                 "database": "db1",
                 "measurement": "m1"
-            }))
-        ])];
+            }),
+        )])];
         assert!(validate_sink_actions(&valid_influx).is_ok());
 
-        let invalid_influx2 = vec![HashMap::from([
-            ("influx2".to_string(), json!({
+        let invalid_influx2 = vec![HashMap::from([(
+            "influx2".to_string(),
+            json!({
                 "addr": "http://127.0.0.1:8086",
                 "bucket": "b1",
                 "measurement": "m1"
-            }))
-        ])];
+            }),
+        )])];
         assert!(validate_sink_actions(&invalid_influx2).is_err());
 
-        let valid_influx2 = vec![HashMap::from([
-            ("influx2".to_string(), json!({
+        let valid_influx2 = vec![HashMap::from([(
+            "influx2".to_string(),
+            json!({
                 "addr": "http://127.0.0.1:8086",
                 "org": "o1",
                 "bucket": "b1",
                 "measurement": "m1"
-            }))
-        ])];
+            }),
+        )])];
         assert!(validate_sink_actions(&valid_influx2).is_ok());
     }
 
     #[test]
     fn test_validate_sink_actions_tdengine() {
-        let invalid_td = vec![HashMap::from([
-            ("tdengine3".to_string(), json!({
+        let invalid_td = vec![HashMap::from([(
+            "tdengine3".to_string(),
+            json!({
                 "database": "power"
-            }))
-        ])];
+            }),
+        )])];
         assert!(validate_sink_actions(&invalid_td).is_err());
 
-        let valid_td = vec![HashMap::from([
-            ("tdengine3".to_string(), json!({
+        let valid_td = vec![HashMap::from([(
+            "tdengine3".to_string(),
+            json!({
                 "database": "power",
                 "table": "meters"
-            }))
-        ])];
+            }),
+        )])];
         assert!(validate_sink_actions(&valid_td).is_ok());
     }
 
     #[test]
     fn test_validate_sink_actions_iotdb() {
-        let invalid_iotdb = vec![HashMap::from([
-            ("iotdb".to_string(), json!({
+        let invalid_iotdb = vec![HashMap::from([(
+            "iotdb".to_string(),
+            json!({
                 "addr": "127.0.0.1:18080"
-            }))
-        ])];
+            }),
+        )])];
         assert!(validate_sink_actions(&invalid_iotdb).is_err());
 
-        let valid_iotdb = vec![HashMap::from([
-            ("iotdb".to_string(), json!({
+        let valid_iotdb = vec![HashMap::from([(
+            "iotdb".to_string(),
+            json!({
                 "addr": "127.0.0.1:18080",
                 "device": "root.factory.device1"
-            }))
-        ])];
+            }),
+        )])];
         assert!(validate_sink_actions(&valid_iotdb).is_ok());
     }
 
     #[test]
     fn test_validate_sink_actions_image() {
-        let invalid_image = vec![HashMap::from([
-            ("image".to_string(), json!({
+        let invalid_image = vec![HashMap::from([(
+            "image".to_string(),
+            json!({
                 "format": "png"
-            }))
-        ])];
+            }),
+        )])];
         assert!(validate_sink_actions(&invalid_image).is_err());
 
-        let valid_image = vec![HashMap::from([
-            ("image".to_string(), json!({
+        let valid_image = vec![HashMap::from([(
+            "image".to_string(),
+            json!({
                 "path": "/tmp/images",
                 "format": "png"
-            }))
-        ])];
+            }),
+        )])];
         assert!(validate_sink_actions(&valid_image).is_ok());
     }
 
     #[test]
     fn test_validate_sink_actions_zmq() {
-        let invalid_zmq = vec![HashMap::from([
-            ("zmq".to_string(), json!({
+        let invalid_zmq = vec![HashMap::from([(
+            "zmq".to_string(),
+            json!({
                 "topic": "events"
-            }))
-        ])];
+            }),
+        )])];
         assert!(validate_sink_actions(&invalid_zmq).is_err());
 
-        let valid_zmq = vec![HashMap::from([
-            ("zmq".to_string(), json!({
+        let valid_zmq = vec![HashMap::from([(
+            "zmq".to_string(),
+            json!({
                 "server": "tcp://127.0.0.1:5563",
                 "topic": "events"
-            }))
-        ])];
+            }),
+        )])];
         assert!(validate_sink_actions(&valid_zmq).is_ok());
     }
 }

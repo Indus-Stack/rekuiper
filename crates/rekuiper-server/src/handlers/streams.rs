@@ -123,6 +123,20 @@ pub async fn create_stream(
                         )
                             .into_response();
                     }
+                    if (k.eq_ignore_ascii_case("offset_reset")
+                        || k.eq_ignore_ascii_case("offsetreset"))
+                        && !v.eq_ignore_ascii_case("earliest")
+                        && !v.eq_ignore_ascii_case("latest")
+                    {
+                        return (
+                            StatusCode::BAD_REQUEST,
+                            format!(
+                                "Invalid offset_reset: '{}', must be 'earliest' or 'latest'",
+                                v
+                            ),
+                        )
+                            .into_response();
+                    }
                 }
                 let stream_def = StreamDefinition {
                     name: stmt.name.clone(),
@@ -281,6 +295,19 @@ pub async fn update_stream(
                 StatusCode::BAD_REQUEST,
                 format!(
                     "Invalid buffer_full_policy: '{}', must be 'block' or 'dropOldest'",
+                    v
+                ),
+            )
+                .into_response();
+        }
+        if (k.eq_ignore_ascii_case("offset_reset") || k.eq_ignore_ascii_case("offsetreset"))
+            && !v.eq_ignore_ascii_case("earliest")
+            && !v.eq_ignore_ascii_case("latest")
+        {
+            return (
+                StatusCode::BAD_REQUEST,
+                format!(
+                    "Invalid offset_reset: '{}', must be 'earliest' or 'latest'",
                     v
                 ),
             )

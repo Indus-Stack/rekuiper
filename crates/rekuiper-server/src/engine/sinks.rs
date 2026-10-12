@@ -34,8 +34,16 @@ pub fn is_action_disabled(action: &HashMap<String, Value>, opts: &Value) -> bool
             None
         }
     };
-    action.get("disabled").and_then(parse_bool).unwrap_or(false)
-        || opts.get("disabled").and_then(parse_bool).unwrap_or(false)
+    action
+        .get("disabled")
+        .or_else(|| action.get("disable"))
+        .and_then(parse_bool)
+        .unwrap_or(false)
+        || opts
+            .get("disabled")
+            .or_else(|| opts.get("disable"))
+            .and_then(parse_bool)
+            .unwrap_or(false)
 }
 
 pub(crate) fn parse_common_opts(
@@ -398,7 +406,7 @@ pub(crate) fn prepare_actions(
     let mut out = Vec::new();
     for action in actions {
         for (kind, opts) in action {
-            if kind == "disabled" || is_action_disabled(action, opts) {
+            if kind == "disabled" || kind == "disable" || is_action_disabled(action, opts) {
                 continue;
             }
             match kind.as_str() {
@@ -731,7 +739,8 @@ pub(crate) fn prepare_actions(
                     });
                 }
                 "influx" => {
-                    match serde_json::from_value::<rekuiper_connectors::InfluxConfig>(opts.clone()) {
+                    match serde_json::from_value::<rekuiper_connectors::InfluxConfig>(opts.clone())
+                    {
                         Ok(config) => {
                             let common_opts = parse_common_opts(opts, rule_send_nil_field, true);
                             out.push(PreparedAction::Influx {
@@ -745,7 +754,8 @@ pub(crate) fn prepare_actions(
                     }
                 }
                 "influx2" => {
-                    match serde_json::from_value::<rekuiper_connectors::Influx2Config>(opts.clone()) {
+                    match serde_json::from_value::<rekuiper_connectors::Influx2Config>(opts.clone())
+                    {
                         Ok(config) => {
                             let common_opts = parse_common_opts(opts, rule_send_nil_field, true);
                             out.push(PreparedAction::Influx2 {
@@ -759,7 +769,9 @@ pub(crate) fn prepare_actions(
                     }
                 }
                 "tdengine" | "tdengine3" => {
-                    match serde_json::from_value::<rekuiper_connectors::TdengineConfig>(opts.clone()) {
+                    match serde_json::from_value::<rekuiper_connectors::TdengineConfig>(
+                        opts.clone(),
+                    ) {
                         Ok(config) => {
                             let common_opts = parse_common_opts(opts, rule_send_nil_field, true);
                             out.push(PreparedAction::Tdengine {
@@ -787,7 +799,9 @@ pub(crate) fn prepare_actions(
                     }
                 }
                 "image" => {
-                    match serde_json::from_value::<rekuiper_connectors::ImageSinkConfig>(opts.clone()) {
+                    match serde_json::from_value::<rekuiper_connectors::ImageSinkConfig>(
+                        opts.clone(),
+                    ) {
                         Ok(config) => {
                             let common_opts = parse_common_opts(opts, rule_send_nil_field, true);
                             out.push(PreparedAction::Image {
@@ -801,7 +815,8 @@ pub(crate) fn prepare_actions(
                     }
                 }
                 "zmq" | "zeromq" => {
-                    match serde_json::from_value::<rekuiper_connectors::ZmqSinkConfig>(opts.clone()) {
+                    match serde_json::from_value::<rekuiper_connectors::ZmqSinkConfig>(opts.clone())
+                    {
                         Ok(config) => {
                             let template = opts
                                 .get("dataTemplate")
@@ -1023,7 +1038,7 @@ pub(crate) fn action_cache_configs(actions: &[HashMap<String, Value>]) -> Vec<Op
     let mut out = Vec::new();
     for action in actions {
         for (kind, opts) in action {
-            if kind == "disabled" || is_action_disabled(action, opts) {
+            if kind == "disabled" || kind == "disable" || is_action_disabled(action, opts) {
                 continue;
             }
             out.push(
@@ -1862,6 +1877,10 @@ pub(crate) async fn send_action(
                             &config.precision,
                         ) {
                             lines.push(l);
+                        } else {
+                            tracing::warn!(
+                                "Influx batch row produced no line protocol; skipping row"
+                            );
                         }
                     }
                 }
@@ -1874,28 +1893,53 @@ pub(crate) async fn send_action(
                     config.fields.as_deref(),
                     config.ts_field_name.as_deref(),
                     &config.precision,
-                ).unwrap_or_default()
+                )
+                .unwrap_or_default()
             };
 
             if line.is_empty() {
                 return Ok(());
             }
 
-            let res = ctx.http_client
+            let mut req = ctx
+                .http_client
                 .post(url)
-                .header(reqwest::header::CONTENT_TYPE, "text/plain; charset=utf-8")
-                .body(line)
-                .send()
-                .await;
+                .header(reqwest::header::CONTENT_TYPE, "text/plain; charset=utf-8");
+
+            if let Some(ref u) = config.username {
+                req = req.basic_auth(u, config.password.as_deref());
+            }
+
+            let res = req.body(line).send().await;
 
             match res {
                 Ok(resp) if resp.status().is_success() => Ok(()),
                 Ok(resp) => {
                     let status = resp.status();
                     let err_text = resp.text().await.unwrap_or_default();
-                    Err(SendError::Retry(format!("influx write failed with {}: {}", status, err_text)))
+                    if status == reqwest::StatusCode::REQUEST_TIMEOUT
+                        || status == reqwest::StatusCode::TOO_MANY_REQUESTS
+                    {
+                        Err(SendError::Retry(format!(
+                            "influx write retryable status {}: {}",
+                            status, err_text
+                        )))
+                    } else if status.is_client_error() {
+                        Err(SendError::Permanent(format!(
+                            "influx write client error {}: {}",
+                            status, err_text
+                        )))
+                    } else {
+                        Err(SendError::Retry(format!(
+                            "influx write failed with {}: {}",
+                            status, err_text
+                        )))
+                    }
                 }
-                Err(e) => Err(SendError::Retry(format!("influx write connection error: {}", e))),
+                Err(e) => Err(SendError::Retry(format!(
+                    "influx write connection error: {}",
+                    e
+                ))),
             }
         }
         PreparedAction::Influx2 { config, .. } => {
@@ -1915,6 +1959,10 @@ pub(crate) async fn send_action(
                             &config.precision,
                         ) {
                             lines.push(l);
+                        } else {
+                            tracing::warn!(
+                                "Influx2 batch row produced no line protocol; skipping row"
+                            );
                         }
                     }
                 }
@@ -1927,14 +1975,16 @@ pub(crate) async fn send_action(
                     config.fields.as_deref(),
                     config.ts_field_name.as_deref(),
                     &config.precision,
-                ).unwrap_or_default()
+                )
+                .unwrap_or_default()
             };
 
             if line.is_empty() {
                 return Ok(());
             }
 
-            let mut req = ctx.http_client
+            let mut req = ctx
+                .http_client
                 .post(url)
                 .header(reqwest::header::CONTENT_TYPE, "text/plain; charset=utf-8");
 
@@ -1949,120 +1999,221 @@ pub(crate) async fn send_action(
                 Ok(resp) => {
                     let status = resp.status();
                     let err_text = resp.text().await.unwrap_or_default();
-                    Err(SendError::Retry(format!("influx2 write failed with {}: {}", status, err_text)))
+                    if status == reqwest::StatusCode::REQUEST_TIMEOUT
+                        || status == reqwest::StatusCode::TOO_MANY_REQUESTS
+                    {
+                        Err(SendError::Retry(format!(
+                            "influx2 write retryable status {}: {}",
+                            status, err_text
+                        )))
+                    } else if status.is_client_error() {
+                        Err(SendError::Permanent(format!(
+                            "influx2 write client error {}: {}",
+                            status, err_text
+                        )))
+                    } else {
+                        Err(SendError::Retry(format!(
+                            "influx2 write failed with {}: {}",
+                            status, err_text
+                        )))
+                    }
                 }
-                Err(e) => Err(SendError::Retry(format!("influx2 write connection error: {}", e))),
+                Err(e) => Err(SendError::Retry(format!(
+                    "influx2 write connection error: {}",
+                    e
+                ))),
             }
         }
         PreparedAction::Tdengine { config, .. } => {
             let default_url = config.endpoint_url();
             let url = destination.unwrap_or(&default_url);
-            let sql_statements = if let Some(Value::Array(arr)) = output.data.get(BATCH_ROWS_KEY) {
-                let mut stmts = Vec::new();
+            let sql_statement = if let Some(Value::Array(arr)) = output.data.get(BATCH_ROWS_KEY) {
+                let mut rows = Vec::new();
                 for row in arr {
                     if let Value::Object(m) = row {
-                        let row_map: HashMap<String, Value> = m.clone().into_iter().collect();
-                        if let Ok(sql) = config.build_insert_sql(&row_map) {
-                            stmts.push(sql);
-                        }
+                        rows.push(m.clone().into_iter().collect::<HashMap<String, Value>>());
                     }
                 }
-                stmts.join("; ")
+                if rows.is_empty() {
+                    return Ok(());
+                }
+                config.build_batch_insert_sql(&rows).map_err(|e| {
+                    SendError::Permanent(format!("tdengine batch sql generation error: {}", e))
+                })?
             } else {
-                config.build_insert_sql(&output.data).map_err(|e| SendError::Retry(format!("tdengine sql generation error: {}", e)))?
+                config.build_insert_sql(&output.data).map_err(|e| {
+                    SendError::Permanent(format!("tdengine sql generation error: {}", e))
+                })?
             };
 
-            if sql_statements.trim().is_empty() {
+            if sql_statement.trim().is_empty() {
                 return Ok(());
             }
 
-            let res = ctx.http_client
+            let res = ctx
+                .http_client
                 .post(url)
                 .header(reqwest::header::AUTHORIZATION, config.basic_auth_header())
                 .header(reqwest::header::CONTENT_TYPE, "text/plain; charset=utf-8")
-                .body(sql_statements)
+                .body(sql_statement)
                 .send()
                 .await;
 
             match res {
-                Ok(resp) if resp.status().is_success() => Ok(()),
+                Ok(resp) if resp.status().is_success() => {
+                    let body_text = resp.text().await.unwrap_or_default();
+                    if let Ok(json_body) = serde_json::from_str::<Value>(&body_text) {
+                        if let Some(code) = json_body.get("code").and_then(|c| c.as_i64()) {
+                            if code != 0 {
+                                let desc = json_body
+                                    .get("desc")
+                                    .and_then(|d| d.as_str())
+                                    .unwrap_or("unknown error");
+                                return Err(SendError::Permanent(format!(
+                                    "tdengine error {}: {}",
+                                    code, desc
+                                )));
+                            }
+                        }
+                    }
+                    Ok(())
+                }
                 Ok(resp) => {
                     let status = resp.status();
                     let err_text = resp.text().await.unwrap_or_default();
-                    Err(SendError::Retry(format!("tdengine write failed with {}: {}", status, err_text)))
+                    if status == reqwest::StatusCode::REQUEST_TIMEOUT
+                        || status == reqwest::StatusCode::TOO_MANY_REQUESTS
+                    {
+                        Err(SendError::Retry(format!(
+                            "tdengine write retryable status {}: {}",
+                            status, err_text
+                        )))
+                    } else if status.is_client_error() {
+                        Err(SendError::Permanent(format!(
+                            "tdengine write client error {}: {}",
+                            status, err_text
+                        )))
+                    } else {
+                        Err(SendError::Retry(format!(
+                            "tdengine write failed with {}: {}",
+                            status, err_text
+                        )))
+                    }
                 }
-                Err(e) => Err(SendError::Retry(format!("tdengine write connection error: {}", e))),
+                Err(e) => Err(SendError::Retry(format!(
+                    "tdengine write connection error: {}",
+                    e
+                ))),
             }
         }
         PreparedAction::Iotdb { config, .. } => {
             let default_url = config.endpoint_url();
             let url = destination.unwrap_or(&default_url);
-            let payload = if let Some(Value::Array(arr)) = output.data.get(BATCH_ROWS_KEY) {
-                let mut device = String::new();
-                let mut timestamps = Vec::new();
-                let mut measurements = Vec::new();
-                let mut values = Vec::new();
+            let payloads = if let Some(Value::Array(arr)) = output.data.get(BATCH_ROWS_KEY) {
+                let mut rows = Vec::new();
                 for row in arr {
                     if let Value::Object(m) = row {
-                        let row_map: HashMap<String, Value> = m.clone().into_iter().collect();
-                        if let Ok(single_payload) = config.build_insert_payload(&row_map) {
-                            if device.is_empty() {
-                                if let Some(d) = single_payload.get("device").and_then(|v| v.as_str()) {
-                                    device = d.to_string();
+                        rows.push(m.clone().into_iter().collect::<HashMap<String, Value>>());
+                    }
+                }
+                if rows.is_empty() {
+                    return Ok(());
+                }
+                config.build_batch_insert_payloads(&rows).map_err(|e| {
+                    SendError::Permanent(format!("iotdb payload generation error: {}", e))
+                })?
+            } else {
+                vec![config.build_insert_payload(&output.data).map_err(|e| {
+                    SendError::Permanent(format!("iotdb payload generation error: {}", e))
+                })?]
+            };
+
+            for payload in payloads {
+                let res = ctx
+                    .http_client
+                    .post(url)
+                    .header(reqwest::header::AUTHORIZATION, config.basic_auth_header())
+                    .header(reqwest::header::CONTENT_TYPE, "application/json")
+                    .json(&payload)
+                    .send()
+                    .await;
+
+                match res {
+                    Ok(resp) if resp.status().is_success() => {
+                        let body_text = resp.text().await.unwrap_or_default();
+                        if let Ok(json_body) = serde_json::from_str::<Value>(&body_text) {
+                            if let Some(code) = json_body.get("code").and_then(|c| c.as_i64()) {
+                                if code != 200 && code != 0 {
+                                    let msg = json_body
+                                        .get("message")
+                                        .and_then(|m| m.as_str())
+                                        .unwrap_or("unknown error");
+                                    return Err(SendError::Permanent(format!(
+                                        "iotdb error {}: {}",
+                                        code, msg
+                                    )));
                                 }
-                            }
-                            if measurements.is_empty() {
-                                if let Some(m_arr) = single_payload.get("measurements").and_then(|v| v.as_array()) {
-                                    measurements = m_arr.clone();
-                                }
-                            }
-                            if let Some(t_arr) = single_payload.get("timestamps").and_then(|v| v.as_array()) {
-                                timestamps.extend(t_arr.clone());
-                            }
-                            if let Some(v_arr) = single_payload.get("values").and_then(|v| v.as_array()) {
-                                values.extend(v_arr.clone());
                             }
                         }
                     }
+                    Ok(resp) => {
+                        let status = resp.status();
+                        let err_text = resp.text().await.unwrap_or_default();
+                        if status == reqwest::StatusCode::REQUEST_TIMEOUT
+                            || status == reqwest::StatusCode::TOO_MANY_REQUESTS
+                        {
+                            return Err(SendError::Retry(format!(
+                                "iotdb write retryable status {}: {}",
+                                status, err_text
+                            )));
+                        } else if status.is_client_error() {
+                            return Err(SendError::Permanent(format!(
+                                "iotdb write client error {}: {}",
+                                status, err_text
+                            )));
+                        } else {
+                            return Err(SendError::Retry(format!(
+                                "iotdb write failed with {}: {}",
+                                status, err_text
+                            )));
+                        }
+                    }
+                    Err(e) => {
+                        return Err(SendError::Retry(format!(
+                            "iotdb write connection error: {}",
+                            e
+                        )));
+                    }
                 }
-                serde_json::json!({
-                    "device": device,
-                    "timestamps": timestamps,
-                    "measurements": measurements,
-                    "values": values
-                })
-            } else {
-                config.build_insert_payload(&output.data).map_err(|e| SendError::Retry(format!("iotdb payload generation error: {}", e)))?
-            };
-
-            let res = ctx.http_client
-                .post(url)
-                .header(reqwest::header::AUTHORIZATION, config.basic_auth_header())
-                .header(reqwest::header::CONTENT_TYPE, "application/json")
-                .json(&payload)
-                .send()
-                .await;
-
-            match res {
-                Ok(resp) if resp.status().is_success() => Ok(()),
-                Ok(resp) => {
-                    let status = resp.status();
-                    let err_text = resp.text().await.unwrap_or_default();
-                    Err(SendError::Retry(format!("iotdb write failed with {}: {}", status, err_text)))
-                }
-                Err(e) => Err(SendError::Retry(format!("iotdb write connection error: {}", e))),
             }
+            Ok(())
         }
         PreparedAction::Image { config, .. } => {
             if let Some(Value::Array(arr)) = output.data.get(BATCH_ROWS_KEY) {
                 for row in arr {
                     if let Value::Object(m) = row {
                         let row_map: HashMap<String, Value> = m.clone().into_iter().collect();
-                        config.save_image(&row_map).await.map_err(|e| SendError::Retry(e))?;
+                        match config.save_image(&row_map).await {
+                            Ok(_) => {}
+                            Err(rekuiper_connectors::ImageSinkError::Validation(e)) => {
+                                return Err(SendError::Permanent(e));
+                            }
+                            Err(rekuiper_connectors::ImageSinkError::Io(e)) => {
+                                return Err(SendError::Retry(e));
+                            }
+                        }
                     }
                 }
             } else {
-                config.save_image(&output.data).await.map_err(|e| SendError::Retry(e))?;
+                match config.save_image(&output.data).await {
+                    Ok(_) => {}
+                    Err(rekuiper_connectors::ImageSinkError::Validation(e)) => {
+                        return Err(SendError::Permanent(e));
+                    }
+                    Err(rekuiper_connectors::ImageSinkError::Io(e)) => {
+                        return Err(SendError::Retry(e));
+                    }
+                }
             }
             Ok(())
         }
@@ -2346,7 +2497,7 @@ async fn dispatch_rule_actions_legacy(
 ) {
     for action in actions {
         for (kind, opts) in action {
-            if kind == "disabled" || is_action_disabled(action, opts) {
+            if kind == "disabled" || kind == "disable" || is_action_disabled(action, opts) {
                 continue;
             }
             match kind.as_str() {

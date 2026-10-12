@@ -1325,7 +1325,9 @@ fn test_parse_create_stream_columns() {
     let mut parser_def = Parser::new(
         "CREATE STREAM s_def (id BIGINT DEFAULT 100, status STRING DEFAULT 'idle', active BOOLEAN DEFAULT true) WITH (FORMAT=\"json\")",
     );
-    let stmt_def = parser_def.parse_create_stream().expect("columns with default should parse");
+    let stmt_def = parser_def
+        .parse_create_stream()
+        .expect("columns with default should parse");
     assert_eq!(
         stmt_def.fields,
         vec![

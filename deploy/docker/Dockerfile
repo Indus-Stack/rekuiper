@@ -26,12 +26,14 @@ FROM alpine:latest
 
 ENV KUIPER_HOME="/kuiper" \
     KUIPER__BASIC__CONSOLELOG="true" \
+    KUIPER__BASIC__RESTIP="0.0.0.0" \
+    KUIPER__BASIC__HTTPSERVERIP="0.0.0.0" \
     RUST_LOG="info"
 
 ARG KUIPER_USER="kuiper"
 ARG KUIPER_USER_ID="1001"
 
-RUN apk add --no-cache ca-certificates libgcc libssl3 sqlite-libs tzdata && \
+RUN apk add --no-cache ca-certificates libgcc libssl3 sqlite-libs tzdata ffmpeg && \
     adduser -DH -s /sbin/nologin -u ${KUIPER_USER_ID} ${KUIPER_USER} && \
     mkdir -p ${KUIPER_HOME}/bin ${KUIPER_HOME}/etc ${KUIPER_HOME}/data ${KUIPER_HOME}/log && \
     chown -R ${KUIPER_USER}:${KUIPER_USER} ${KUIPER_HOME}

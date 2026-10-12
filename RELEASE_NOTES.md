@@ -4,7 +4,7 @@
 
 Key highlights:
 - **Native Pure-Rust Video Source Connector**: Added built-in `video` source ingesting live RTSP/HTTP/file camera streams via FFmpeg standard input/output image piping with fractional/integer frame rate sampling (`interval`), custom input arguments, and dynamic image record conversion.
-- **Native Pure-Rust ZeroMQ Sink and Source**: Added pure-Rust built-in ZeroMQ streaming connector (`zmq`) using standard `zeromq` crate (0 C dependencies). Supports SUB/PUB and PULL/PUSH patterns with bind or connect topologies, dynamic topics, and structured payload decoding.
+- **Native Pure-Rust ZeroMQ Sink and Source**: Added pure-Rust built-in ZeroMQ streaming connector (`zmq`) using standard `zeromq` crate (0 C dependencies). Supports PUB/SUB sockets with bind or connect topologies, dynamic topics, and structured payload decoding.
 - **Image Sink Retention Pruning**: Implemented robust age (`maxAge`) and count (`maxCount`) retention directory pruning for the native `image` sink.
 - **Simulator & Random Source Parity**: Supported millisecond duration string (`50ms`, `1s`) and numeric interval parsing with `CONF_KEY` resolution and stream DDL inline overrides.
 - **Upstream eKuiper Parity Features**:

@@ -28,7 +28,10 @@ pub struct VideoSourceConfig {
 
     /// Frame extraction interval in milliseconds (default: 1000 ms = 1 frame/s).
     /// Accepts numbers (e.g. `1000`) or duration strings (e.g. `"500ms"`, `"1s"`, `"2m"`).
-    #[serde(default = "default_video_interval", deserialize_with = "deserialize_interval")]
+    #[serde(
+        default = "default_video_interval",
+        deserialize_with = "deserialize_interval"
+    )]
     pub interval: u64,
 
     /// Target video frame codec. Defaults to `"mjpeg"`.
@@ -45,7 +48,11 @@ pub struct VideoSourceConfig {
     pub input_args: HashMap<String, String>,
 
     /// Path or binary name of FFmpeg (default: `"ffmpeg"`).
-    #[serde(default = "default_ffmpeg_path", rename = "ffmpegPath", alias = "ffmpeg_path")]
+    #[serde(
+        default = "default_ffmpeg_path",
+        rename = "ffmpegPath",
+        alias = "ffmpeg_path"
+    )]
     pub ffmpeg_path: String,
 }
 
@@ -199,14 +206,32 @@ impl VideoSource {
 
     /// Builds the FFmpeg Command with arguments matching upstream eKuiper `image2pipe` stream extraction.
     pub fn build_command(&self) -> Command {
-        let mut cmd = Command::new(&self.config.ffmpeg_path);
+        let ffmpeg_prog = if self.config.ffmpeg_path.is_empty() {
+            "ffmpeg"
+        } else {
+            let p = std::path::Path::new(&self.config.ffmpeg_path);
+            let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+            if stem.eq_ignore_ascii_case("ffmpeg") {
+                &self.config.ffmpeg_path
+            } else {
+                tracing::warn!(
+                    "Configured ffmpegPath '{}' does not have stem 'ffmpeg'; falling back to 'ffmpeg'",
+                    self.config.ffmpeg_path
+                );
+                "ffmpeg"
+            }
+        };
+        let mut cmd = Command::new(ffmpeg_prog);
+        cmd.kill_on_drop(true);
         cmd.arg("-nostdin")
             .arg("-hide_banner")
             .arg("-loglevel")
             .arg("error");
 
         // Custom input arguments prior to -i
-        for (k, v) in &self.config.input_args {
+        let mut sorted_args: Vec<_> = self.config.input_args.iter().collect();
+        sorted_args.sort_by_key(|(k, _)| *k);
+        for (k, v) in sorted_args {
             let flag = if k.starts_with('-') {
                 k.clone()
             } else {
@@ -223,9 +248,9 @@ impl VideoSource {
         // Frame rate filter if interval > 0
         if self.config.interval > 0 {
             let interval_ms = self.config.interval;
-            let fps_filter = if interval_ms >= 1000 && interval_ms % 1000 == 0 {
+            let fps_filter = if interval_ms > 1000 && interval_ms.is_multiple_of(1000) {
                 format!("fps=1/{}", interval_ms / 1000)
-            } else if 1000 % interval_ms == 0 {
+            } else if 1000u64.is_multiple_of(interval_ms) {
                 format!("fps={}", 1000 / interval_ms)
             } else {
                 format!("fps={:.3}", 1000.0 / interval_ms as f64)
@@ -246,8 +271,31 @@ impl VideoSource {
         cmd
     }
 
+    /// Helper to convert a decoded image frame into a standardized StreamRecord.
+    pub fn create_frame_record(frame: &[u8], url: &str, codec: &str) -> StreamRecord {
+        let b64_img = base64::engine::general_purpose::STANDARD.encode(frame);
+        let mut record_data = HashMap::new();
+        record_data.insert("image".to_string(), Value::String(b64_img));
+        record_data.insert("url".to_string(), Value::String(url.to_string()));
+        record_data.insert("size".to_string(), Value::Number(frame.len().into()));
+        record_data.insert("format".to_string(), Value::String(codec.to_string()));
+        record_data.insert(
+            "ts".to_string(),
+            Value::Number(Utc::now().timestamp_millis().into()),
+        );
+
+        let mut rec = StreamRecord::new(record_data);
+        let mut meta = HashMap::new();
+        meta.insert("url".to_string(), Value::String(url.to_string()));
+        rec.data.insert(
+            crate::META_KEY.to_string(),
+            Value::Object(meta.into_iter().collect()),
+        );
+        rec
+    }
+
     /// Spawns the background video capture pipeline.
-    pub fn spawn(self, mut cancel_rx: watch::Receiver<bool>) {
+    pub fn spawn(self, mut cancel_rx: watch::Receiver<bool>) -> tokio::task::JoinHandle<()> {
         tokio::spawn(async move {
             let mut backoff = Duration::from_millis(500);
             let max_backoff = Duration::from_secs(5);
@@ -262,7 +310,10 @@ impl VideoSource {
                     continue;
                 }
 
-                tracing::info!("Starting video source pipeline for URL: {}", self.config.url);
+                tracing::info!(
+                    "Starting video source pipeline for URL: {}",
+                    self.config.url
+                );
                 let mut cmd = self.build_command();
 
                 let mut child = match cmd.spawn() {
@@ -323,20 +374,13 @@ impl VideoSource {
                                     buf.extend_from_slice(&read_chunk[..n]);
                                     let frames = split_jpegs(&mut buf);
                                     for frame in frames {
-                                        let b64_img = base64::engine::general_purpose::STANDARD.encode(&frame);
-                                        let mut record_data = HashMap::new();
-                                        record_data.insert("image".to_string(), Value::String(b64_img));
-                                        record_data.insert("url".to_string(), Value::String(self.config.url.clone()));
-                                        record_data.insert("size".to_string(), Value::Number(frame.len().into()));
-                                        record_data.insert("format".to_string(), Value::String(self.config.codec.clone()));
-                                        record_data.insert("ts".to_string(), Value::Number(Utc::now().timestamp_millis().into()));
-
-                                        let mut rec = StreamRecord::new(record_data);
-                                        let mut meta = HashMap::new();
-                                        meta.insert("url".to_string(), Value::String(self.config.url.clone()));
-                                        rec.data.insert(crate::META_KEY.to_string(), Value::Object(meta.into_iter().collect()));
-
-                                        let _ = self.tx.send(rec).await;
+                                        let rec = Self::create_frame_record(&frame, &self.config.url, &self.config.codec);
+                                        if matches!(self.tx.send(rec).await, Err(rekuiper_core::PublishError::Closed)) {
+                                            tracing::info!("Video source receiver closed; terminating video pipeline");
+                                            let _ = child.kill().await;
+                                            let _ = child.wait().await;
+                                            return;
+                                        }
                                     }
                                     backoff = Duration::from_millis(500);
                                 }
@@ -369,7 +413,7 @@ impl VideoSource {
                 backoff = (backoff * 2).min(max_backoff);
             }
             tracing::info!("Video source background task stopped");
-        });
+        })
     }
 }
 
@@ -474,7 +518,7 @@ mod tests {
     }
 
     #[test]
-    fn test_build_command_structure() {
+    fn test_build_command_structure_and_fps() {
         let mut input_args = HashMap::new();
         input_args.insert("rtsp_transport".to_string(), "tcp".to_string());
 
@@ -484,14 +528,147 @@ mod tests {
             codec: "mjpeg".to_string(),
             debug_resp: false,
             input_args,
-            ffmpeg_path: "ffmpeg".to_string(),
+            ffmpeg_path: "/usr/local/bin/ffmpeg".to_string(),
         };
 
         let bus = rekuiper_core::StreamBus::default();
         let tx = bus.get_or_create("video_test");
-        let source = VideoSource::new(cfg, tx);
+        let source = VideoSource::new(cfg, tx.clone());
         let cmd = source.build_command();
-        // Verify Command program
-        assert_eq!(cmd.as_std().get_program(), "ffmpeg");
+
+        assert_eq!(cmd.as_std().get_program(), "/usr/local/bin/ffmpeg");
+        let args: Vec<String> = cmd
+            .as_std()
+            .get_args()
+            .map(|a| a.to_string_lossy().to_string())
+            .collect();
+
+        assert!(args.contains(&"-nostdin".to_string()));
+        assert!(args.contains(&"-hide_banner".to_string()));
+        assert!(args.contains(&"-loglevel".to_string()));
+        assert!(args.contains(&"error".to_string()));
+        assert!(args.contains(&"-rtsp_transport".to_string()));
+        assert!(args.contains(&"tcp".to_string()));
+        assert!(args.contains(&"-i".to_string()));
+        assert!(args.contains(&"rtsp://localhost:8554/stream".to_string()));
+        assert!(args.contains(&"-vf".to_string()));
+        assert!(args.contains(&"fps=1".to_string()));
+        assert!(args.contains(&"-f".to_string()));
+        assert!(args.contains(&"image2pipe".to_string()));
+        assert!(args.contains(&"-vcodec".to_string()));
+        assert!(args.contains(&"mjpeg".to_string()));
+        assert!(args.contains(&"-q:v".to_string()));
+        assert!(args.contains(&"2".to_string()));
+        assert!(args.contains(&"pipe:1".to_string()));
+
+        // Test interval = 500 ms -> fps=2
+        let mut cfg500 = source.config.clone();
+        cfg500.interval = 500;
+        let cmd500 = VideoSource::new(cfg500, tx.clone()).build_command();
+        let args500: Vec<String> = cmd500
+            .as_std()
+            .get_args()
+            .map(|a| a.to_string_lossy().to_string())
+            .collect();
+        let vf_idx = args500.iter().position(|a| a == "-vf").unwrap();
+        assert_eq!(args500[vf_idx + 1], "fps=2");
+
+        // Test interval = 2000 ms -> fps=1/2
+        let mut cfg2000 = source.config.clone();
+        cfg2000.interval = 2000;
+        let cmd2000 = VideoSource::new(cfg2000, tx.clone()).build_command();
+        let args2000: Vec<String> = cmd2000
+            .as_std()
+            .get_args()
+            .map(|a| a.to_string_lossy().to_string())
+            .collect();
+        let vf_idx = args2000.iter().position(|a| a == "-vf").unwrap();
+        assert_eq!(args2000[vf_idx + 1], "fps=1/2");
+
+        // Test interval = 2500 ms -> fps=0.400
+        let mut cfg2500 = source.config.clone();
+        cfg2500.interval = 2500;
+        let cmd2500 = VideoSource::new(cfg2500, tx.clone()).build_command();
+        let args2500: Vec<String> = cmd2500
+            .as_std()
+            .get_args()
+            .map(|a| a.to_string_lossy().to_string())
+            .collect();
+        let vf_idx = args2500.iter().position(|a| a == "-vf").unwrap();
+        assert_eq!(args2500[vf_idx + 1], "fps=0.400");
+
+        // Test interval = 0 -> no -vf filter
+        let mut cfg0 = source.config.clone();
+        cfg0.interval = 0;
+        let cmd0 = VideoSource::new(cfg0, tx).build_command();
+        let args0: Vec<String> = cmd0
+            .as_std()
+            .get_args()
+            .map(|a| a.to_string_lossy().to_string())
+            .collect();
+        assert!(!args0.contains(&"-vf".to_string()));
+    }
+
+    #[test]
+    fn test_create_frame_record() {
+        let fake_jpeg = vec![0xFF, 0xD8, 0x12, 0x34, 0xFF, 0xD9];
+        let record =
+            VideoSource::create_frame_record(&fake_jpeg, "rtsp://camera:554/live", "mjpeg");
+
+        let expected_b64 = base64::engine::general_purpose::STANDARD.encode(&fake_jpeg);
+        assert_eq!(
+            record.data.get("image").unwrap(),
+            &Value::String(expected_b64)
+        );
+        assert_eq!(
+            record.data.get("url").unwrap(),
+            &Value::String("rtsp://camera:554/live".to_string())
+        );
+        assert_eq!(
+            record.data.get("size").unwrap(),
+            &Value::Number(fake_jpeg.len().into())
+        );
+        assert_eq!(
+            record.data.get("format").unwrap(),
+            &Value::String("mjpeg".to_string())
+        );
+        assert!(record.data.contains_key("ts"));
+
+        let meta = record
+            .data
+            .get(crate::META_KEY)
+            .unwrap()
+            .as_object()
+            .unwrap();
+        assert_eq!(
+            meta.get("url").unwrap().as_str().unwrap(),
+            "rtsp://camera:554/live"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_video_pipeline_frame_ingestion() {
+        let bus = rekuiper_core::StreamBus::default();
+        let tx = bus.get_or_create("video_stream");
+        let mut rx = bus.subscribe("video_stream");
+
+        let frame1 = vec![0xFF, 0xD8, 0x01, 0x02, 0xFF, 0xD9];
+        let frame2 = vec![0xFF, 0xD8, 0x03, 0x04, 0x05, 0xFF, 0xD9];
+
+        let mut incoming_stream = Vec::new();
+        incoming_stream.extend_from_slice(&frame1);
+        incoming_stream.extend_from_slice(&frame2);
+
+        let frames = split_jpegs(&mut incoming_stream);
+        assert_eq!(frames.len(), 2);
+        for frame in frames {
+            let rec = VideoSource::create_frame_record(&frame, "http://live.cam/mjpeg", "mjpeg");
+            tx.send(rec).await.unwrap();
+        }
+
+        let r1 = rx.recv().await.unwrap();
+        assert_eq!(r1.data.get("size").unwrap(), &serde_json::json!(6));
+        let r2 = rx.recv().await.unwrap();
+        assert_eq!(r2.data.get("size").unwrap(), &serde_json::json!(7));
     }
 }

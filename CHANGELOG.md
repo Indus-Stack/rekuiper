@@ -14,7 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **Native Video Source Connector**: Pure-Rust built-in `video` source ingesting RTSP/HTTP/file feeds via FFmpeg pipes with interval sampling, custom input flags, and image record streaming.
-- **Native ZeroMQ Sink & Source**: Pure-Rust ZeroMQ connector (`zmq`) using standard `zeromq` crate (0 C dependencies) supporting SUB/PUB and PULL/PUSH modes with dynamic topics.
+- **Native ZeroMQ Sink & Source**: Pure-Rust ZeroMQ connector (`zmq`) using standard `zeromq` crate (0 C dependencies) supporting PUB/SUB sockets with bind or connect topologies and dynamic topics.
 - **Image Sink Retention Pruning**: Automated age-based (`maxAge`) and count-based (`maxCount`) directory pruning.
 - **Upstream eKuiper Parities**:
   - `DEFAULT` column values in stream DDL (#PR-4025 parity).
