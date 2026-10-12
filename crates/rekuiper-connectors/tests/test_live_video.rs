@@ -5,7 +5,16 @@ use std::time::Duration;
 use tokio::sync::watch;
 
 #[tokio::test]
+#[ignore = "requires live external network connection and installed ffmpeg"]
 async fn test_live_public_http_video_stream() {
+    let check = std::process::Command::new("ffmpeg")
+        .arg("-version")
+        .output();
+    let Ok(_) = check else {
+        println!("FFmpeg not found; skipping public video test");
+        return;
+    };
+
     if tokio::net::TcpStream::connect("vjs.zencdn.net:80")
         .await
         .is_err()
@@ -65,6 +74,7 @@ async fn test_live_public_http_video_stream() {
 }
 
 #[tokio::test]
+#[ignore = "requires hardware webcam and installed ffmpeg"]
 async fn test_live_webcam_stream() {
     // 1. Check if HP 5MP Camera is present
     let check = std::process::Command::new("ffmpeg")
