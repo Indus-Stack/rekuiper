@@ -154,9 +154,18 @@ pub async fn start_ruletest(State(state): State<AppState>, Path(name): Path<Stri
                 {
                     emit_ruletest_line(&session, &row);
                 }
-                tokio::select! {
-                    _ = session.shutdown.notified() => return,
-                    _ = tokio::time::sleep(interval) => {}
+                if interval.is_zero() {
+                    tokio::select! {
+                        biased;
+                        _ = session.shutdown.notified() => return,
+                        _ = tokio::task::yield_now() => {}
+                    }
+                } else {
+                    tokio::select! {
+                        biased;
+                        _ = session.shutdown.notified() => return,
+                        _ = tokio::time::sleep(interval) => {}
+                    }
                 }
             }
             if !loop_data {
