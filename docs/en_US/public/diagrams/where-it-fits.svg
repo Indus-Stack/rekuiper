@@ -1,0 +1,119 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 440" role="img" aria-labelledby="t d" font-family="-apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+  <title id="t">Where rekuiper fits</title>
+  <desc id="d">Devices and feeds on the left send messages to rekuiper on the gateway. rekuiper filters, aggregates, joins and buffers the data, then sends results to destinations on the right.</desc>
+
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#5b6472"/>
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="980" height="440" rx="14" fill="#f7f8fa"/>
+
+  <!-- column labels -->
+  <g font-size="12" font-weight="700" fill="#5b6472" letter-spacing="1.2">
+    <text x="40" y="44">DEVICES AND FEEDS</text>
+    <text x="368" y="44">ON THE GATEWAY</text>
+    <text x="712" y="44">DESTINATIONS</text>
+  </g>
+
+  <!-- sources -->
+  <g font-size="14" fill="#1c2430">
+    <g>
+      <rect x="40" y="64" width="230" height="52" rx="8" fill="#ffffff" stroke="#d5dae1"/>
+      <text x="56" y="86" font-weight="600">Sensors and devices</text>
+      <text x="56" y="104" font-size="12" fill="#5b6472">MQTT, WebSocket, HTTP</text>
+    </g>
+    <g>
+      <rect x="40" y="130" width="230" height="52" rx="8" fill="#ffffff" stroke="#d5dae1"/>
+      <text x="56" y="152" font-weight="600">PLC and fieldbus gateways</text>
+      <text x="56" y="170" font-size="12" fill="#5b6472">Modbus or OPC UA, published to MQTT</text>
+    </g>
+    <g>
+      <rect x="40" y="196" width="230" height="52" rx="8" fill="#ffffff" stroke="#d5dae1"/>
+      <text x="56" y="218" font-weight="600">Message buses</text>
+      <text x="56" y="236" font-size="12" fill="#5b6472">Kafka, RabbitMQ, Redis, ZeroMQ</text>
+    </g>
+    <g>
+      <rect x="40" y="262" width="230" height="52" rx="8" fill="#ffffff" stroke="#d5dae1"/>
+      <text x="56" y="284" font-weight="600">Files and databases</text>
+      <text x="56" y="302" font-size="12" fill="#5b6472">CSV, JSON Lines, Parquet, SQL</text>
+    </g>
+    <g>
+      <rect x="40" y="328" width="230" height="52" rx="8" fill="#ffffff" stroke="#d5dae1"/>
+      <text x="56" y="350" font-weight="600">Cameras</text>
+      <text x="56" y="368" font-size="12" fill="#5b6472">RTSP and HTTP video streams</text>
+    </g>
+  </g>
+
+  <!-- engine -->
+  <g>
+    <rect x="368" y="64" width="246" height="316" rx="12" fill="#12305a"/>
+    <text x="491" y="104" text-anchor="middle" font-size="22" font-weight="700" fill="#ffffff">rekuiper</text>
+    <text x="491" y="126" text-anchor="middle" font-size="12.5" fill="#b9c8e0">SQL rules, changed at runtime</text>
+
+    <g font-size="13.5" fill="#ffffff">
+      <rect x="388" y="148" width="206" height="38" rx="6" fill="#1f4a86"/>
+      <text x="404" y="172"><tspan font-weight="700">Filter</tspan> noise and bad values</text>
+
+      <rect x="388" y="194" width="206" height="38" rx="6" fill="#1f4a86"/>
+      <text x="404" y="218"><tspan font-weight="700">Aggregate</tspan> over time windows</text>
+
+      <rect x="388" y="240" width="206" height="38" rx="6" fill="#1f4a86"/>
+      <text x="404" y="264"><tspan font-weight="700">Join</tspan> streams and tables</text>
+
+      <rect x="388" y="286" width="206" height="38" rx="6" fill="#1f4a86"/>
+      <text x="404" y="310"><tspan font-weight="700">Buffer</tspan> when the link drops</text>
+    </g>
+    <text x="491" y="356" text-anchor="middle" font-size="12" fill="#b9c8e0">One binary. One or two CPU cores.</text>
+  </g>
+
+  <!-- sinks -->
+  <g font-size="14" fill="#1c2430">
+    <g>
+      <rect x="712" y="64" width="230" height="52" rx="8" fill="#ffffff" stroke="#d5dae1"/>
+      <text x="728" y="86" font-weight="600">Cloud and message buses</text>
+      <text x="728" y="104" font-size="12" fill="#5b6472">MQTT, Kafka, RabbitMQ, Redis</text>
+    </g>
+    <g>
+      <rect x="712" y="130" width="230" height="52" rx="8" fill="#ffffff" stroke="#d5dae1"/>
+      <text x="728" y="152" font-weight="600">Time-series databases</text>
+      <text x="728" y="170" font-size="12" fill="#5b6472">InfluxDB, TDengine, IoTDB</text>
+    </g>
+    <g>
+      <rect x="712" y="196" width="230" height="52" rx="8" fill="#ffffff" stroke="#d5dae1"/>
+      <text x="728" y="218" font-weight="600">SQL databases</text>
+      <text x="728" y="236" font-size="12" fill="#5b6472">PostgreSQL, SQLite</text>
+    </g>
+    <g>
+      <rect x="712" y="262" width="230" height="52" rx="8" fill="#ffffff" stroke="#d5dae1"/>
+      <text x="728" y="284" font-weight="600">Alerts and control</text>
+      <text x="728" y="302" font-size="12" fill="#5b6472">REST webhooks, MQTT commands</text>
+    </g>
+    <g>
+      <rect x="712" y="328" width="230" height="52" rx="8" fill="#ffffff" stroke="#d5dae1"/>
+      <text x="728" y="350" font-weight="600">Local storage</text>
+      <text x="728" y="368" font-size="12" fill="#5b6472">Parquet, CSV, JSON Lines, images</text>
+    </g>
+  </g>
+
+  <!-- arrows in -->
+  <g stroke="#5b6472" stroke-width="1.6" fill="none" marker-end="url(#arrow)">
+    <path d="M270 90 H318 V180 H366"/>
+    <path d="M270 156 H330 V200 H366"/>
+    <path d="M270 222 H366"/>
+    <path d="M270 288 H330 V244 H366"/>
+    <path d="M270 354 H318 V264 H366"/>
+  </g>
+
+  <!-- arrows out -->
+  <g stroke="#5b6472" stroke-width="1.6" fill="none" marker-end="url(#arrow)">
+    <path d="M614 180 H662 V90 H710"/>
+    <path d="M614 200 H650 V156 H710"/>
+    <path d="M614 222 H710"/>
+    <path d="M614 244 H650 V288 H710"/>
+    <path d="M614 264 H662 V354 H710"/>
+  </g>
+
+  <text x="490" y="416" text-anchor="middle" font-size="13" fill="#5b6472">Raw data stays local. Only the results travel upstream.</text>
+</svg>
