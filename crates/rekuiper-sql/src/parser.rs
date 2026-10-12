@@ -248,7 +248,7 @@ impl<'a> Parser<'a> {
                 continue;
             }
 
-            let (raw_type_str, _default_val) = split_at_default(remainder);
+            let (raw_type_str, default_val) = split_at_default(remainder);
             let mut raw_type = raw_type_str.trim();
             // Strip trailing NOT NULL / NULL constraints if present
             if let Some(stripped) = raw_type
@@ -278,7 +278,14 @@ impl<'a> Parser<'a> {
                 );
             }
 
-            fields.push(StreamColumn { name, data_type });
+            let default_value =
+                default_val.map(|s| s.trim().trim_end_matches([';', ',']).trim().to_string());
+
+            fields.push(StreamColumn {
+                name,
+                data_type,
+                default_value,
+            });
         }
         Ok(fields)
     }

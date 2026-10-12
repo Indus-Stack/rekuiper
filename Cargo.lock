@@ -532,6 +532,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "asynchronous-codec"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a860072022177f903e59730004fb5dc13db9275b79bb2aef7ba8ce831956c233"
+dependencies = [
+ "bytes",
+ "futures-sink",
+ "futures-util",
+ "memchr",
+ "pin-project-lite",
+]
+
+[[package]]
 name = "atoi"
 version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2270,7 +2283,7 @@ dependencies = [
 
 [[package]]
 name = "kuiperd"
-version = "0.508.0-beta"
+version = "0.509.0-beta"
 dependencies = [
  "anyhow",
  "clap",
@@ -3359,7 +3372,7 @@ dependencies = [
 
 [[package]]
 name = "rekuiper-cli"
-version = "0.508.0-beta"
+version = "0.509.0-beta"
 dependencies = [
  "anyhow",
  "clap",
@@ -3372,7 +3385,7 @@ dependencies = [
 
 [[package]]
 name = "rekuiper-conf"
-version = "0.508.0-beta"
+version = "0.509.0-beta"
 dependencies = [
  "anyhow",
  "serde",
@@ -3382,12 +3395,13 @@ dependencies = [
 
 [[package]]
 name = "rekuiper-connectors"
-version = "0.508.0-beta"
+version = "0.509.0-beta"
 dependencies = [
  "anyhow",
  "arrow",
  "async-trait",
  "base64 0.22.1",
+ "bytes",
  "chrono",
  "futures",
  "lapin",
@@ -3409,11 +3423,12 @@ dependencies = [
  "tracing",
  "uuid",
  "webpki-roots 0.26.11",
+ "zeromq",
 ]
 
 [[package]]
 name = "rekuiper-core"
-version = "0.508.0-beta"
+version = "0.509.0-beta"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3432,7 +3447,7 @@ dependencies = [
 
 [[package]]
 name = "rekuiper-mcp"
-version = "0.508.0-beta"
+version = "0.509.0-beta"
 dependencies = [
  "anyhow",
  "clap",
@@ -3447,7 +3462,7 @@ dependencies = [
 
 [[package]]
 name = "rekuiper-server"
-version = "0.508.0-beta"
+version = "0.509.0-beta"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3479,7 +3494,7 @@ dependencies = [
 
 [[package]]
 name = "rekuiper-sql"
-version = "0.508.0-beta"
+version = "0.509.0-beta"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -3808,12 +3823,28 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "04d056b875a9d2e6cb9a61d127afee9ac5999b9f87bcb32079d1318e505be714"
 
 [[package]]
+name = "saa"
+version = "5.6.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bd85992a680de788217d9c70b74aa7685b108cf1aba02f728fb27f1b27199ad1"
+
+[[package]]
 name = "salsa20"
 version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "97a22f5af31f73a954c10289c93e8a50cc23d971e80ee446f1f6f7137a088213"
 dependencies = [
  "cipher",
+]
+
+[[package]]
+name = "scc"
+version = "3.8.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5d5f8ca67c4f6208caf824037a6a9df0211b4e0937fccc4f543441f294d04511"
+dependencies = [
+ "saa",
+ "sdd",
 ]
 
 [[package]]
@@ -3850,6 +3881,15 @@ checksum = "da046153aa2352493d6cb7da4b6e5c0c057d8a1d0a9aa8560baffdd945acd414"
 dependencies = [
  "ring",
  "untrusted",
+]
+
+[[package]]
+name = "sdd"
+version = "4.8.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a31877eee03686b905845993b5d9809a220c9dd5a10e9d6021d7ca67384c9070"
+dependencies = [
+ "saa",
 ]
 
 [[package]]
@@ -4675,6 +4715,7 @@ checksum = "494815d09bf52b5548659851081238f0ca39ff638363907596da739561c62c52"
 dependencies = [
  "bytes",
  "futures-core",
+ "futures-io",
  "futures-sink",
  "libc",
  "pin-project-lite",
@@ -5610,6 +5651,30 @@ name = "zeroize"
 version = "1.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e13c156562582aa81c60cb29407084cdb54c4164760106ab78e6c5b0858cf64e"
+
+[[package]]
+name = "zeromq"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "efb2c254fd8f366755335c9e43b865f8484fe3bd717d65ffe7c3f28852863030"
+dependencies = [
+ "async-trait",
+ "asynchronous-codec",
+ "bytes",
+ "crossbeam-queue",
+ "futures",
+ "log",
+ "num-traits",
+ "once_cell",
+ "parking_lot",
+ "rand 0.9.5",
+ "regex",
+ "scc",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-util",
+ "uuid",
+]
 
 [[package]]
 name = "zerotrie"

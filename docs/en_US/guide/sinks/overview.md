@@ -18,10 +18,15 @@ rekuiper includes the following built-in sink connectors:
 - [Nop sink](./builtin/nop.md): Discards output records for performance benchmarking.
 - [Kafka sink](./plugin/kafka.md): Publishes records directly to Apache Kafka topics.
 - [SQL sink](./plugin/sql.md): Inserts or updates records in relational databases through SQL.
+- [InfluxDB sink](./plugin/influx.md): Publishes timeseries points directly to InfluxDB v1.x via Line Protocol.
+- [InfluxDB v2 sink](./plugin/influx2.md): Publishes timeseries points directly to InfluxDB v2.x via Line Protocol.
+- [TDengine 3 sink](./plugin/tdengine3.md): Ingests timeseries records into TDengine 3.x tables and super tables.
+- [Apache IoTDB sink](./plugin/iotdb.md): Writes time-series points to Apache IoTDB REST service.
+- [Image sink](./plugin/image.md): Saves binary camera image frames with retention pruning policies.
 - [WebSocket sink](./builtin/websocket.md): Streams events to connected WebSocket clients.
 
 > [!NOTE]
-> Legacy Go C-shared dynamic plugins (`.so`) are not supported in rekuiper. High-demand connectors like Kafka and SQL are built into the binary. For custom integrations, use WebAssembly (Wasm) or an external HTTP service.
+> Legacy Go C-shared dynamic plugins (`.so`) are not supported in rekuiper. High-demand connectors like Kafka, SQL, InfluxDB, TDengine 3, IoTDB, Image, and WebSocket are built into the binary. For custom integrations, use WebAssembly (Wasm) or an external HTTP service.
 
 ## Updatable Sinks
 

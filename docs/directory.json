@@ -241,6 +241,14 @@
                 {
                   "title": "Simulator Source",
                   "path": "guide/sources/builtin/simulator"
+                },
+                {
+                  "title": "ZeroMQ Source",
+                  "path": "guide/sources/plugin/zmq"
+                },
+                {
+                  "title": "Video Source",
+                  "path": "guide/sources/plugin/video"
                 }
               ]
             }
@@ -309,6 +317,30 @@
                 {
                   "title": "Nop Sink",
                   "path": "guide/sinks/builtin/nop"
+                },
+                {
+                  "title": "Image Sink",
+                  "path": "guide/sinks/plugin/image"
+                },
+                {
+                  "title": "InfluxDB v1 Sink",
+                  "path": "guide/sinks/plugin/influx"
+                },
+                {
+                  "title": "InfluxDB v2 Sink",
+                  "path": "guide/sinks/plugin/influx2"
+                },
+                {
+                  "title": "TDengine 3.x Sink",
+                  "path": "guide/sinks/plugin/tdengine3"
+                },
+                {
+                  "title": "IoTDB Sink",
+                  "path": "guide/sinks/plugin/iotdb"
+                },
+                {
+                  "title": "ZeroMQ Sink",
+                  "path": "guide/sinks/plugin/zmq"
                 }
               ]
             }

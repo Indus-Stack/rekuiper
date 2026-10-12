@@ -10,6 +10,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > See `BENCHMARK-AUDIT.md` and `test/BENCHMARKS.md` for the audited methodology.
 > No latency-histogram p99 is claimed.
 
+## [0.509.0-beta] - 2026-10-11
+
+### Added
+- **Video Source Connector**: Built-in video source that ingests RTSP and HTTP streams through FFmpeg pipes with interval sampling, custom input arguments, and image record streaming.
+- **ZeroMQ Sink & Source**: Built-in ZeroMQ connector (`zmq`) supporting PUB/SUB sockets with bind or connect modes and dynamic topics.
+- **Image Sink Retention Pruning**: Automated age-based (`maxAge`) and count-based (`maxCount`) directory pruning.
+- **Upstream eKuiper Parities**:
+  - `DEFAULT` column values in stream DDL (#PR-4025 parity).
+  - Joined stream `BUFFER_FULL_POLICY` validation and enforcement (#PR-4133 parity).
+  - Disabled sink action option (`disable: true`) (#PR-4100 parity).
+  - Dynamic SQL sink dynamic identifier validation (#PR-4080 parity).
+  - Kafka `offsetReset` configuration options (#PR-4190 parity).
+  - Localhost default binding (`127.0.0.1`) for network listeners (#PR-4089 parity).
+
+### Changed
+- Resolved clippy warnings across `video` and `sinks` under `-D warnings`.
+- Unified simulator duration string and numeric interval parsing with `CONF_KEY` resolution.
+- Applied workspace-wide rustfmt formatting.
+- Updated Docker image tags to `0.509-beta` and Helm chart AppVersion to `0.509-beta`.
+
 ## [0.508.0-beta] - 2026-10-08
 
 ### Added

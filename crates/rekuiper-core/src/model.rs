@@ -24,6 +24,30 @@ impl StreamRecord {
 pub struct StreamField {
     pub name: String,
     pub field_type: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_value: Option<String>,
+}
+
+impl StreamField {
+    pub fn new(name: impl Into<String>, field_type: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            field_type: field_type.into(),
+            default_value: None,
+        }
+    }
+
+    pub fn with_default(
+        name: impl Into<String>,
+        field_type: impl Into<String>,
+        default_val: impl Into<String>,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            field_type: field_type.into(),
+            default_value: Some(default_val.into()),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -636,6 +660,26 @@ pub fn coerce_value_to_type(val: Value, target_type: &str) -> Value {
     }
 }
 
+pub fn parse_default_value(raw: &str, field_type: &str) -> Value {
+    let s = raw.trim();
+    if s.is_empty() || s.eq_ignore_ascii_case("null") {
+        return Value::Null;
+    }
+    // If wrapped in single or double quotes, extract the string literal
+    if (s.starts_with('\'') && s.ends_with('\'') && s.len() >= 2)
+        || (s.starts_with('"') && s.ends_with('"') && s.len() >= 2)
+    {
+        let unquoted = &s[1..s.len() - 1];
+        return coerce_value_to_type(Value::String(unquoted.to_string()), field_type);
+    }
+    // Attempt parsing as JSON literal (numbers, booleans, arrays, objects)
+    if let Ok(parsed) = serde_json::from_str::<Value>(s) {
+        return coerce_value_to_type(parsed, field_type);
+    }
+    // Fallback: coerce raw string
+    coerce_value_to_type(Value::String(s.to_string()), field_type)
+}
+
 /// Coerce an incoming record map according to declared stream fields.
 /// When `fields` is empty (schemaless stream), this returns immediately (zero-cost no-op).
 pub fn enforce_stream_schema(data: &mut HashMap<String, Value>, fields: &[StreamField]) {
@@ -654,8 +698,19 @@ pub fn enforce_stream_schema(data: &mut HashMap<String, Value>, fields: &[Stream
 
         if let Some(key) = existing_key {
             let val = data.remove(&key).unwrap_or(Value::Null);
-            let coerced = coerce_value_to_type(val, &field.field_type);
+            let coerced = if val.is_null() {
+                if let Some(ref def_str) = field.default_value {
+                    parse_default_value(def_str, &field.field_type)
+                } else {
+                    Value::Null
+                }
+            } else {
+                coerce_value_to_type(val, &field.field_type)
+            };
             data.insert(field.name.clone(), coerced);
+        } else if let Some(ref def_str) = field.default_value {
+            let default_val = parse_default_value(def_str, &field.field_type);
+            data.insert(field.name.clone(), default_val);
         } else if (field.field_type.eq_ignore_ascii_case("bytea")
             || field.field_type.eq_ignore_ascii_case("binary"))
             && data.contains_key("self")
@@ -674,30 +729,12 @@ mod schema_tests {
     #[test]
     fn test_enforce_stream_schema_coercion() {
         let fields = vec![
-            StreamField {
-                name: "id".to_string(),
-                field_type: "bigint".to_string(),
-            },
-            StreamField {
-                name: "temp".to_string(),
-                field_type: "float".to_string(),
-            },
-            StreamField {
-                name: "name".to_string(),
-                field_type: "string".to_string(),
-            },
-            StreamField {
-                name: "active".to_string(),
-                field_type: "boolean".to_string(),
-            },
-            StreamField {
-                name: "ts".to_string(),
-                field_type: "datetime".to_string(),
-            },
-            StreamField {
-                name: "arr".to_string(),
-                field_type: "array(int)".to_string(),
-            },
+            StreamField::new("id", "bigint"),
+            StreamField::new("temp", "float"),
+            StreamField::new("name", "string"),
+            StreamField::new("active", "boolean"),
+            StreamField::new("ts", "datetime"),
+            StreamField::new("arr", "array(int)"),
         ];
 
         let mut data = HashMap::new();
@@ -733,18 +770,9 @@ mod schema_tests {
     #[test]
     fn test_enforce_stream_schema_mismatched_types() {
         let fields = vec![
-            StreamField {
-                name: "id".to_string(),
-                field_type: "bigint".to_string(),
-            },
-            StreamField {
-                name: "temp".to_string(),
-                field_type: "float".to_string(),
-            },
-            StreamField {
-                name: "active".to_string(),
-                field_type: "boolean".to_string(),
-            },
+            StreamField::new("id", "bigint"),
+            StreamField::new("temp", "float"),
+            StreamField::new("active", "boolean"),
         ];
 
         let mut data = HashMap::new();
@@ -757,5 +785,41 @@ mod schema_tests {
         assert_eq!(data.get("id"), Some(&Value::Null));
         assert_eq!(data.get("temp"), Some(&Value::Null));
         assert_eq!(data.get("active"), Some(&Value::Null));
+    }
+
+    #[test]
+    fn test_enforce_stream_schema_default_values() {
+        let fields = vec![
+            StreamField::with_default("id", "bigint", "999"),
+            StreamField::with_default("status", "string", "'idle'"),
+            StreamField::with_default("temp", "float", "20.5"),
+            StreamField::with_default("active", "boolean", "true"),
+            StreamField::new("extra", "string"),
+        ];
+
+        // 1. Missing fields should receive defaults
+        let mut data_missing = HashMap::new();
+        enforce_stream_schema(&mut data_missing, &fields);
+        assert_eq!(data_missing.get("id"), Some(&Value::from(999i64)));
+        assert_eq!(
+            data_missing.get("status"),
+            Some(&Value::String("idle".to_string()))
+        );
+        assert_eq!(data_missing.get("temp"), Some(&Value::from(20.5f64)));
+        assert_eq!(data_missing.get("active"), Some(&Value::Bool(true)));
+        assert!(!data_missing.contains_key("extra"));
+
+        // 2. Explicit null fields should be replaced by defaults
+        let mut data_null = HashMap::new();
+        data_null.insert("id".to_string(), Value::Null);
+        data_null.insert("status".to_string(), Value::Null);
+        data_null.insert("temp".to_string(), Value::from(35.0f64));
+        enforce_stream_schema(&mut data_null, &fields);
+        assert_eq!(data_null.get("id"), Some(&Value::from(999i64)));
+        assert_eq!(
+            data_null.get("status"),
+            Some(&Value::String("idle".to_string()))
+        );
+        assert_eq!(data_null.get("temp"), Some(&Value::from(35.0f64)));
     }
 }

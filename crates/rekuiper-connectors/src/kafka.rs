@@ -25,10 +25,30 @@ pub struct KafkaConfig {
     /// Record field supplying the produce message key (sink side).
     #[serde(default)]
     pub key: Option<String>,
+    /// Offset reset policy: `"earliest"` or `"latest"` (default `"latest"`).
+    #[serde(default = "default_offset_reset", alias = "offset_reset")]
+    pub offset_reset: String,
 }
 
 fn default_kafka_brokers() -> String {
     "127.0.0.1:9092".to_string()
+}
+
+fn default_offset_reset() -> String {
+    "latest".to_string()
+}
+
+impl Default for KafkaConfig {
+    fn default() -> Self {
+        Self {
+            brokers: default_kafka_brokers(),
+            topic: None,
+            group_id: None,
+            partition: 0,
+            key: None,
+            offset_reset: default_offset_reset(),
+        }
+    }
 }
 
 impl KafkaConfig {
@@ -179,10 +199,12 @@ impl KafkaSource {
                     return;
                 }
             };
-            let mut offset = partition_client
-                .get_offset(OffsetAt::Latest)
-                .await
-                .unwrap_or(0);
+            let offset_at = if self.config.offset_reset.eq_ignore_ascii_case("earliest") {
+                OffsetAt::Earliest
+            } else {
+                OffsetAt::Latest
+            };
+            let mut offset = partition_client.get_offset(offset_at).await.unwrap_or(0);
             loop {
                 tokio::select! {
                     fetched = partition_client.fetch_records(offset, 1..1_000_000, 1000) => {
@@ -248,5 +270,79 @@ fn decode_kafka_payload(payload: &[u8]) -> Result<Vec<StreamRecord>> {
             Ok(records)
         }
         _ => anyhow::bail!("Kafka message must be a JSON object or array"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_kafka_config_offset_reset_defaults_and_aliases() {
+        let default_cfg: KafkaConfig = serde_json::from_str("{}").expect("parse default config");
+        assert_eq!(default_cfg.offset_reset, "latest");
+
+        let camel_cfg: KafkaConfig = serde_json::from_str(r#"{"offsetReset": "earliest"}"#)
+            .expect("parse camelCase offsetReset");
+        assert_eq!(camel_cfg.offset_reset, "earliest");
+
+        let snake_cfg: KafkaConfig = serde_json::from_str(r#"{"offset_reset": "earliest"}"#)
+            .expect("parse snake_case offset_reset");
+        assert_eq!(snake_cfg.offset_reset, "earliest");
+    }
+
+    #[test]
+    fn test_kafka_broker_list_parsing() {
+        let cfg = KafkaConfig {
+            brokers: "  10.0.0.1:9092, 10.0.0.2:9092, , 10.0.0.3:9092  ".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(
+            cfg.broker_list(),
+            vec![
+                "10.0.0.1:9092".to_string(),
+                "10.0.0.2:9092".to_string(),
+                "10.0.0.3:9092".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_value_to_key_bytes() {
+        assert_eq!(value_to_key_bytes(&Value::Null), Vec::<u8>::new());
+        assert_eq!(
+            value_to_key_bytes(&Value::String("dev1".to_string())),
+            b"dev1".to_vec()
+        );
+        assert_eq!(value_to_key_bytes(&serde_json::json!(42)), b"42".to_vec());
+        assert_eq!(
+            value_to_key_bytes(&serde_json::json!(true)),
+            b"true".to_vec()
+        );
+    }
+
+    #[test]
+    fn test_decode_kafka_payload() {
+        // Single object
+        let obj_payload = br#"{"sensor": "temp", "val": 25.5}"#;
+        let records = decode_kafka_payload(obj_payload).expect("decode object");
+        assert_eq!(records.len(), 1);
+        assert_eq!(
+            records[0].data.get("sensor"),
+            Some(&serde_json::json!("temp"))
+        );
+
+        // Array of objects
+        let arr_payload = br#"[{"id": 1}, {"id": 2}]"#;
+        let records = decode_kafka_payload(arr_payload).expect("decode array");
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0].data.get("id"), Some(&serde_json::json!(1)));
+        assert_eq!(records[1].data.get("id"), Some(&serde_json::json!(2)));
+
+        // Invalid JSON
+        assert!(decode_kafka_payload(b"not json").is_err());
+
+        // Invalid top-level scalar
+        assert!(decode_kafka_payload(b"123").is_err());
     }
 }

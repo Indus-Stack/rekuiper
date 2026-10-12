@@ -294,6 +294,13 @@ async fn test_resources_and_prompts() {
     assert!(uris.contains(&"rekuiper://schemas/rabbitmq"));
     assert!(uris.contains(&"rekuiper://schemas/parquet"));
     assert!(uris.contains(&"rekuiper://schemas/edgex"));
+    assert!(uris.contains(&"rekuiper://schemas/influx"));
+    assert!(uris.contains(&"rekuiper://schemas/tdengine"));
+    assert!(uris.contains(&"rekuiper://schemas/iotdb"));
+    assert!(uris.contains(&"rekuiper://schemas/image"));
+    assert!(uris.contains(&"rekuiper://schemas/random"));
+    assert!(uris.contains(&"rekuiper://schemas/zmq"));
+    assert!(uris.contains(&"rekuiper://schemas/video"));
 
     // Read static schema resource
     let req_read_res = JsonRpcRequest {
@@ -308,7 +315,106 @@ async fn test_resources_and_prompts() {
     let res_read = resp_read.result.unwrap();
     let text = res_read["contents"][0]["text"].as_str().unwrap();
     assert!(text.contains("amqp://"));
+
+    let req_read_influx = JsonRpcRequest {
+        jsonrpc: "2.0".to_string(),
+        id: Some(json!(32)),
+        method: "resources/read".to_string(),
+        params: Some(json!({
+            "uri": "rekuiper://schemas/influx"
+        })),
+    };
+    let resp_influx = handler.handle_request(req_read_influx).await.unwrap();
+    let res_influx = resp_influx.result.unwrap();
+    let text_influx = res_influx["contents"][0]["text"].as_str().unwrap();
+    assert!(text_influx.contains("influx_v1"));
+    assert!(text_influx.contains("influx_v2"));
+
+    let req_read_td = JsonRpcRequest {
+        jsonrpc: "2.0".to_string(),
+        id: Some(json!(33)),
+        method: "resources/read".to_string(),
+        params: Some(json!({
+            "uri": "rekuiper://schemas/tdengine"
+        })),
+    };
+    let resp_td = handler.handle_request(req_read_td).await.unwrap();
+    let res_td = resp_td.result.unwrap();
+    let text_td = res_td["contents"][0]["text"].as_str().unwrap();
+    assert!(text_td.contains("sTable"));
+    assert!(text_td.contains("tagFields"));
+
+    let req_read_iotdb = JsonRpcRequest {
+        jsonrpc: "2.0".to_string(),
+        id: Some(json!(34)),
+        method: "resources/read".to_string(),
+        params: Some(json!({
+            "uri": "rekuiper://schemas/iotdb"
+        })),
+    };
+    let resp_iotdb = handler.handle_request(req_read_iotdb).await.unwrap();
+    let res_iotdb = resp_iotdb.result.unwrap();
+    let text_iotdb = res_iotdb["contents"][0]["text"].as_str().unwrap();
+    assert!(text_iotdb.contains("root.factory"));
+    assert!(text_iotdb.contains("measurements"));
+
+    let req_read_image = JsonRpcRequest {
+        jsonrpc: "2.0".to_string(),
+        id: Some(json!(35)),
+        method: "resources/read".to_string(),
+        params: Some(json!({
+            "uri": "rekuiper://schemas/image"
+        })),
+    };
+    let resp_image = handler.handle_request(req_read_image).await.unwrap();
+    let res_image = resp_image.result.unwrap();
+    let text_image = res_image["contents"][0]["text"].as_str().unwrap();
+    assert!(text_image.contains("maxAge"));
+    assert!(text_image.contains("maxCount"));
+
+    let req_read_random = JsonRpcRequest {
+        jsonrpc: "2.0".to_string(),
+        id: Some(json!(36)),
+        method: "resources/read".to_string(),
+        params: Some(json!({
+            "uri": "rekuiper://schemas/random"
+        })),
+    };
+    let resp_random = handler.handle_request(req_read_random).await.unwrap();
+    let res_random = resp_random.result.unwrap();
+    let text_random = res_random["contents"][0]["text"].as_str().unwrap();
+    assert!(text_random.contains("interval"));
+    assert!(text_random.contains("loop"));
+
+    let req_read_zmq = JsonRpcRequest {
+        jsonrpc: "2.0".to_string(),
+        id: Some(json!(37)),
+        method: "resources/read".to_string(),
+        params: Some(json!({
+            "uri": "rekuiper://schemas/zmq"
+        })),
+    };
+    let resp_zmq = handler.handle_request(req_read_zmq).await.unwrap();
+    let res_zmq = resp_zmq.result.unwrap();
+    let text_zmq = res_zmq["contents"][0]["text"].as_str().unwrap();
+    assert!(text_zmq.contains("tcp://127.0.0.1:5563"));
+    assert!(text_zmq.contains("events"));
     assert!(text.contains("rabbitmq"));
+
+    let req_read_video = JsonRpcRequest {
+        jsonrpc: "2.0".to_string(),
+        id: Some(json!(38)),
+        method: "resources/read".to_string(),
+        params: Some(json!({
+            "uri": "rekuiper://schemas/video"
+        })),
+    };
+    let resp_video = handler.handle_request(req_read_video).await.unwrap();
+    let res_video = resp_video.result.unwrap();
+    let text_video = res_video["contents"][0]["text"].as_str().unwrap();
+    assert!(text_video.contains("rtsp://localhost:8554/stream"));
+    assert!(text_video.contains("mjpeg"));
+    assert!(text_video.contains("rtsp_transport"));
 
     // Prompts list
     let req_prompt = JsonRpcRequest {
@@ -333,6 +439,24 @@ async fn test_resources_and_prompts() {
     assert!(prompts.contains(&"generate_vector_search_rule"));
     assert!(prompts.contains(&"configure_rabbitmq_pipeline"));
     assert!(prompts.contains(&"create_wasm_plugin_rule"));
+    assert!(prompts.contains(&"audit_security_posture"));
+
+    let req_get_prompt = JsonRpcRequest {
+        jsonrpc: "2.0".to_string(),
+        id: Some(json!(35)),
+        method: "prompts/get".to_string(),
+        params: Some(json!({
+            "name": "audit_security_posture"
+        })),
+    };
+    let resp_get = handler.handle_request(req_get_prompt).await.unwrap();
+    let res_get = resp_get.result.unwrap();
+    let msgs = res_get["messages"].as_array().unwrap();
+    assert!(!msgs.is_empty());
+    assert!(msgs[0]["content"]["text"]
+        .as_str()
+        .unwrap()
+        .contains("127.0.0.1"));
 }
 
 #[tokio::test]

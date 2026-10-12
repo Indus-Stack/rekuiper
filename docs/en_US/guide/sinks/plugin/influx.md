@@ -1,71 +1,49 @@
 # InfluxDB Sink
 
-::: danger Status: Unsupported in rekuiper (Legacy eKuiper Go Plugin)
-The InfluxDB sink was implemented as a Go C-shared dynamic plugin (`.so`) in legacy eKuiper.
-
-**rekuiper is written in Rust and does NOT support or load Go dynamic plugins (`.so`).** The native InfluxDB v1.x plugin is not implemented in rekuiper.
-
-**Supported Alternatives in rekuiper**:
-- **REST Sink (Direct HTTP API)**: Write points directly to the InfluxDB v1.x HTTP API (`/write?db=mydb`) using the built-in [REST Sink](../builtin/rest.md).
-- **SQL Sink**: Store timeseries points in PostgreSQL (with TimescaleDB) or SQLite using the built-in [SQL Sink](../builtin/sql.md).
-- **MQTT / Telegraf**: Publish telemetry via the built-in [MQTT Sink](../builtin/mqtt.md) to Telegraf, which writes to InfluxDB.
+::: tip Status: Supported as Built-in Connector in rekuiper
+The InfluxDB v1.x sink is compiled natively into the rekuiper engine binary. It provides zero-copy serialization of stream records into InfluxDB Line Protocol without external plugins or dynamic C libraries.
 :::
 
-## Direct HTTP Write Example with Built-in REST Sink
+## Overview
 
-You can write data to InfluxDB v1.x without any plugins by using the built-in REST sink:
+The `influx` sink publishes processed stream records directly to InfluxDB v1.x databases using HTTP Line Protocol. It formats tags, fields, and timestamps automatically, and supports connection pooling and batch writing.
 
-```json
-{
-  "id": "rule_influx_rest",
-  "sql": "SELECT concat('cpu_usage,host=', host, ' value=', usage) AS line FROM sensor_stream",
-  "actions": [
-    {
-      "rest": {
-        "url": "http://influxdb.internal:8086/write?db=telemetry",
-        "method": "POST",
-        "dataTemplate": "{{.line}}",
-        "sendSingle": true
-      }
-    }
-  ]
-}
-```
-
----
-
-## Overview (Legacy Reference Only)
-
-In legacy eKuiper (Go), the InfluxDB sink wrote records directly to an InfluxDB v1.x database using Go client libraries. This section is preserved only as an architectural reference.
-
-### Legacy Configuration Properties
+## Configuration Properties
 
 | Property Name | Optional | Description |
 | :--- | :--- | :--- |
-| `addr` | False | Network address of the InfluxDB server (such as `http://127.0.0.1:8086`). |
+| `addr` | False | Network address of the InfluxDB server (e.g., `http://127.0.0.1:8086`). |
 | `database` | False | Target InfluxDB database name. |
-| `measurement` | False | Target measurement name. |
-| `username` | True | Authentication username. |
-| `password` | True | Authentication password. |
-| `tags` | True | JSON mapping of tag key-values. |
-| `fields` | True | Array of field names to write. |
-| `precision` | True | Timestamp precision (`ns`, `us`, `ms`, `s`). |
-| `tsFieldName` | True | Field name containing the timestamp. |
+| `measurement` | False | Target measurement table name. Supports dynamic data templates (e.g., <code v-pre>"{{.device}}"</code>). |
+| `username` | True | HTTP Basic Authentication username. |
+| `password` | True | HTTP Basic Authentication password. |
+| `precision` | True | Timestamp precision (`ms`, `s`, `us`, `ns`). Default is `ms`. |
+| `tags` | True | Key-value mapping of tag names to template strings (e.g., <code v-pre>{"host": "{{.host}}", "zone": "east"}</code>). |
+| `fields` | True | Array of field property names to write. If omitted, all non-tag payload fields are written. |
+| `tsFieldName` | True | Payload property name containing the record timestamp. If omitted, the engine uses current epoch time. |
+| `sendSingle` | True | Whether to emit records individually (`true`) or in array batches (`false`). Default is `true`. |
 
-### Legacy Rule Example
+## Example Rule Configuration
+
+The following rule publishes high-temperature alerts to InfluxDB v1.x:
 
 ```json
 {
-  "id": "influx_legacy",
-  "sql": "SELECT * FROM demo_stream WHERE temperature > 50",
+  "id": "rule_influx_alert",
+  "sql": "SELECT deviceId, temperature, humidity, ts FROM sensorStream WHERE temperature > 80.0",
   "actions": [
     {
       "influx": {
-        "addr": "http://192.168.100.245:8086",
-        "database": "databasename",
-        "measurement": "test",
-        "tags": "{\"tag1\":\"value1\"}",
-        "fields": ["humidity", "temperature", "pressure"]
+        "addr": "http://127.0.0.1:8086",
+        "database": "telemetry",
+        "measurement": "sensor_readings",
+        "tags": {
+          "device": "{{.deviceId}}",
+          "site": "factory_floor"
+        },
+        "fields": ["temperature", "humidity"],
+        "tsFieldName": "ts",
+        "precision": "ms"
       }
     }
   ]

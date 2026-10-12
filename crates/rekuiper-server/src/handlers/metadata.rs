@@ -67,11 +67,15 @@ pub async fn list_source_metadata() -> impl IntoResponse {
         "memory",
         "mqtt",
         "neuron",
+        "rabbitmq",
+        "random",
         "redis",
         "redisSub",
         "simulator",
         "sql",
+        "video",
         "websocket",
+        "zmq",
     ]))
 }
 
@@ -80,16 +84,25 @@ pub async fn list_sink_metadata() -> impl IntoResponse {
         "edgex",
         "file",
         "http",
+        "image",
+        "influx",
+        "influx2",
+        "iotdb",
         "kafka",
         "log",
         "memory",
         "mqtt",
         "neuron",
         "nop",
+        "rabbitmq",
         "redis",
         "redisPub",
         "rest",
+        "sql",
+        "tdengine",
+        "tdengine3",
         "websocket",
+        "zmq",
     ]))
 }
 
@@ -332,6 +345,9 @@ pub async fn get_source_metadata(Path(name): Path<String>) -> Response {
             return Json(json_val).into_response();
         }
     }
+    if let Some(fallback) = fallback_source_metadata(&name) {
+        return Json(fallback).into_response();
+    }
     (
         StatusCode::NOT_FOUND,
         format!("source {} not found\n", name),
@@ -356,7 +372,139 @@ pub async fn get_sink_metadata(Path(name): Path<String>) -> Response {
             return Json(json_val).into_response();
         }
     }
+    if let Some(fallback) = fallback_sink_metadata(&name) {
+        return Json(fallback).into_response();
+    }
     (StatusCode::NOT_FOUND, format!("sink {} not found\n", name)).into_response()
+}
+
+fn fallback_source_metadata(name: &str) -> Option<Value> {
+    match name {
+        "video" => Some(json!({
+            "about": { "description": { "en_US": "Video streaming source capturing frames via FFmpeg pipeline." } },
+            "properties": {
+                "default": [
+                    { "name": "url", "type": "string", "label": { "en_US": "Stream URL" } },
+                    { "name": "interval", "type": "string", "default": "1s", "label": { "en_US": "Frame Capture Interval" } },
+                    { "name": "codec", "type": "string", "default": "mjpeg", "label": { "en_US": "Video Frame Codec" } }
+                ]
+            }
+        })),
+        "zmq" | "zeromq" => Some(json!({
+            "about": { "description": { "en_US": "ZeroMQ message subscriber source." } },
+            "properties": {
+                "default": [
+                    { "name": "server", "type": "string", "default": "tcp://127.0.0.1:5563", "label": { "en_US": "Endpoint URL" } },
+                    { "name": "topic", "type": "string", "default": "", "label": { "en_US": "Topic Subscription Prefix" } },
+                    { "name": "mode", "type": "string", "default": "connect", "label": { "en_US": "Socket Mode" } }
+                ]
+            }
+        })),
+        "rabbitmq" => Some(json!({
+            "about": { "description": { "en_US": "RabbitMQ AMQP 0-9-1 streaming consumer source." } },
+            "properties": {
+                "default": [
+                    { "name": "server", "type": "string", "default": "amqp://guest:guest@127.0.0.1:5672/%2f", "label": { "en_US": "Broker Server URL" } },
+                    { "name": "queue", "type": "string", "label": { "en_US": "Queue Name" } },
+                    { "name": "exchange", "type": "string", "label": { "en_US": "Exchange Name" } },
+                    { "name": "routingKey", "type": "string", "label": { "en_US": "Routing Key" } }
+                ]
+            }
+        })),
+        "sql" => Some(json!({
+            "about": { "description": { "en_US": "SQL database polling source (SQLite and PostgreSQL)." } },
+            "properties": {
+                "default": [
+                    { "name": "url", "type": "string", "label": { "en_US": "Database URL (dburl)" } },
+                    { "name": "table", "type": "string", "label": { "en_US": "Table Name" } },
+                    { "name": "interval", "type": "int", "default": 1000, "label": { "en_US": "Poll Interval (ms)" } }
+                ]
+            }
+        })),
+        _ => None,
+    }
+}
+
+fn fallback_sink_metadata(name: &str) -> Option<Value> {
+    match name {
+        "zmq" | "zeromq" => Some(json!({
+            "about": { "description": { "en_US": "ZeroMQ publisher sink." } },
+            "properties": {
+                "default": [
+                    { "name": "server", "type": "string", "default": "tcp://127.0.0.1:5563", "label": { "en_US": "Endpoint URL" } },
+                    { "name": "topic", "type": "string", "label": { "en_US": "Topic Prefix Frame" } },
+                    { "name": "mode", "type": "string", "default": "connect", "label": { "en_US": "Socket Mode" } }
+                ]
+            }
+        })),
+        "rabbitmq" => Some(json!({
+            "about": { "description": { "en_US": "RabbitMQ AMQP 0-9-1 publisher sink." } },
+            "properties": {
+                "default": [
+                    { "name": "server", "type": "string", "default": "amqp://guest:guest@127.0.0.1:5672/%2f", "label": { "en_US": "Broker Server URL" } },
+                    { "name": "exchange", "type": "string", "label": { "en_US": "Exchange Name" } },
+                    { "name": "routingKey", "type": "string", "label": { "en_US": "Routing Key" } },
+                    { "name": "queue", "type": "string", "label": { "en_US": "Target Queue" } }
+                ]
+            }
+        })),
+        "sql" => Some(json!({
+            "about": { "description": { "en_US": "SQL database sink for SQLite and PostgreSQL." } },
+            "properties": {
+                "default": [
+                    { "name": "url", "type": "string", "label": { "en_US": "Database URL" } },
+                    { "name": "table", "type": "string", "label": { "en_US": "Target Table" } },
+                    { "name": "fields", "type": "array", "label": { "en_US": "Columns to Write" } }
+                ]
+            }
+        })),
+        "image" => Some(json!({
+            "about": { "description": { "en_US": "Image sink for persisting image frames with retention pruning." } },
+            "properties": {
+                "default": [
+                    { "name": "path", "type": "string", "default": "/tmp/images", "label": { "en_US": "Directory Path" } },
+                    { "name": "format", "type": "string", "default": "jpeg", "label": { "en_US": "Image Format" } },
+                    { "name": "maxAge", "type": "string", "default": "72h", "label": { "en_US": "Retention Max Age" } },
+                    { "name": "maxCount", "type": "int", "default": 1000, "label": { "en_US": "Retention Max Count" } }
+                ]
+            }
+        })),
+        "influx" | "influx2" => Some(json!({
+            "about": { "description": { "en_US": "InfluxDB Line Protocol HTTP sink." } },
+            "properties": {
+                "default": [
+                    { "name": "addr", "type": "string", "default": "http://127.0.0.1:8086", "label": { "en_US": "InfluxDB Server Address" } },
+                    { "name": "measurement", "type": "string", "default": "kuiper", "label": { "en_US": "Measurement Name" } },
+                    { "name": "precision", "type": "string", "default": "ms", "label": { "en_US": "Timestamp Precision" } }
+                ]
+            }
+        })),
+        "tdengine" | "tdengine3" => Some(json!({
+            "about": { "description": { "en_US": "TDengine 3.x REST sink." } },
+            "properties": {
+                "default": [
+                    { "name": "host", "type": "string", "default": "localhost", "label": { "en_US": "TDengine Host" } },
+                    { "name": "port", "type": "int", "default": 6041, "label": { "en_US": "TDengine Port" } },
+                    { "name": "user", "type": "string", "default": "root", "label": { "en_US": "Username" } },
+                    { "name": "password", "type": "string", "default": "taosdata", "label": { "en_US": "Password" } },
+                    { "name": "database", "type": "string", "label": { "en_US": "Database Name" } },
+                    { "name": "table", "type": "string", "label": { "en_US": "Table / Subtable Name" } }
+                ]
+            }
+        })),
+        "iotdb" => Some(json!({
+            "about": { "description": { "en_US": "Apache IoTDB REST v1 sink." } },
+            "properties": {
+                "default": [
+                    { "name": "addr", "type": "string", "default": "http://127.0.0.1:18080", "label": { "en_US": "IoTDB Server Address" } },
+                    { "name": "username", "type": "string", "default": "root", "label": { "en_US": "Username" } },
+                    { "name": "password", "type": "string", "default": "root", "label": { "en_US": "Password" } },
+                    { "name": "device", "type": "string", "label": { "en_US": "Device Path" } }
+                ]
+            }
+        })),
+        _ => None,
+    }
 }
 
 pub async fn get_source_yaml(State(state): State<AppState>, Path(name): Path<String>) -> Response {
@@ -483,4 +631,40 @@ pub async fn get_sink_yaml(State(state): State<AppState>, Path(name): Path<Strin
     let mut final_val = Value::Object(result_map);
     mask_secrets(&mut final_val);
     Json(final_val).into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_fallback_source_metadata_complete() {
+        for src in &["video", "zmq", "zeromq", "rabbitmq", "sql"] {
+            let meta = fallback_source_metadata(src)
+                .unwrap_or_else(|| panic!("missing fallback for source {}", src));
+            assert!(meta.get("about").is_some());
+            assert!(meta.get("properties").is_some());
+        }
+    }
+
+    #[test]
+    fn test_fallback_sink_metadata_complete() {
+        for sink in &[
+            "zmq",
+            "zeromq",
+            "rabbitmq",
+            "sql",
+            "image",
+            "influx",
+            "influx2",
+            "tdengine",
+            "tdengine3",
+            "iotdb",
+        ] {
+            let meta = fallback_sink_metadata(sink)
+                .unwrap_or_else(|| panic!("missing fallback for sink {}", sink));
+            assert!(meta.get("about").is_some());
+            assert!(meta.get("properties").is_some());
+        }
+    }
 }

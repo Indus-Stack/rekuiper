@@ -16,8 +16,8 @@ use rekuiper_conf::KuiperConfig;
 use rekuiper_connectors::{
     FileSource, FileSourceConfig, HttpPullConfig, HttpPullSource, KafkaConfig, KafkaSource,
     MqttConfig, MqttSource, PayloadFormat, RabbitMqConfig, RabbitMqSource, RedisSubSource,
-    SimulatorConfig, SimulatorSource, SqlConnectorConfig, SqlSource, WebSocketConfig,
-    WebSocketSource,
+    SimulatorConfig, SimulatorSource, SqlConnectorConfig, SqlSource, VideoSource,
+    VideoSourceConfig, WebSocketConfig, WebSocketSource, ZmqSource, ZmqSourceConfig,
 };
 use rekuiper_core::model::{RuleStatus, StreamField, StreamRecord};
 use rekuiper_core::{
@@ -936,114 +936,90 @@ pub(crate) fn bootstrap_stream_sources(
         return;
     }
 
-    // RabbitMQ source streams consume an AMQP queue into the stream bus.
-    if let Some(def) = state.stream_manager.get_stream(stream_name) {
-        let is_rmq = def
-            .options
-            .get("TYPE")
-            .is_some_and(|t| t.eq_ignore_ascii_case("rabbitmq") || t.eq_ignore_ascii_case("amqp"));
-        if is_rmq {
-            let mut config = RabbitMqConfig::default();
-            if let Some(srv) = def.options.get("SERVER").or_else(|| def.options.get("URL")) {
-                config.server = srv.clone();
-            }
-            if let Some(q) = def
-                .options
-                .get("QUEUE")
-                .or_else(|| def.options.get("DATASOURCE"))
-            {
-                config.queue = q.clone();
-            }
-            if let Some(ex) = def.options.get("EXCHANGE") {
-                config.exchange = ex.clone();
-            }
-            if let Some(rk) = def
-                .options
-                .get("ROUTINGKEY")
-                .or_else(|| def.options.get("ROUTING_KEY"))
-            {
-                config.routing_key = rk.clone();
-            }
-            if let Some(u) = def
-                .options
-                .get("USERNAME")
-                .or_else(|| def.options.get("USER"))
-            {
-                config.username = Some(u.clone());
-            }
-            if let Some(p) = def.options.get("PASSWORD") {
-                config.password = Some(p.clone());
-            }
-            if let Some(key) = def.options.get("CONF_KEY").cloned() {
-                let lookup = format!("rabbitmq/{}", key);
-                if let Some(conf_val) = state.source_configs.read().get(&lookup).cloned() {
-                    if let Ok(c) = serde_json::from_value::<RabbitMqConfig>(conf_val) {
-                        config = c;
-                    }
-                }
-            }
-            let stream_tx = state.stream_bus.get_or_create(stream_name);
-            let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
-            register_rule_stream_source(state, stream_name, rule_id, cancel_tx);
-            RabbitMqSource::new(config, stream_tx).spawn(cancel_rx);
-            return;
-        }
+    // RabbitMQ source streams subscribe to an AMQP broker into the stream bus.
+    if let Some(config) =
+        resolve_rabbitmq_source(&state.stream_manager, &state.source_configs, stream_name)
+    {
+        let stream_tx = state.stream_bus.get_or_create(stream_name);
+        let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
+        register_rule_stream_source(state, stream_name, rule_id, cancel_tx);
+        RabbitMqSource::new(config, stream_tx).spawn(cancel_rx);
+        return;
     }
 
-    // Simulator source streams replay configured data into the stream bus.
-    // Stream options are upper-cased by the SQL parser.
-    if let Some(def) = state.stream_manager.get_stream(stream_name) {
-        let is_simulator = def
-            .options
-            .get("TYPE")
-            .is_some_and(|t| t.eq_ignore_ascii_case("simulator"));
-        if is_simulator {
-            if let Some(key) = def.options.get("CONF_KEY").cloned() {
-                let lookup = format!("simulator/{}", key);
-                if let Some(conf_val) = state.source_configs.read().get(&lookup).cloned() {
-                    match serde_json::from_value::<SimulatorConfig>(conf_val) {
-                        Ok(conf) => {
-                            let stream_name_str = stream_name.to_string();
-                            let bus = state.stream_bus.clone();
-                            let (cancel_tx, mut cancel_rx) = tokio::sync::watch::channel(false);
-                            register_rule_stream_source(state, stream_name, rule_id, cancel_tx);
-                            tokio::spawn(async move {
-                                let (tx, mut rx) = tokio::sync::mpsc::channel::<StreamRecord>(1024);
-                                let sim_handle = tokio::spawn(async move {
-                                    SimulatorSource::new(conf).run(tx).await
-                                });
-                                loop {
-                                    tokio::select! {
-                                        record = rx.recv() => {
-                                            match record {
-                                                Some(record) => {
-                                                    let _ = bus.publish_async(&stream_name_str, record).await;
-                                                }
-                                                None => break,
-                                            }
-                                        }
-                                        changed = cancel_rx.changed() => {
-                                            if changed.is_err() || *cancel_rx.borrow() {
-                                                sim_handle.abort();
-                                                break;
-                                            }
-                                        }
-                                    }
+    // ZeroMQ source streams subscribe to a ZeroMQ endpoint into the stream bus.
+    if let Some(config) =
+        resolve_zmq_source(&state.stream_manager, &state.source_configs, stream_name)
+    {
+        let stream_tx = state.stream_bus.get_or_create(stream_name);
+        let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
+        register_rule_stream_source(state, stream_name, rule_id, cancel_tx);
+        ZmqSource::new(config, stream_tx).spawn(cancel_rx);
+        return;
+    }
+
+    // Video source streams extract camera frames via FFmpeg into the stream bus.
+    if let Some(config) =
+        resolve_video_source(&state.stream_manager, &state.source_configs, stream_name)
+    {
+        if let Err(e) = config.validate() {
+            tracing::error!(
+                "[RULE {}] video source validation failed for stream '{}': {}",
+                rule_id,
+                stream_name,
+                e
+            );
+            if let Some(handle) = state.rule_manager.rule_status_handle(rule_id) {
+                let mut status = handle.write();
+                status.status = "error".to_string();
+                status.message = format!("Video source validation error: {}", e);
+                status.last_exception = e;
+            }
+            return;
+        }
+        let stream_tx = state.stream_bus.get_or_create(stream_name);
+        let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
+        register_rule_stream_source(state, stream_name, rule_id, cancel_tx);
+        VideoSource::new(config, stream_tx).spawn(cancel_rx);
+        return;
+    }
+
+    // Simulator / Random source streams replay configured data into the stream bus.
+    if let Some(conf) = resolve_simulator_source(
+        &state.stream_manager,
+        &state.source_configs,
+        stream_name,
+        rule_id,
+    ) {
+        if !conf.data.is_empty() {
+            let stream_name_str = stream_name.to_string();
+            let bus = state.stream_bus.clone();
+            let (cancel_tx, mut cancel_rx) = tokio::sync::watch::channel(false);
+            register_rule_stream_source(state, stream_name, rule_id, cancel_tx);
+            tokio::spawn(async move {
+                let (tx, mut rx) = tokio::sync::mpsc::channel::<StreamRecord>(1024);
+                let sim_handle =
+                    tokio::spawn(async move { SimulatorSource::new(conf).run(tx).await });
+                loop {
+                    tokio::select! {
+                        record = rx.recv() => {
+                            match record {
+                                Some(record) => {
+                                    let _ = bus.publish_async(&stream_name_str, record).await;
                                 }
-                                let _ = sim_handle.await;
-                            });
+                                None => break,
+                            }
                         }
-                        Err(e) => {
-                            tracing::warn!(
-                                "[RULE {}] invalid simulator config '{}': {}",
-                                rule_id,
-                                lookup,
-                                e
-                            );
+                        changed = cancel_rx.changed() => {
+                            if changed.is_err() || *cancel_rx.borrow() {
+                                sim_handle.abort();
+                                break;
+                            }
                         }
                     }
                 }
-            }
+                let _ = sim_handle.await;
+            });
         }
     }
 }
@@ -1305,6 +1281,7 @@ pub(crate) fn resolve_kafka_source(
         group_id: None,
         partition: 0,
         key: None,
+        offset_reset: "latest".to_string(),
     };
     if let Some(key) = def.options.get("CONF_KEY") {
         if !key.is_empty() {
@@ -1324,6 +1301,35 @@ pub(crate) fn resolve_kafka_source(
                 }
             }
         }
+    }
+    if let Some(reset) = def
+        .options
+        .get("OFFSET_RESET")
+        .or_else(|| def.options.get("OFFSETRESET"))
+    {
+        if !reset.trim().is_empty() {
+            let r = reset.trim().to_ascii_lowercase();
+            if r == "earliest" || r == "latest" {
+                config.offset_reset = r;
+            } else {
+                tracing::warn!(
+                    "[RULE {}] invalid kafka offset_reset '{}' (must be 'earliest' or 'latest')",
+                    rule_id,
+                    reset
+                );
+                return None;
+            }
+        }
+    }
+    if !config.offset_reset.eq_ignore_ascii_case("earliest")
+        && !config.offset_reset.eq_ignore_ascii_case("latest")
+    {
+        tracing::warn!(
+            "[RULE {}] invalid kafka offset_reset '{}' (must be 'earliest' or 'latest')",
+            rule_id,
+            config.offset_reset
+        );
+        return None;
     }
     match def.options.get("DATASOURCE").cloned() {
         Some(topic) if !topic.is_empty() => config.topic = Some(topic),
@@ -2095,6 +2101,351 @@ pub(crate) fn resolve_sql_source(
         internal_sql_query_cfg: None,
     })
 }
+
+pub(crate) fn resolve_rabbitmq_source(
+    stream_manager: &StreamManager,
+    source_configs: &Arc<RwLock<HashMap<String, Value>>>,
+    stream_name: &str,
+) -> Option<RabbitMqConfig> {
+    let def = stream_manager.get_stream(stream_name)?;
+    let is_rmq = def
+        .options
+        .get("TYPE")
+        .is_some_and(|t| t.eq_ignore_ascii_case("rabbitmq") || t.eq_ignore_ascii_case("amqp"));
+    if !is_rmq {
+        return None;
+    }
+    let mut config = RabbitMqConfig::default();
+    let conf_key = def
+        .options
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("CONF_KEY") || k.eq_ignore_ascii_case("confKey"))
+        .map(|(_, v)| v.trim());
+    if let Some(key) = conf_key {
+        if !key.is_empty() {
+            let lookup = format!("rabbitmq/{}", key);
+            let configs_guard = source_configs.read();
+            let conf_val = configs_guard
+                .get(&lookup)
+                .or_else(|| configs_guard.get(key))
+                .cloned();
+            drop(configs_guard);
+            if let Some(val) = conf_val {
+                if let Ok(c) = serde_json::from_value::<RabbitMqConfig>(val) {
+                    config = c;
+                }
+            }
+        }
+    }
+    if let Some(srv) = def
+        .options
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("SERVER") || k.eq_ignore_ascii_case("URL"))
+        .map(|(_, v)| v.trim())
+        .filter(|s| !s.is_empty())
+    {
+        config.server = srv.to_string();
+    }
+    if let Some(q) = def
+        .options
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("QUEUE") || k.eq_ignore_ascii_case("DATASOURCE"))
+        .map(|(_, v)| v.trim())
+        .filter(|s| !s.is_empty())
+    {
+        config.queue = q.to_string();
+    }
+    if let Some(ex) = def
+        .options
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("EXCHANGE"))
+        .map(|(_, v)| v.trim())
+        .filter(|s| !s.is_empty())
+    {
+        config.exchange = ex.to_string();
+    }
+    if let Some(rk) = def
+        .options
+        .iter()
+        .find(|(k, _)| {
+            k.eq_ignore_ascii_case("ROUTINGKEY") || k.eq_ignore_ascii_case("ROUTING_KEY")
+        })
+        .map(|(_, v)| v.trim())
+        .filter(|s| !s.is_empty())
+    {
+        config.routing_key = rk.to_string();
+    }
+    if let Some(u) = def
+        .options
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("USERNAME") || k.eq_ignore_ascii_case("USER"))
+        .map(|(_, v)| v.trim())
+        .filter(|s| !s.is_empty())
+    {
+        config.username = Some(u.to_string());
+    }
+    if let Some(p) = def
+        .options
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("PASSWORD"))
+        .map(|(_, v)| v.trim())
+        .filter(|s| !s.is_empty())
+    {
+        config.password = Some(p.to_string());
+    }
+    Some(config)
+}
+
+pub(crate) fn resolve_zmq_source(
+    stream_manager: &StreamManager,
+    source_configs: &Arc<RwLock<HashMap<String, Value>>>,
+    stream_name: &str,
+) -> Option<ZmqSourceConfig> {
+    let def = stream_manager.get_stream(stream_name)?;
+    let is_zmq = def
+        .options
+        .get("TYPE")
+        .is_some_and(|t| t.eq_ignore_ascii_case("zmq") || t.eq_ignore_ascii_case("zeromq"));
+    if !is_zmq {
+        return None;
+    }
+    let mut config = ZmqSourceConfig::default();
+    let conf_key = def
+        .options
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("CONF_KEY") || k.eq_ignore_ascii_case("confKey"))
+        .map(|(_, v)| v.trim());
+    if let Some(key) = conf_key {
+        if !key.is_empty() {
+            let lookup = format!("zmq/{}", key);
+            let configs_guard = source_configs.read();
+            let conf_val = configs_guard
+                .get(&lookup)
+                .or_else(|| configs_guard.get(key))
+                .cloned();
+            drop(configs_guard);
+            if let Some(val) = conf_val {
+                if let Ok(c) = serde_json::from_value::<ZmqSourceConfig>(val) {
+                    config = c;
+                }
+            }
+        }
+    }
+    if let Some(srv) = def
+        .options
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("SERVER") || k.eq_ignore_ascii_case("URL"))
+        .map(|(_, v)| v.trim())
+        .filter(|s| !s.is_empty())
+    {
+        config.server = srv.to_string();
+    }
+    if let Some(topic) = def
+        .options
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("DATASOURCE") || k.eq_ignore_ascii_case("TOPIC"))
+        .map(|(_, v)| v.trim())
+        .filter(|s| !s.is_empty())
+    {
+        config.topic = Some(topic.to_string());
+    }
+    if let Some(mode) = def
+        .options
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("MODE"))
+        .map(|(_, v)| v.trim())
+        .filter(|s| !s.is_empty())
+    {
+        config.mode = mode.to_string();
+    }
+    Some(config)
+}
+
+pub(crate) fn resolve_video_source(
+    stream_manager: &StreamManager,
+    source_configs: &Arc<RwLock<HashMap<String, Value>>>,
+    stream_name: &str,
+) -> Option<VideoSourceConfig> {
+    let def = stream_manager.get_stream(stream_name)?;
+    let is_video = def
+        .options
+        .get("TYPE")
+        .is_some_and(|t| t.eq_ignore_ascii_case("video"));
+    if !is_video {
+        return None;
+    }
+    let mut config = VideoSourceConfig::default();
+    let conf_key = def
+        .options
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("CONF_KEY") || k.eq_ignore_ascii_case("confKey"))
+        .map(|(_, v)| v.trim());
+    if let Some(key) = conf_key {
+        if !key.is_empty() {
+            let lookup = format!("video/{}", key);
+            let configs_guard = source_configs.read();
+            let conf_val = configs_guard
+                .get(&lookup)
+                .or_else(|| configs_guard.get(key))
+                .cloned();
+            drop(configs_guard);
+            if let Some(val) = conf_val {
+                if let Ok(c) = serde_json::from_value::<VideoSourceConfig>(val) {
+                    config = c;
+                }
+            }
+        }
+    }
+    if let Some(url) = def
+        .options
+        .iter()
+        .find(|(k, _)| {
+            k.eq_ignore_ascii_case("URL")
+                || k.eq_ignore_ascii_case("SERVER")
+                || k.eq_ignore_ascii_case("DATASOURCE")
+        })
+        .map(|(_, v)| v.trim())
+        .filter(|s| !s.is_empty())
+    {
+        config.url = url.to_string();
+    }
+    if let Some(interval) = def
+        .options
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("INTERVAL"))
+        .map(|(_, v)| v.trim())
+        .filter(|s| !s.is_empty())
+    {
+        config.set_interval_str(interval);
+    }
+    if let Some(codec) = def
+        .options
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("CODEC"))
+        .map(|(_, v)| v.trim())
+        .filter(|s| !s.is_empty())
+    {
+        config.codec = codec.to_string();
+    }
+    if let Some(debug) = def
+        .options
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("DEBUG_RESP") || k.eq_ignore_ascii_case("DEBUGRESP"))
+        .map(|(_, v)| v.trim())
+    {
+        config.debug_resp = debug.eq_ignore_ascii_case("true");
+    }
+    if let Some(ffmpeg) = def
+        .options
+        .iter()
+        .find(|(k, _)| {
+            k.eq_ignore_ascii_case("FFMPEG_PATH") || k.eq_ignore_ascii_case("FFMPEGPATH")
+        })
+        .map(|(_, v)| v.trim())
+        .filter(|s| !s.is_empty())
+    {
+        config.ffmpeg_path = ffmpeg.to_string();
+    }
+    Some(config)
+}
+
+pub(crate) fn resolve_simulator_source(
+    stream_manager: &StreamManager,
+    source_configs: &Arc<RwLock<HashMap<String, Value>>>,
+    stream_name: &str,
+    rule_id: &str,
+) -> Option<SimulatorConfig> {
+    let def = stream_manager.get_stream(stream_name)?;
+    let is_sim = def
+        .options
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("TYPE"))
+        .map(|(_, v)| v.trim())
+        .is_some_and(|t| t.eq_ignore_ascii_case("simulator") || t.eq_ignore_ascii_case("random"));
+    if !is_sim {
+        return None;
+    }
+    let mut config = SimulatorConfig {
+        data: Vec::new(),
+        interval: Value::from(10),
+        loop_data: true,
+    };
+    let conf_key = def
+        .options
+        .iter()
+        .find(|(k, _)| {
+            k.eq_ignore_ascii_case("CONF_KEY")
+                || k.eq_ignore_ascii_case("confKey")
+                || k.eq_ignore_ascii_case("connectionSelector")
+        })
+        .map(|(_, v)| v.trim());
+    let key = conf_key.unwrap_or("default");
+    if !key.is_empty() {
+        let lookup = format!("simulator/{}", key);
+        let lookup_random = format!("random/{}", key);
+        let configs_guard = source_configs.read();
+        let conf_val = configs_guard
+            .get(&lookup)
+            .or_else(|| configs_guard.get(&lookup_random))
+            .or_else(|| configs_guard.get(key))
+            .cloned();
+        drop(configs_guard);
+        if let Some(val) = conf_val {
+            match serde_json::from_value::<SimulatorConfig>(val) {
+                Ok(c) => config = c,
+                Err(e) => {
+                    tracing::warn!(
+                        "[RULE {}] invalid simulator config '{}': {}",
+                        rule_id,
+                        lookup,
+                        e
+                    );
+                }
+            }
+        }
+    }
+    if let Some(interval) = def
+        .options
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("INTERVAL"))
+        .map(|(_, v)| v.trim())
+        .filter(|s| !s.is_empty())
+    {
+        if let Ok(num) = interval.parse::<u64>() {
+            config.interval = Value::from(num);
+        } else {
+            config.interval = Value::String(interval.to_string());
+        }
+    }
+    if let Some(loop_opt) = def
+        .options
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("LOOP"))
+        .map(|(_, v)| v.trim())
+        .filter(|s| !s.is_empty())
+    {
+        match loop_opt.to_ascii_lowercase().as_str() {
+            "true" | "1" | "yes" => config.loop_data = true,
+            "false" | "0" | "no" => config.loop_data = false,
+            _ => {}
+        }
+    }
+    if let Some(data_str) = def
+        .options
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("DATA"))
+        .map(|(_, v)| v.trim())
+        .filter(|s| !s.is_empty())
+    {
+        if let Ok(parsed_data) = serde_json::from_str::<Vec<HashMap<String, Value>>>(data_str) {
+            config.data = parsed_data;
+        } else if let Ok(single) = serde_json::from_str::<HashMap<String, Value>>(data_str) {
+            config.data = vec![single];
+        }
+    }
+    Some(config)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2238,6 +2589,116 @@ mod tests {
         assert!(resolve_sql_source(&manager, &test_source_configs(&[]), "demo", "r1").is_none());
         let manager = test_stream_manager(&[]).await;
         assert!(resolve_sql_source(&manager, &test_source_configs(&[]), "demo", "r1").is_none());
+    }
+
+    #[tokio::test]
+    async fn resolve_rabbitmq_source_honors_confkey_and_inline_overrides() {
+        let manager = test_stream_manager(&[
+            ("TYPE", "rabbitmq"),
+            ("CONF_KEY", "rmq_cluster"),
+            ("QUEUE", "override_queue"),
+        ])
+        .await;
+        let configs = test_source_configs(&[(
+            "rabbitmq/rmq_cluster",
+            json!({
+                "server": "amqp://user:pass@rmq:5672",
+                "queue": "base_queue",
+                "routingKey": "orders.#"
+            }),
+        )]);
+        let cfg = resolve_rabbitmq_source(&manager, &configs, "demo").unwrap();
+        assert_eq!(cfg.server, "amqp://user:pass@rmq:5672");
+        assert_eq!(cfg.queue, "override_queue"); // Overridden inline
+        assert_eq!(cfg.routing_key, "orders.#");
+    }
+
+    #[tokio::test]
+    async fn resolve_zmq_source_honors_confkey_and_inline_overrides() {
+        let manager = test_stream_manager(&[
+            ("TYPE", "zmq"),
+            ("CONF_KEY", "zmq_pubsub"),
+            ("TOPIC", "override_topic"),
+        ])
+        .await;
+        let configs = test_source_configs(&[(
+            "zmq/zmq_pubsub",
+            json!({
+                "server": "tcp://zmq-broker:5555",
+                "topic": "base_topic",
+                "mode": "connect"
+            }),
+        )]);
+        let cfg = resolve_zmq_source(&manager, &configs, "demo").unwrap();
+        assert_eq!(cfg.server, "tcp://zmq-broker:5555");
+        assert_eq!(cfg.topic.as_deref(), Some("override_topic")); // Overridden inline
+        assert_eq!(cfg.mode, "connect");
+    }
+
+    #[tokio::test]
+    async fn resolve_video_source_honors_confkey_and_inline_overrides() {
+        let manager = test_stream_manager(&[
+            ("TYPE", "video"),
+            ("CONF_KEY", "camera_feed"),
+            ("INTERVAL", "250ms"),
+        ])
+        .await;
+        let configs = test_source_configs(&[(
+            "video/camera_feed",
+            json!({
+                "url": "rtsp://camera:554/live",
+                "interval": "1s",
+                "codec": "mjpeg"
+            }),
+        )]);
+        let cfg = resolve_video_source(&manager, &configs, "demo").unwrap();
+        assert_eq!(cfg.url, "rtsp://camera:554/live");
+        assert_eq!(cfg.interval, 250); // Overridden inline from 1000ms
+        assert_eq!(cfg.codec, "mjpeg");
+    }
+
+    #[tokio::test]
+    async fn resolve_simulator_source_honors_confkey_and_inline_overrides() {
+        let manager = test_stream_manager(&[
+            ("TYPE", "simulator"),
+            ("CONF_KEY", "sim1"),
+            ("INTERVAL", "50ms"),
+            ("LOOP", "false"),
+            ("DATA", r#"[{"sensor": "temp", "val": 99}]"#),
+        ])
+        .await;
+        let configs = test_source_configs(&[(
+            "simulator/sim1",
+            json!({
+                "data": [{"sensor": "temp", "val": 10}],
+                "interval": "1s",
+                "loop": true
+            }),
+        )]);
+        let cfg = resolve_simulator_source(&manager, &configs, "demo", "r1").unwrap();
+        assert_eq!(cfg.interval, json!("50ms")); // Overridden from 1s to 50ms
+        assert_eq!(
+            rekuiper_connectors::simulator::parse_interval_ms(&cfg.interval).as_millis(),
+            50
+        );
+        assert!(!cfg.loop_data); // Overridden from true to false
+        assert_eq!(cfg.data.len(), 1);
+        assert_eq!(cfg.data[0].get("val"), Some(&json!(99))); // Overridden data
+
+        // Check random alias works as well
+        let manager_random = test_stream_manager(&[("TYPE", "random")]).await;
+        let cfg_rnd =
+            resolve_simulator_source(&manager_random, &test_source_configs(&[]), "demo", "r1")
+                .unwrap();
+        assert!(cfg_rnd.data.is_empty());
+        assert!(cfg_rnd.loop_data);
+
+        // Check rejection of non-simulator types
+        let manager_mqtt = test_stream_manager(&[("TYPE", "mqtt")]).await;
+        assert!(
+            resolve_simulator_source(&manager_mqtt, &test_source_configs(&[]), "demo", "r1")
+                .is_none()
+        );
     }
 
     fn tagged(source: &str, pairs: &[(&str, Value)]) -> TaggedRow {
@@ -2603,5 +3064,120 @@ mod tests {
             }
             _ => panic!("expected PreparedAction::EdgeX"),
         }
+    }
+
+    #[test]
+    fn test_prepare_actions_respects_disabled_flag() {
+        let confs = test_source_configs(&[]);
+        let mut action_enabled = HashMap::new();
+        action_enabled.insert("log".to_string(), serde_json::json!({}));
+
+        let mut action_disabled_inner = HashMap::new();
+        action_disabled_inner.insert("log".to_string(), serde_json::json!({"disabled": true}));
+
+        let mut action_disabled_outer = HashMap::new();
+        action_disabled_outer.insert("log".to_string(), serde_json::json!({}));
+        action_disabled_outer.insert("disabled".to_string(), serde_json::json!(true));
+
+        let mut action_disable_inner = HashMap::new();
+        action_disable_inner.insert("log".to_string(), serde_json::json!({"disable": true}));
+
+        let mut action_disable_outer = HashMap::new();
+        action_disable_outer.insert("log".to_string(), serde_json::json!({}));
+        action_disable_outer.insert("disable".to_string(), serde_json::json!(true));
+
+        let actions = vec![
+            action_enabled,
+            action_disabled_inner,
+            action_disabled_outer,
+            action_disable_inner,
+            action_disable_outer,
+        ];
+        let prepared = prepare_actions(&actions, "rule_disabled_test", &confs, None);
+        assert_eq!(prepared.len(), 1);
+        let cache_confs = action_cache_configs(&actions);
+        assert_eq!(cache_confs.len(), 1);
+    }
+
+    #[test]
+    fn test_validate_sink_actions_skips_disabled() {
+        let mut invalid_disabled = HashMap::new();
+        invalid_disabled.insert("mqtt".to_string(), serde_json::json!({"disabled": true}));
+        assert!(crate::handlers::rules::validate_sink_actions(&[invalid_disabled]).is_ok());
+
+        let mut invalid_disable = HashMap::new();
+        invalid_disable.insert("mqtt".to_string(), serde_json::json!({"disable": true}));
+        assert!(crate::handlers::rules::validate_sink_actions(&[invalid_disable]).is_ok());
+
+        let mut invalid_enabled = HashMap::new();
+        invalid_enabled.insert(
+            "mqtt".to_string(),
+            serde_json::json!({"server": "tcp://127.0.0.1:1883"}),
+        );
+        assert!(crate::handlers::rules::validate_sink_actions(&[invalid_enabled]).is_err());
+    }
+
+    #[tokio::test]
+    async fn test_reject_invalid_rule_conflicting_buffer_full_policy() {
+        use crate::handlers::rules::reject_invalid_rule;
+        use crate::state::AppState;
+        use rekuiper_core::model::StreamDefinition;
+
+        let sm = StreamManager::new();
+        let bus = StreamBus::new();
+        let mut opts1 = HashMap::new();
+        opts1.insert("BUFFER_FULL_POLICY".to_string(), "block".to_string());
+        sm.create_stream(StreamDefinition {
+            name: "stream_block".to_string(),
+            sql: "CREATE STREAM stream_block () WITH (BUFFER_FULL_POLICY=\"block\")".to_string(),
+            stream_fields: Vec::new(),
+            options: opts1.clone(),
+        })
+        .await
+        .unwrap();
+
+        let mut opts2 = HashMap::new();
+        opts2.insert("BUFFER_FULL_POLICY".to_string(), "dropOldest".to_string());
+        sm.create_stream(StreamDefinition {
+            name: "stream_drop".to_string(),
+            sql: "CREATE STREAM stream_drop () WITH (BUFFER_FULL_POLICY=\"dropOldest\")"
+                .to_string(),
+            stream_fields: Vec::new(),
+            options: opts2,
+        })
+        .await
+        .unwrap();
+
+        sm.create_stream(StreamDefinition {
+            name: "stream_block2".to_string(),
+            sql: "CREATE STREAM stream_block2 () WITH (BUFFER_FULL_POLICY=\"block\")".to_string(),
+            stream_fields: Vec::new(),
+            options: opts1,
+        })
+        .await
+        .unwrap();
+
+        let state = AppState::new(
+            "test".to_string(),
+            rekuiper_conf::KuiperConfig::default(),
+            sm,
+            TableManager::new(),
+            RuleManager::new(bus.clone()),
+            bus,
+        );
+
+        // Conflicting: block + dropOldest
+        let mut parser_conflict = Parser::new(
+            "SELECT * FROM stream_block INNER JOIN stream_drop ON stream_block.id = stream_drop.id GROUP BY TumblingWindow(ss, 10)",
+        );
+        let stmt_conflict = parser_conflict.parse_select().unwrap();
+        assert!(reject_invalid_rule(&state, &stmt_conflict, None, false).is_some());
+
+        // Matching: block + block
+        let mut parser_match = Parser::new(
+            "SELECT * FROM stream_block INNER JOIN stream_block2 ON stream_block.id = stream_block2.id GROUP BY TumblingWindow(ss, 10)",
+        );
+        let stmt_match = parser_match.parse_select().unwrap();
+        assert!(reject_invalid_rule(&state, &stmt_match, None, false).is_none());
     }
 }

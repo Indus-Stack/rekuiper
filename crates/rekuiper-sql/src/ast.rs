@@ -360,6 +360,29 @@ pub struct SelectStmt {
 pub struct StreamColumn {
     pub name: String,
     pub data_type: String,
+    pub default_value: Option<String>,
+}
+
+impl StreamColumn {
+    pub fn new(name: impl Into<String>, data_type: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            data_type: data_type.into(),
+            default_value: None,
+        }
+    }
+
+    pub fn with_default(
+        name: impl Into<String>,
+        data_type: impl Into<String>,
+        default_val: impl Into<String>,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            data_type: data_type.into(),
+            default_value: Some(default_val.into()),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]

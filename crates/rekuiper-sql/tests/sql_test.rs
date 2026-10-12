@@ -1305,15 +1305,46 @@ fn test_parse_create_stream_columns() {
         vec![
             StreamColumn {
                 name: "id".to_string(),
-                data_type: "bigint".to_string()
+                data_type: "bigint".to_string(),
+                default_value: None,
             },
             StreamColumn {
                 name: "temp".to_string(),
-                data_type: "float".to_string()
+                data_type: "float".to_string(),
+                default_value: None,
             },
             StreamColumn {
                 name: "name".to_string(),
-                data_type: "string".to_string()
+                data_type: "string".to_string(),
+                default_value: None,
+            },
+        ]
+    );
+
+    // Test with DEFAULT column values
+    let mut parser_def = Parser::new(
+        "CREATE STREAM s_def (id BIGINT DEFAULT 100, status STRING DEFAULT 'idle', active BOOLEAN DEFAULT true) WITH (FORMAT=\"json\")",
+    );
+    let stmt_def = parser_def
+        .parse_create_stream()
+        .expect("columns with default should parse");
+    assert_eq!(
+        stmt_def.fields,
+        vec![
+            StreamColumn {
+                name: "id".to_string(),
+                data_type: "bigint".to_string(),
+                default_value: Some("100".to_string()),
+            },
+            StreamColumn {
+                name: "status".to_string(),
+                data_type: "string".to_string(),
+                default_value: Some("'idle'".to_string()),
+            },
+            StreamColumn {
+                name: "active".to_string(),
+                data_type: "boolean".to_string(),
+                default_value: Some("true".to_string()),
             },
         ]
     );

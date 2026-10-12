@@ -125,6 +125,11 @@ pub fn get_prompt_definitions() -> Vec<PromptDefinition> {
                 },
             ],
         },
+        PromptDefinition {
+            name: "audit_security_posture".to_string(),
+            description: Some("Audits rekuiper daemon runtime security configuration: verifies whether REST (`restIp`) and SSE (`httpServerIp`) listeners are bound to secure loopback (`127.0.0.1`) or exposed externally (`0.0.0.0`), audits REST JWT authentication status, and checks private network access policy (`enable_private_net`).".to_string()),
+            arguments: vec![],
+        },
     ]
 }
 
@@ -348,6 +353,22 @@ pub fn get_prompt_messages(name: &str, args: Option<Value>) -> Result<Vec<Prompt
                          4. Validate the SQL with `validate_sql`.",
                         module, func, func, module, func
                     )),
+                },
+            ])
+        }
+
+        "audit_security_posture" => {
+            Ok(vec![
+                PromptMessage {
+                    role: "user".to_string(),
+                    content: ContentItem::text(
+                        "Audit the security posture of the rekuiper deployment:\n\
+                         1. Execute `get_configs` to inspect runtime network bindings.\n\
+                         2. Verify `restIp` and `httpServerIp` default to secure loopback `127.0.0.1`. If bound to `0.0.0.0`, verify `authentication` is enabled.\n\
+                         3. Confirm `enable_private_net` is false unless private network probe egress is required.\n\
+                         4. Provide actionable hardening recommendations for production deployments."
+                            .to_string(),
+                    ),
                 },
             ])
         }

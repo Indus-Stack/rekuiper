@@ -24,6 +24,28 @@ pub(crate) struct CommonSinkOpts {
     pub(crate) linger_interval: u64,
 }
 
+pub fn is_action_disabled(action: &HashMap<String, Value>, opts: &Value) -> bool {
+    let parse_bool = |v: &Value| {
+        if let Some(b) = v.as_bool() {
+            Some(b)
+        } else if let Some(s) = v.as_str() {
+            s.parse::<bool>().ok()
+        } else {
+            None
+        }
+    };
+    action
+        .get("disabled")
+        .or_else(|| action.get("disable"))
+        .and_then(parse_bool)
+        .unwrap_or(false)
+        || opts
+            .get("disabled")
+            .or_else(|| opts.get("disable"))
+            .and_then(parse_bool)
+            .unwrap_or(false)
+}
+
 pub(crate) fn parse_common_opts(
     opts: &Value,
     rule_send_nil_field: bool,
@@ -320,6 +342,31 @@ pub(crate) enum PreparedAction {
         config: Box<MqttConfig>,
         template: Option<String>,
     },
+    Influx {
+        config: Box<rekuiper_connectors::InfluxConfig>,
+        opts: CommonSinkOpts,
+    },
+    Influx2 {
+        config: Box<rekuiper_connectors::Influx2Config>,
+        opts: CommonSinkOpts,
+    },
+    Tdengine {
+        config: Box<rekuiper_connectors::TdengineConfig>,
+        opts: CommonSinkOpts,
+    },
+    Iotdb {
+        config: Box<rekuiper_connectors::IotdbConfig>,
+        opts: CommonSinkOpts,
+    },
+    Image {
+        config: Box<rekuiper_connectors::ImageSinkConfig>,
+        opts: CommonSinkOpts,
+    },
+    Zmq {
+        config: Box<rekuiper_connectors::ZmqSinkConfig>,
+        template: Option<String>,
+        opts: CommonSinkOpts,
+    },
     Unknown {
         kind: String,
     },
@@ -335,6 +382,12 @@ impl PreparedAction {
             PreparedAction::Redis { opts, .. } => Some(opts),
             PreparedAction::Kafka { opts, .. } => Some(opts),
             PreparedAction::RabbitMq { opts, .. } => Some(opts),
+            PreparedAction::Influx { opts, .. } => Some(opts),
+            PreparedAction::Influx2 { opts, .. } => Some(opts),
+            PreparedAction::Tdengine { opts, .. } => Some(opts),
+            PreparedAction::Iotdb { opts, .. } => Some(opts),
+            PreparedAction::Image { opts, .. } => Some(opts),
+            PreparedAction::Zmq { opts, .. } => Some(opts),
             _ => None,
         }
     }
@@ -353,6 +406,9 @@ pub(crate) fn prepare_actions(
     let mut out = Vec::new();
     for action in actions {
         for (kind, opts) in action {
+            if kind == "disabled" || kind == "disable" || is_action_disabled(action, opts) {
+                continue;
+            }
             match kind.as_str() {
                 "log" => out.push(PreparedAction::Log),
                 "nop" => out.push(PreparedAction::Nop),
@@ -682,6 +738,102 @@ pub(crate) fn prepare_actions(
                         template: action_template(opts).map(|s| s.to_string()),
                     });
                 }
+                "influx" => {
+                    match serde_json::from_value::<rekuiper_connectors::InfluxConfig>(opts.clone())
+                    {
+                        Ok(config) => {
+                            let common_opts = parse_common_opts(opts, rule_send_nil_field, true);
+                            out.push(PreparedAction::Influx {
+                                config: Box::new(config),
+                                opts: common_opts,
+                            });
+                        }
+                        Err(_) => out.push(PreparedAction::Unknown {
+                            kind: "influx".to_string(),
+                        }),
+                    }
+                }
+                "influx2" => {
+                    match serde_json::from_value::<rekuiper_connectors::Influx2Config>(opts.clone())
+                    {
+                        Ok(config) => {
+                            let common_opts = parse_common_opts(opts, rule_send_nil_field, true);
+                            out.push(PreparedAction::Influx2 {
+                                config: Box::new(config),
+                                opts: common_opts,
+                            });
+                        }
+                        Err(_) => out.push(PreparedAction::Unknown {
+                            kind: "influx2".to_string(),
+                        }),
+                    }
+                }
+                "tdengine" | "tdengine3" => {
+                    match serde_json::from_value::<rekuiper_connectors::TdengineConfig>(
+                        opts.clone(),
+                    ) {
+                        Ok(config) => {
+                            let common_opts = parse_common_opts(opts, rule_send_nil_field, true);
+                            out.push(PreparedAction::Tdengine {
+                                config: Box::new(config),
+                                opts: common_opts,
+                            });
+                        }
+                        Err(_) => out.push(PreparedAction::Unknown {
+                            kind: "tdengine3".to_string(),
+                        }),
+                    }
+                }
+                "iotdb" => {
+                    match serde_json::from_value::<rekuiper_connectors::IotdbConfig>(opts.clone()) {
+                        Ok(config) => {
+                            let common_opts = parse_common_opts(opts, rule_send_nil_field, true);
+                            out.push(PreparedAction::Iotdb {
+                                config: Box::new(config),
+                                opts: common_opts,
+                            });
+                        }
+                        Err(_) => out.push(PreparedAction::Unknown {
+                            kind: "iotdb".to_string(),
+                        }),
+                    }
+                }
+                "image" => {
+                    match serde_json::from_value::<rekuiper_connectors::ImageSinkConfig>(
+                        opts.clone(),
+                    ) {
+                        Ok(config) => {
+                            let common_opts = parse_common_opts(opts, rule_send_nil_field, true);
+                            out.push(PreparedAction::Image {
+                                config: Box::new(config),
+                                opts: common_opts,
+                            });
+                        }
+                        Err(_) => out.push(PreparedAction::Unknown {
+                            kind: "image".to_string(),
+                        }),
+                    }
+                }
+                "zmq" | "zeromq" => {
+                    match serde_json::from_value::<rekuiper_connectors::ZmqSinkConfig>(opts.clone())
+                    {
+                        Ok(config) => {
+                            let template = opts
+                                .get("dataTemplate")
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.to_string());
+                            let common_opts = parse_common_opts(opts, rule_send_nil_field, true);
+                            out.push(PreparedAction::Zmq {
+                                config: Box::new(config),
+                                template,
+                                opts: common_opts,
+                            });
+                        }
+                        Err(_) => out.push(PreparedAction::Unknown {
+                            kind: "zmq".to_string(),
+                        }),
+                    }
+                }
                 other => out.push(PreparedAction::Unknown {
                     kind: other.to_string(),
                 }),
@@ -885,7 +1037,10 @@ pub(crate) const SINK_TICK: std::time::Duration = std::time::Duration::from_mill
 pub(crate) fn action_cache_configs(actions: &[HashMap<String, Value>]) -> Vec<Option<CacheConfig>> {
     let mut out = Vec::new();
     for action in actions {
-        for opts in action.values() {
+        for (kind, opts) in action {
+            if kind == "disabled" || kind == "disable" || is_action_disabled(action, opts) {
+                continue;
+            }
             out.push(
                 opts.as_object()
                     .map(|o| o.clone().into_iter().collect::<HashMap<String, Value>>())
@@ -903,6 +1058,7 @@ pub(crate) struct ActionRuntime {
     pub(crate) mqtt: Option<MqttSink>,
     pub(crate) sql: Option<SqlSink>,
     pub(crate) rabbitmq: Option<RabbitMqSink>,
+    pub(crate) zmq: Option<rekuiper_connectors::ZmqSink>,
     pub(crate) cache: Option<SinkCache>,
     /// Earliest time the next resend may be attempted.
     pub(crate) retry_at: tokio::time::Instant,
@@ -919,6 +1075,7 @@ impl ActionRuntime {
             mqtt: None,
             sql: None,
             rabbitmq: None,
+            zmq: None,
             cache,
             retry_at: tokio::time::Instant::now(),
             last_warn: None,
@@ -1703,6 +1860,440 @@ pub(crate) async fn send_action(
                 .await
                 .map_err(|e| SendError::Retry(format!("edgex action failed: {}", e)))
         }
+        PreparedAction::Influx { config, .. } => {
+            let default_url = config.write_url();
+            let url = destination.unwrap_or(&default_url);
+            let line = if let Some(Value::Array(arr)) = output.data.get(BATCH_ROWS_KEY) {
+                let mut lines = Vec::new();
+                for row in arr {
+                    if let Value::Object(m) = row {
+                        let row_map: HashMap<String, Value> = m.clone().into_iter().collect();
+                        if let Some(l) = rekuiper_connectors::record_to_line_protocol(
+                            &row_map,
+                            &config.measurement,
+                            config.tags.as_ref(),
+                            config.fields.as_deref(),
+                            config.ts_field_name.as_deref(),
+                            &config.precision,
+                        ) {
+                            lines.push(l);
+                        } else {
+                            tracing::warn!(
+                                "Influx batch row produced no line protocol; skipping row"
+                            );
+                        }
+                    }
+                }
+                lines.join("\n")
+            } else {
+                rekuiper_connectors::record_to_line_protocol(
+                    &output.data,
+                    &config.measurement,
+                    config.tags.as_ref(),
+                    config.fields.as_deref(),
+                    config.ts_field_name.as_deref(),
+                    &config.precision,
+                )
+                .unwrap_or_default()
+            };
+
+            if line.is_empty() {
+                return Ok(());
+            }
+
+            let mut req = ctx
+                .http_client
+                .post(url)
+                .header(reqwest::header::CONTENT_TYPE, "text/plain; charset=utf-8");
+
+            if let Some(ref u) = config.username {
+                req = req.basic_auth(u, config.password.as_deref());
+            }
+
+            let res = req.body(line).send().await;
+
+            match res {
+                Ok(resp) if resp.status().is_success() => Ok(()),
+                Ok(resp) => {
+                    let status = resp.status();
+                    let err_text = resp.text().await.unwrap_or_default();
+                    if status == reqwest::StatusCode::REQUEST_TIMEOUT
+                        || status == reqwest::StatusCode::TOO_MANY_REQUESTS
+                    {
+                        Err(SendError::Retry(format!(
+                            "influx write retryable status {}: {}",
+                            status, err_text
+                        )))
+                    } else if status.is_client_error() {
+                        Err(SendError::Permanent(format!(
+                            "influx write client error {}: {}",
+                            status, err_text
+                        )))
+                    } else {
+                        Err(SendError::Retry(format!(
+                            "influx write failed with {}: {}",
+                            status, err_text
+                        )))
+                    }
+                }
+                Err(e) => Err(SendError::Retry(format!(
+                    "influx write connection error: {}",
+                    e
+                ))),
+            }
+        }
+        PreparedAction::Influx2 { config, .. } => {
+            let default_url = config.write_url();
+            let url = destination.unwrap_or(&default_url);
+            let line = if let Some(Value::Array(arr)) = output.data.get(BATCH_ROWS_KEY) {
+                let mut lines = Vec::new();
+                for row in arr {
+                    if let Value::Object(m) = row {
+                        let row_map: HashMap<String, Value> = m.clone().into_iter().collect();
+                        if let Some(l) = rekuiper_connectors::record_to_line_protocol(
+                            &row_map,
+                            &config.measurement,
+                            config.tags.as_ref(),
+                            config.fields.as_deref(),
+                            config.ts_field_name.as_deref(),
+                            &config.precision,
+                        ) {
+                            lines.push(l);
+                        } else {
+                            tracing::warn!(
+                                "Influx2 batch row produced no line protocol; skipping row"
+                            );
+                        }
+                    }
+                }
+                lines.join("\n")
+            } else {
+                rekuiper_connectors::record_to_line_protocol(
+                    &output.data,
+                    &config.measurement,
+                    config.tags.as_ref(),
+                    config.fields.as_deref(),
+                    config.ts_field_name.as_deref(),
+                    &config.precision,
+                )
+                .unwrap_or_default()
+            };
+
+            if line.is_empty() {
+                return Ok(());
+            }
+
+            let mut req = ctx
+                .http_client
+                .post(url)
+                .header(reqwest::header::CONTENT_TYPE, "text/plain; charset=utf-8");
+
+            if let Some(ref token) = config.token {
+                req = req.header("Authorization", format!("Token {}", token));
+            }
+
+            let res = req.body(line).send().await;
+
+            match res {
+                Ok(resp) if resp.status().is_success() => Ok(()),
+                Ok(resp) => {
+                    let status = resp.status();
+                    let err_text = resp.text().await.unwrap_or_default();
+                    if status == reqwest::StatusCode::REQUEST_TIMEOUT
+                        || status == reqwest::StatusCode::TOO_MANY_REQUESTS
+                    {
+                        Err(SendError::Retry(format!(
+                            "influx2 write retryable status {}: {}",
+                            status, err_text
+                        )))
+                    } else if status.is_client_error() {
+                        Err(SendError::Permanent(format!(
+                            "influx2 write client error {}: {}",
+                            status, err_text
+                        )))
+                    } else {
+                        Err(SendError::Retry(format!(
+                            "influx2 write failed with {}: {}",
+                            status, err_text
+                        )))
+                    }
+                }
+                Err(e) => Err(SendError::Retry(format!(
+                    "influx2 write connection error: {}",
+                    e
+                ))),
+            }
+        }
+        PreparedAction::Tdengine { config, .. } => {
+            let default_url = config.endpoint_url();
+            let url = destination.unwrap_or(&default_url);
+            let sql_statement = if let Some(Value::Array(arr)) = output.data.get(BATCH_ROWS_KEY) {
+                let mut rows = Vec::new();
+                for row in arr {
+                    if let Value::Object(m) = row {
+                        rows.push(m.clone().into_iter().collect::<HashMap<String, Value>>());
+                    }
+                }
+                if rows.is_empty() {
+                    return Ok(());
+                }
+                config.build_batch_insert_sql(&rows).map_err(|e| {
+                    SendError::Permanent(format!("tdengine batch sql generation error: {}", e))
+                })?
+            } else {
+                config.build_insert_sql(&output.data).map_err(|e| {
+                    SendError::Permanent(format!("tdengine sql generation error: {}", e))
+                })?
+            };
+
+            if sql_statement.trim().is_empty() {
+                return Ok(());
+            }
+
+            let res = ctx
+                .http_client
+                .post(url)
+                .header(reqwest::header::AUTHORIZATION, config.basic_auth_header())
+                .header(reqwest::header::CONTENT_TYPE, "text/plain; charset=utf-8")
+                .body(sql_statement)
+                .send()
+                .await;
+
+            match res {
+                Ok(resp) if resp.status().is_success() => {
+                    let body_text = resp.text().await.unwrap_or_default();
+                    if let Ok(json_body) = serde_json::from_str::<Value>(&body_text) {
+                        if let Some(code) = json_body.get("code").and_then(|c| c.as_i64()) {
+                            if code != 0 {
+                                let desc = json_body
+                                    .get("desc")
+                                    .and_then(|d| d.as_str())
+                                    .unwrap_or("unknown error");
+                                return Err(SendError::Permanent(format!(
+                                    "tdengine error {}: {}",
+                                    code, desc
+                                )));
+                            }
+                        }
+                    }
+                    Ok(())
+                }
+                Ok(resp) => {
+                    let status = resp.status();
+                    let err_text = resp.text().await.unwrap_or_default();
+                    if status == reqwest::StatusCode::REQUEST_TIMEOUT
+                        || status == reqwest::StatusCode::TOO_MANY_REQUESTS
+                    {
+                        Err(SendError::Retry(format!(
+                            "tdengine write retryable status {}: {}",
+                            status, err_text
+                        )))
+                    } else if status.is_client_error() {
+                        Err(SendError::Permanent(format!(
+                            "tdengine write client error {}: {}",
+                            status, err_text
+                        )))
+                    } else {
+                        Err(SendError::Retry(format!(
+                            "tdengine write failed with {}: {}",
+                            status, err_text
+                        )))
+                    }
+                }
+                Err(e) => Err(SendError::Retry(format!(
+                    "tdengine write connection error: {}",
+                    e
+                ))),
+            }
+        }
+        PreparedAction::Iotdb { config, .. } => {
+            let default_url = config.endpoint_url();
+            let url = destination.unwrap_or(&default_url);
+            let payloads = if let Some(Value::Array(arr)) = output.data.get(BATCH_ROWS_KEY) {
+                let mut rows = Vec::new();
+                for row in arr {
+                    if let Value::Object(m) = row {
+                        rows.push(m.clone().into_iter().collect::<HashMap<String, Value>>());
+                    }
+                }
+                if rows.is_empty() {
+                    return Ok(());
+                }
+                config.build_batch_insert_payloads(&rows).map_err(|e| {
+                    SendError::Permanent(format!("iotdb payload generation error: {}", e))
+                })?
+            } else {
+                vec![config.build_insert_payload(&output.data).map_err(|e| {
+                    SendError::Permanent(format!("iotdb payload generation error: {}", e))
+                })?]
+            };
+
+            for payload in payloads {
+                let res = ctx
+                    .http_client
+                    .post(url)
+                    .header(reqwest::header::AUTHORIZATION, config.basic_auth_header())
+                    .header(reqwest::header::CONTENT_TYPE, "application/json")
+                    .json(&payload)
+                    .send()
+                    .await;
+
+                match res {
+                    Ok(resp) if resp.status().is_success() => {
+                        let body_text = resp.text().await.unwrap_or_default();
+                        if let Ok(json_body) = serde_json::from_str::<Value>(&body_text) {
+                            if let Some(code) = json_body.get("code").and_then(|c| c.as_i64()) {
+                                if code != 200 && code != 0 {
+                                    let msg = json_body
+                                        .get("message")
+                                        .and_then(|m| m.as_str())
+                                        .unwrap_or("unknown error");
+                                    return Err(SendError::Permanent(format!(
+                                        "iotdb error {}: {}",
+                                        code, msg
+                                    )));
+                                }
+                            }
+                        }
+                    }
+                    Ok(resp) => {
+                        let status = resp.status();
+                        let err_text = resp.text().await.unwrap_or_default();
+                        if status == reqwest::StatusCode::REQUEST_TIMEOUT
+                            || status == reqwest::StatusCode::TOO_MANY_REQUESTS
+                        {
+                            return Err(SendError::Retry(format!(
+                                "iotdb write retryable status {}: {}",
+                                status, err_text
+                            )));
+                        } else if status.is_client_error() {
+                            return Err(SendError::Permanent(format!(
+                                "iotdb write client error {}: {}",
+                                status, err_text
+                            )));
+                        } else {
+                            return Err(SendError::Retry(format!(
+                                "iotdb write failed with {}: {}",
+                                status, err_text
+                            )));
+                        }
+                    }
+                    Err(e) => {
+                        return Err(SendError::Retry(format!(
+                            "iotdb write connection error: {}",
+                            e
+                        )));
+                    }
+                }
+            }
+            Ok(())
+        }
+        PreparedAction::Image { config, .. } => {
+            if let Some(Value::Array(arr)) = output.data.get(BATCH_ROWS_KEY) {
+                for row in arr {
+                    if let Value::Object(m) = row {
+                        let row_map: HashMap<String, Value> = m.clone().into_iter().collect();
+                        match config.save_image(&row_map).await {
+                            Ok(_) => {}
+                            Err(rekuiper_connectors::ImageSinkError::Validation(e)) => {
+                                return Err(SendError::Permanent(e));
+                            }
+                            Err(rekuiper_connectors::ImageSinkError::Io(e)) => {
+                                return Err(SendError::Retry(e));
+                            }
+                        }
+                    }
+                }
+            } else {
+                match config.save_image(&output.data).await {
+                    Ok(_) => {}
+                    Err(rekuiper_connectors::ImageSinkError::Validation(e)) => {
+                        return Err(SendError::Permanent(e));
+                    }
+                    Err(rekuiper_connectors::ImageSinkError::Io(e)) => {
+                        return Err(SendError::Retry(e));
+                    }
+                }
+            }
+            Ok(())
+        }
+        PreparedAction::Zmq {
+            config,
+            template,
+            opts,
+        } => {
+            if rt.zmq.is_none() {
+                rt.zmq = Some(rekuiper_connectors::ZmqSink::new((**config).clone()));
+            }
+            let sink = rt.zmq.as_ref().unwrap();
+
+            let resolve_topic = |data_map: &HashMap<String, Value>| {
+                let default_top = config.topic.as_deref().unwrap_or("");
+                let t = destination.unwrap_or(default_top);
+                if t.contains("{{") {
+                    apply_data_template(t, &record_template_map(data_map))
+                } else {
+                    t.to_string()
+                }
+            };
+
+            if let Some(Value::Array(arr)) = output.data.get(BATCH_ROWS_KEY) {
+                if opts.send_single {
+                    for row in arr {
+                        let row_map: HashMap<String, Value> = match row {
+                            Value::Object(m) => m.clone().into_iter().collect(),
+                            _ => HashMap::new(),
+                        };
+                        let topic = resolve_topic(&row_map);
+                        let payload = if let Some(tpl) = template {
+                            render_sink_template_row(tpl, row).into_bytes()
+                        } else {
+                            let formatted = format_record_for_sink_val(row, opts);
+                            serde_json::to_vec(&formatted).map_err(|e| {
+                                SendError::Permanent(format!("zmq payload encode: {}", e))
+                            })?
+                        };
+                        sink.send_raw(Some(&topic), &payload)
+                            .await
+                            .map_err(|e| SendError::Retry(format!("zmq action failed: {}", e)))?;
+                    }
+                    Ok(())
+                } else {
+                    let topic = resolve_topic(&output.data);
+                    let payload = if let Some(tpl) = template {
+                        render_sink_template_batch(tpl, arr).into_bytes()
+                    } else {
+                        let formatted_arr: Vec<Value> = arr
+                            .iter()
+                            .map(|r| format_record_for_sink_val(r, opts))
+                            .collect();
+                        serde_json::to_vec(&Value::Array(formatted_arr)).map_err(|e| {
+                            SendError::Permanent(format!("zmq payload encode: {}", e))
+                        })?
+                    };
+                    sink.send_raw(Some(&topic), &payload)
+                        .await
+                        .map_err(|e| SendError::Retry(format!("zmq action failed: {}", e)))?;
+                    Ok(())
+                }
+            } else {
+                let topic = resolve_topic(&output.data);
+                let payload = match template {
+                    Some(tpl) => {
+                        render_sink_template(tpl, &output.data, opts.send_single).into_bytes()
+                    }
+                    None => {
+                        let formatted = format_record_for_sink(&output.data, opts);
+                        serde_json::to_vec(&to_sink_payload(formatted, opts.send_single)).map_err(
+                            |e| SendError::Permanent(format!("zmq payload encode: {}", e)),
+                        )?
+                    }
+                };
+                sink.send_raw(Some(&topic), &payload)
+                    .await
+                    .map_err(|e| SendError::Retry(format!("zmq action failed: {}", e)))
+            }
+        }
         PreparedAction::Unknown { kind } => {
             tracing::debug!("[RULE {}] unknown action '{}', ignoring", ctx.rule_id, kind);
             Ok(())
@@ -1906,6 +2497,9 @@ async fn dispatch_rule_actions_legacy(
 ) {
     for action in actions {
         for (kind, opts) in action {
+            if kind == "disabled" || kind == "disable" || is_action_disabled(action, opts) {
+                continue;
+            }
             match kind.as_str() {
                 "log" => {
                     tracing::info!("[RULE {}] Matched record: {:?}", rule_id, output.data);

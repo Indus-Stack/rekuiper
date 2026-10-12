@@ -591,17 +591,24 @@ const BUILTIN_SOURCES: &[&str] = &[
     "memory",
     "mqtt",
     "neuron",
+    "random",
     "redis",
     "redisSub",
     "simulator",
     "sql",
+    "video",
     "websocket",
+    "zmq",
 ];
 
 const BUILTIN_SINKS: &[&str] = &[
     "edgex",
     "file",
     "http",
+    "image",
+    "influx",
+    "influx2",
+    "iotdb",
     "kafka",
     "log",
     "memory",
@@ -611,7 +618,10 @@ const BUILTIN_SINKS: &[&str] = &[
     "redis",
     "redisPub",
     "rest",
+    "tdengine",
+    "tdengine3",
     "websocket",
+    "zmq",
 ];
 
 pub fn is_builtin_source(name: &str) -> bool {

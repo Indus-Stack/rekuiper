@@ -1,142 +1,228 @@
-# rekuiper
+---
+layout: home
 
-> High-performance stream processing engine for edge devices, written in Rust.
+hero:
+  name: rekuiper
+  text: Process device data where it is produced.
+  tagline: A small SQL engine that sits between your devices and your cloud. It filters, aggregates, and routes live data on the gateway, so you send upstream only what matters.
+  actions:
+    - theme: brand
+      text: Run the 60-second demo
+      link: /#try-it-in-60-seconds
+    - theme: alt
+      text: See where it fits
+      link: /#where-it-fits
+    - theme: alt
+      text: Coming from eKuiper?
+      link: /concepts/ekuiper_compatibility
 
-[![Release](https://img.shields.io/badge/release-v0.508--beta-blue.svg)](https://github.com/ankur-paan/rekuiper/releases)
-[![Rust CI](https://img.shields.io/badge/Rust%20CI-passing-brightgreen.svg)](https://github.com/ankur-paan/rekuiper/actions/workflows/ci.yml)
-[![License: MIT or Apache-2.0](https://img.shields.io/badge/license-MIT%20%2F%20Apache--2.0-yellow.svg)](https://github.com/ankur-paan/rekuiper/blob/main/LICENSE)
-[![Docker](https://img.shields.io/badge/docker-ankurkrp%2Frekuiper%3A0.508--beta-blue.svg)](https://hub.docker.com/r/ankurkrp/rekuiper)
-
-rekuiper is a stream processing engine for edge devices, written in Rust. It implements the eKuiper REST API, SQL dialect, rule format, and `kuiper` CLI. Existing eKuiper streams, rules, and tools, including [eKuiper Manager](https://github.com/ankur-paan/ekuiper-manager), operate without modification.
-
-The engine is designed for Industrial Internet of Things (IIoT) gateways, ESPHome fleets, vehicles, and Electric Vehicle (EV) chargers. These small machines receive MQTT, HTTP, or WebSocket telemetry. The engine filters, aggregates, and transmits data reliably on one or two CPU cores.
-
+features:
+  - title: New to stream processing?
+    details: You have device data and a cloud bill. See the five common patterns and what each one changes.
+    link: /#common-patterns
+    linkText: See the patterns
+  - title: Already run eKuiper?
+    details: rekuiper uses the same REST API, SQL, rules, and CLI. Read what stays the same and what you gain.
+    link: /operation/migration
+    linkText: Read the migration guide
+  - title: Comparing tools?
+    details: An honest list of where rekuiper fits and where another tool is the better choice.
+    link: /#is-it-a-fit
+    linkText: Check the fit
 ---
 
-## How It Works
+## Where it fits
 
-rekuiper processes real-time telemetry on the local machine before it sends data upstream:
-![How rekuiper Works](./public/diagrams/how_it_works.svg)
+![Where rekuiper fits: devices and feeds on the left, rekuiper on the gateway in the middle, destinations on the right](/diagrams/where-it-fits.svg)
 
-1. **Ingest**: Read continuous sensor streams through standard protocols (MQTT, HTTP, WebSockets, Kafka, Files).
-2. **Process**: Filter noise, calculate moving averages, and correlate events across time windows with SQL.
-3. **Route**: Send clean anomalies, aggregated metrics, or control commands directly to local databases, brokers, or webhook endpoints.
+You write a rule in SQL. rekuiper runs it on every message as the message arrives. You add, change, and remove rules through a REST API while the engine runs.
 
----
+What changes when you put it in the path:
 
-## Why rekuiper?
+- **You send less data.** One summary row per minute replaces sixty raw readings.
+- **You decide locally.** An alert fires on the gateway in milliseconds, without a cloud round trip.
+- **You lose nothing when the link drops.** Results wait in memory and on disk, then go out in order when the link returns.
 
-rekuiper is engineered specifically for resource-constrained edge hardware. All comparative performance metrics below reflect tests executed inside a container limited to **exactly 1 physical CPU core** (`--cpuset-cpus=2 --cpus=1`) and **1 GiB RAM** (`--memory=1g --memory-swap=1g`).
+## Try it in 60 seconds
 
-| Capability | rekuiper (Rust) [1 Core, 1 GiB RAM] | eKuiper (Go) [1 Core, 1 GiB RAM] | Edge Hardware Advantage |
-| :--- | :--- | :--- | :--- |
-| **Single-Core Throughput** | **150,000 to 200,000 msg/s** | 20,000 msg/s | **7.5x to 10x higher throughput** without packet loss. eKuiper saturates CPU at 50k+. |
-| **Rule Concurrency** | **1,000 parallel rules** | 100 parallel rules | **10x higher rule concurrency** on a shared stream (500k evals/s). eKuiper lags at 200. |
-| **Heap Memory at Load** | **4.4 to 10.2 MiB** | 15 to 886 MiB | Bounded incremental aggregations prevent out-of-memory crashes on small gateways. |
-| **Memory Stability** | **Flat level plateau ($\Delta M \le 2\text{ MiB}$)** | Accumulates to 613+ MiB | Zero queue accumulation. Go-based engines accumulate buffer backlog under load. |
-| **Garbage Collection** | **Zero GC (Deterministic)** | Unpredictable GC pauses | Eliminates latency spikes, dropped MQTT packets, and unpredictable edge restarts. |
-| **Binary Footprint** | **Single static binary (~30 MB)** | Dynamic Go runtime | Minimal flash storage consumption with zero external runtime dependencies. |
-| **eKuiper Compatibility** | **100% Wire-compatible** | Reference implementation | Drop-in replacement for existing eKuiper REST endpoints, SQL rules, and eKuiper Manager. |
-| **AI Integration** | **Native MCP Server** | Not available | Provides 42 Model Context Protocol tools for AI code editors (Antigravity, Cursor, Claude). |
+This demo needs only Docker. A built-in simulator makes the data.
 
----
-
-## Performance
-
-rekuiper is evaluated against eKuiper 2.4.1, Telegraf 1.40.0, and Redpanda Connect 4.109.0 on a single CPU core with 1 GiB of RAM.
-
-* **Concurrent Parallel Rules (rekuiper 0.505)**:
-  * Maximum sustainable rules: **1,000 rules** (eKuiper 2.4.1: 100 rules — **10x higher concurrency**).
-  * Sustained rule evaluations: **500,000 evals/s** (eKuiper 2.4.1: 50,000 evals/s).
-  * CPU utilization at 100 rules: **22.8%** of one core (eKuiper 2.4.1: 80.3% of one core).
-  * See [Concurrent Parallel Rules Benchmark](./benchmarks/parallel_rules.md).
-
-* **Single-Rule MQTT Throughput (rekuiper 0.500)**:
-  * Telemetry filter (1,000 devices): **150k msg/s** (eKuiper 2.4.1: 20k msg/s).
-  * 10-second tumbling window: **200k msg/s** (eKuiper 2.4.1: 20k msg/s).
-  * ESPHome (10,000 topics, `meta(topic)`): **150k msg/s** (eKuiper 2.4.1: 20k msg/s).
-  * EV charger sessions (`SESSIONWINDOW`): **126k msg/s** (eKuiper 2.4.1: 20k msg/s).
-  * See [Single-Rule MQTT High-Throughput Benchmark](./benchmarks/throughput.md).
-
-* **Detailed Methodology**:
-  * See [Benchmark Overview](./benchmarks/overview.md) for test principles, hardware boundaries, and validation criteria.
-
----
-
-## Quickstart
-
-Run rekuiper in Docker:
+**1. Start the engine.**
 
 ```shell
-docker run -d \
-  --name rekuiper \
-  -p 9081:9081 \
-  -p 20498:20498 \
-  -p 20499:20499 \
-  ankurkrp/rekuiper:0.508-beta
+docker run -d --name rekuiper -p 9081:9081 ankurkrp/rekuiper:0.509-beta
 ```
 
-Check health:
+**2. Register simulated sensor readings, ten per second.**
 
 ```shell
-curl http://localhost:9081/ping
-# Response: pong
+curl -X PUT http://localhost:9081/metadata/sources/simulator/confKeys/demo \
+  -H "Content-Type: application/json" \
+  -d '{
+    "data": [
+      {"deviceId": "pump-1", "temperature": 21.5},
+      {"deviceId": "pump-1", "temperature": 23.0},
+      {"deviceId": "pump-1", "temperature": 24.5}
+    ],
+    "interval": 100,
+    "loop": true
+  }'
 ```
 
-Create a data stream:
+**3. Create a stream that reads them.**
 
 ```shell
 curl -X POST http://localhost:9081/streams \
   -H "Content-Type: application/json" \
-  -d '{"sql": "CREATE STREAM demo () WITH (DATASOURCE=\"demo\", FORMAT=\"JSON\")"}'
+  -d '{"sql": "CREATE STREAM demo () WITH (TYPE=\"simulator\", CONF_KEY=\"demo\")"}'
 ```
 
-Create a rule to log events when temperature exceeds 30:
+**4. Add a rule that turns every five seconds of readings into one row.**
 
 ```shell
 curl -X POST http://localhost:9081/rules \
   -H "Content-Type: application/json" \
   -d '{
-    "id": "rule_temp_alert",
-    "sql": "SELECT temperature, humidity FROM demo WHERE temperature > 30",
+    "id": "five_second_summary",
+    "sql": "SELECT count(*) AS readings, avg(temperature) AS avg_temp FROM demo GROUP BY TUMBLINGWINDOW(ss, 5)",
     "actions": [{ "log": {} }]
   }'
 ```
 
-Send test data:
+**5. Watch the result.**
 
 ```shell
-curl -X POST http://localhost:9081/streams/demo/data \
-  -H "Content-Type: application/json" \
-  -d '{"temperature": 34.5, "humidity": 60.2}'
+docker logs -f rekuiper
 ```
 
-Check rule status:
-
-```shell
-curl http://localhost:9081/rules/rule_temp_alert/status
+```text
+[RULE five_second_summary] Matched record: {"readings": Number(49), "avg_temp": Number(23.03)}
 ```
 
----
+About fifty readings go in. One row comes out. To send that row to MQTT, Kafka, or a database, replace `log` with another [sink](./guide/sinks/overview.md).
 
-## Key Capabilities
+Continue with the [Getting Started Guide](./getting_started/getting_started.md).
 
-* **Stream SQL**: Filter, project, join, and aggregate live data streams with tumbling, hopping, sliding, count, and session windows.
-* **Connectors**:
-  * **Sources**: MQTT, HTTP (Pull and Push), WebSockets, File, Memory, Redis, Kafka, Simulator, SQL.
-  * **Sinks**: MQTT, HTTP/REST, Log, File, Memory, Redis, Kafka, WebSockets, Nop, SQL.
-* **Model Context Protocol (MCP)**: Native `rekuiper-mcp` server allows AI coding assistants to validate SQL queries offline, test rule events, and inspect streaming topologies.
-* **Web UI**: Operates with [eKuiper Manager](https://github.com/ankur-paan/ekuiper-manager) for visual stream, rule, and connector setup.
+## Common patterns
 
----
+Each pattern is one or two SQL rules.
 
-## Documentation
+### Cut the cloud bill
 
-* [Architecture & Rust Design](./concepts/rekuiper.md)
-* [Getting Started Guide](./getting_started/getting_started.md)
-* [Installation & Deployment](./installation.md)
-* [SQL Reference & Functions](./sqls/overview.md)
-* [Source & Sink Connectors](./guide/sources/overview.md)
-* [REST API Reference](./api/restapi/overview.md)
-* [kuiper CLI Reference](./api/cli/overview.md)
-* [Model Context Protocol (MCP)](./mcp/overview.md)
+Devices publish every second. The cloud needs one row per minute. Aggregate on the gateway and send the summary.
+
+```sql
+SELECT deviceId, avg(temperature) AS avg_temp, max(temperature) AS max_temp
+FROM sensors
+GROUP BY deviceId, TUMBLINGWINDOW(ss, 60)
+```
+
+Read more: [Windows](./concepts/streaming/windowing.md)
+
+### Alert locally
+
+A reading crosses a limit and someone must know now. Filter on the gateway and call a webhook or publish an MQTT command. The alert does not wait for the cloud.
+
+```sql
+SELECT deviceId, temperature, meta(topic) AS source_topic
+FROM sensors
+WHERE temperature > 80
+```
+
+Read more: [Rules](./guide/rules/overview.md) · [REST sink](./guide/sinks/builtin/rest.md) · [MQTT sink](./guide/sinks/builtin/mqtt.md)
+
+### Survive a bad link
+
+The uplink drops for minutes or hours. Turn on the sink cache. Results wait in memory and on disk, and rekuiper resends them in order when the link returns.
+
+```json
+{
+  "mqtt": {
+    "server": "tcp://cloud.example.com:1883",
+    "topic": "site1/summary",
+    "enableCache": true
+  }
+}
+```
+
+Read more: [Sink cache](./guide/sinks/overview.md)
+
+### One feed, many destinations
+
+The same data must go to storage, to a dashboard, and to an alert topic. Several rules read one stream. Each rule has its own SQL and its own destinations.
+
+| Rule | SQL | Destination |
+| :--- | :--- | :--- |
+| Archive | `SELECT * FROM sensors` | Parquet files on local disk |
+| Dashboard | One-minute averages per device | InfluxDB |
+| Alert | `WHERE temperature > 80` | MQTT command topic |
+
+Read more: [Sinks](./guide/sinks/overview.md)
+
+### Enrich before sending
+
+Messages carry a device ID. The cloud needs the site and the asset name. Join the stream with a lookup table in Redis or a SQL database.
+
+```sql
+SELECT s.deviceId, s.temperature, a.site, a.asset_name
+FROM sensors AS s
+INNER JOIN assets AS a ON s.deviceId = a.id
+```
+
+Read more: [Lookup tables](./guide/tables/lookup.md)
+
+## Is it a fit?
+
+| Use rekuiper when | Look elsewhere when |
+| :--- | :--- |
+| Your data arrives as messages: MQTT, HTTP, WebSocket, Kafka, AMQP. | You need native Modbus, OPC UA, or BACnet drivers. Put a protocol gateway in front and publish to MQTT. |
+| You want the logic in SQL, and you want to change it at runtime. | You need a visual flow builder for people who do not write SQL. |
+| The machine has one or two CPU cores and limited memory. | You need a distributed cluster that scales across many nodes. rekuiper runs on one node. |
+| You need time windows, joins, and rules that keep state. | You only need to collect metrics and forward them without processing. |
+
+## Measured on one CPU core
+
+All tests run in a container limited to one CPU core and 1 GiB of RAM.
+
+| Measure | Result | Tested on |
+| :--- | :--- | :--- |
+| MQTT throughput, single rule | 150,000 to 200,000 messages per second | 0.500 |
+| Parallel rules on one stream | 1,000 rules, 500,000 evaluations per second | 0.505 |
+| Heap memory under load | 4.4 to 10.2 MiB | 0.500 |
+| Footprint | One static binary, about 30 MB | 0.509 |
+
+::: details Comparison with eKuiper 2.4.1 under the same limits
+| Capability | rekuiper | eKuiper 2.4.1 |
+| :--- | :--- | :--- |
+| Single-core throughput | 150,000 to 200,000 msg/s | 20,000 msg/s |
+| Parallel rules on one stream | 1,000 | 100 |
+| Heap memory at load | 4.4 to 10.2 MiB | 15 to 886 MiB |
+| Garbage collection | None | Present |
+:::
+
+Method and full results: [Benchmark Overview](./benchmarks/overview.md) · [Throughput](./benchmarks/throughput.md) · [Parallel rules](./benchmarks/parallel_rules.md)
+
+## Connectors
+
+| | Sources (data in) | Sinks (data out) |
+| :--- | :--- | :--- |
+| **Messaging** | MQTT, Kafka, RabbitMQ, Redis, ZeroMQ, WebSocket | MQTT, Kafka, RabbitMQ, Redis, ZeroMQ, WebSocket |
+| **HTTP** | HTTP pull, HTTP push | REST |
+| **Databases** | PostgreSQL, SQLite | PostgreSQL, SQLite, InfluxDB v1 and v2, TDengine, IoTDB |
+| **Files and media** | CSV, JSON Lines, Parquet, video (FFmpeg) | CSV, JSON Lines, Parquet, image |
+| **Industrial** | EdgeX Foundry, Neuron | EdgeX Foundry, Neuron |
+| **Test** | Simulator, Memory | Log, Memory, Nop |
+
+Details: [Sources](./guide/sources/overview.md) · [Sinks](./guide/sinks/overview.md)
+
+## Where to go next
+
+| I want to | Go to |
+| :--- | :--- |
+| Build my first real pipeline with MQTT | [Getting Started Guide](./getting_started/getting_started.md) |
+| Install on a gateway, in Docker, or in Kubernetes | [Installation and Deployment](./installation.md) |
+| Learn the SQL | [SQL Reference](./sqls/overview.md) |
+| Understand how the engine works | [Architecture](./concepts/rekuiper.md) |
+| Move from eKuiper | [Migration guide](./operation/migration.md) |
+| Automate with the REST API or CLI | [REST API](./api/restapi/overview.md) · [CLI](./api/cli/overview.md) |
+| Use an AI coding assistant with rekuiper | [Model Context Protocol](./mcp/overview.md) |

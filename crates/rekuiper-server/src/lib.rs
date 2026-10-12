@@ -147,7 +147,7 @@ pub async fn start_server(config: KuiperConfig, version: String) -> Result<()> {
 
     let addr: SocketAddr = format!("{}:{}", config.basic.rest_ip, config.basic.rest_port)
         .parse()
-        .unwrap_or_else(|_| SocketAddr::from(([0, 0, 0, 0], config.basic.rest_port)));
+        .unwrap_or_else(|_| SocketAddr::from(([127, 0, 0, 1], config.basic.rest_port)));
 
     let rest_http_type = "http";
     println!(

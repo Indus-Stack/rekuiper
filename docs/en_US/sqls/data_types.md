@@ -43,3 +43,20 @@ When an expression encounters a `nil` (null) operand:
 ## Type Conversions
 
 Use the built-in `cast(col, targetType)` function to convert values between data types at runtime. Refer to [transformation functions](./functions/transform_functions.md) for usage details.
+
+## Default Column Values
+
+Stream columns in `CREATE STREAM` statements can specify default fallback values using the `DEFAULT` clause:
+
+```sql
+CREATE STREAM telemetry (
+    device_id string,
+    temperature float DEFAULT 20.0,
+    status string DEFAULT 'idle',
+    retry_count bigint DEFAULT 0,
+    active boolean DEFAULT true
+) WITH (FORMAT = "json", DATASOURCE = "devices/telemetry");
+```
+
+When an incoming tuple is missing a declared column or the column value is explicitly `null`, the stream schema preprocessor automatically populates the configured `DEFAULT` value and coerces it into the declared data type.
+

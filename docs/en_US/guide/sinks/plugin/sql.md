@@ -23,7 +23,7 @@ Legacy eKuiper compiled driver-specific Go plugins for MySQL, Oracle, and Micros
 |---|---|---|---|
 | `url` (or `dburl`) | False | None | Connection URL string for the target database. |
 | `table` | False | None | Target database table name. |
-| `fields` | True | Inferred | Array of column names to write. If omitted, rekuiper uses the keys of the output record. |
+| `fields` | True | Inferred | Array of column names to write. If omitted, rekuiper uses the keys of the output record. Dynamic keys must match `[A-Za-z_][A-Za-z0-9_]*` (keys containing spaces or punctuation are rejected to prevent SQL syntax errors). |
 | `sendSingle` | True | `false` | When `true`, writes each event record individually. |
 
 rekuiper constructs parameterized SQL insert statements dynamically:

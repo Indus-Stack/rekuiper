@@ -1,59 +1,81 @@
 # TDengine 3 Sink
 
-::: danger Status: Unsupported in rekuiper (Legacy eKuiper Go Plugin)
-The native `tdengine3` sink was a Cgo/Go dynamic plugin (`Tdengine3.so`) in legacy eKuiper that required the TDengine C client library (`libtaos.so`). **rekuiper is implemented in Rust and does not load Go dynamic plugins.**
+The `tdengine` (or `tdengine3`) sink enables writing stream processing outputs directly into [TDengine](https://tdengine.com/) 3.x instances using TDengine's native RESTful HTTP connector.
 
-To write data into TDengine from rekuiper, use the supported alternative below:
-- **[REST Sink](../builtin/rest.md)**: Send SQL insert statements directly to the TDengine RESTful connector API endpoint (`POST /rest/sql`).
-:::
+In `rekuiper`, the TDengine connector is a built-in component that connects to the TDengine REST service. It does not require `libtaos.so`.
 
-## Overview
+## Prerequisites
 
-The legacy TDengine sink used Cgo bindings to invoke the native client library for data ingestion into regular tables or super tables.
+Ensure the TDengine REST service (taosAdapter or built-in REST service) is running and accessible (default port `6041`).
 
-## Recommended Alternative: TDengine REST Connector
+## Configuration Properties
 
-TDengine provides a built-in RESTful service running on port `6041`. You can post standard SQL statements directly using rekuiper's built-in [REST Sink](../builtin/rest.md).
+Configure the `tdengine` or `tdengine3` sink action using the following properties:
 
-### Example REST Sink Action for TDengine
+| Property Name | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `database` | String | **Yes** | - | Target TDengine database name. |
+| `table` | String | **Yes** | - | Target table name. Supports dynamic data templates (e.g. <code v-pre>d_{{.deviceId}}</code>). |
+| `host` | String | No | `localhost` | TDengine REST server hostname or IP address. |
+| `port` | Integer | No | `6041` | TDengine REST service port. |
+| `user` | String | No | `root` | Authentication username. |
+| `password` | String | No | `taosdata` | Authentication password. |
+| `sTable` | String | No | - | Optional super table name. When specified, sub-tables are automatically created if they do not exist. |
+| `tagFields` | Array | No | - | Field names used as tag columns when writing to a super table. |
+| `fields` | Array | No | - | List of columns to project and insert. If omitted, all non-tag record fields are written. |
+| `provideTs` | Boolean | No | `true` | If `true`, the value from `tsFieldName` is inserted. If `false`, database server clock `now` is used. |
+| `tsFieldName` | String | No | `ts` | Name of the timestamp column in the input event stream. |
 
-The following rule formats an `INSERT` statement and submits it to TDengine via HTTP:
+## Examples
+
+### Regular Table Insert
+
+Writes sensor telemetry directly to table `readings` in database `factory`:
 
 ```json
 {
-  "id": "rule_tdengine_rest",
+  "id": "rule_tdengine_regular",
   "sql": "SELECT deviceId, temperature, humidity, ts FROM sensorStream",
   "actions": [
     {
-      "rest": {
-        "url": "http://127.0.0.1:6041/rest/sql",
-        "method": "POST",
-        "headers": {
-          "Authorization": "Basic cm9vdDp0YW9zZGF0YQ==",
-          "Content-Type": "text/plain"
-        },
-        "dataTemplate": "INSERT INTO test_db.meters USING test_db.meters_st TAGS('{{.deviceId}}') VALUES ({{.ts}}, {{.temperature}}, {{.humidity}})",
-        "sendSingle": true
+      "tdengine3": {
+        "host": "127.0.0.1",
+        "port": 6041,
+        "database": "factory",
+        "table": "readings",
+        "user": "root",
+        "password": "password",
+        "fields": ["deviceId", "temperature", "humidity"],
+        "tsFieldName": "ts",
+        "provideTs": true
       }
     }
   ]
 }
 ```
 
-## Legacy Configuration Reference
+### Super Table with Automatic Sub-Table Creation
 
-For teams migrating legacy eKuiper rule configurations, the former properties are preserved below for reference:
+Uses dynamic table naming (<code v-pre>m_{{.deviceId}}</code>) and automatically instantiates sub-tables from super table `meters` with tag `deviceId`:
 
-| Property Name | Type | Description |
-|---|---|---|
-| `host` | String | TDengine server hostname or IP address (default: `localhost`). |
-| `port` | Integer | TDengine server port (default: `6041`). |
-| `user` | String | Database username (default: `root`). |
-| `password` | String | Database password (default: `taosdata`). |
-| `database` | String | Target database name. |
-| `table` | String | Target table name. |
-| `fields` | Array | Field names to insert. |
-| `provideTs` | Boolean | Whether the record provides an explicit timestamp column. |
-| `tsFieldName` | String | Name of the timestamp column. |
-| `sTable` | String | Target super table name. |
-| `tagFields` | Array | Fields mapped to super table tag columns. |
+```json
+{
+  "id": "rule_tdengine_super_table",
+  "sql": "SELECT deviceId, voltage, current, ts FROM powerStream",
+  "actions": [
+    {
+      "tdengine3": {
+        "host": "127.0.0.1",
+        "port": 6041,
+        "database": "power",
+        "table": "m_{{.deviceId}}",
+        "sTable": "meters",
+        "tagFields": ["deviceId"],
+        "fields": ["voltage", "current"],
+        "tsFieldName": "ts",
+        "provideTs": true
+      }
+    }
+  ]
+}
+```

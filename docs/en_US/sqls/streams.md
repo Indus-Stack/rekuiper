@@ -31,9 +31,13 @@ WITH (
 Use the `BUFFER_FULL_POLICY` property to control ingestion when the input buffer is full.
 
 - `block`: The source pauses reading until the buffer has available space.
-- `dropOldest`: The source deletes the oldest record to accept the incoming record.
+- `dropOldest`: The source deletes the oldest record to accept the incoming record. Default if omitted.
 
 The server rejects other values with an error during stream creation and update.
+
+#### Multi-Stream Rules (Joins)
+
+When a rule query joins multiple streams (e.g. `FROM stream1 JOIN stream2 ON ...`), all streams referenced in the query must configure an identical `BUFFER_FULL_POLICY`. If one stream uses `block` while another uses `dropOldest`, the server rejects the rule with a validation error to prevent asymmetric backpressure deadlocks and erratic tuple drops.
 
 ## DESCRIBE STREAM
 

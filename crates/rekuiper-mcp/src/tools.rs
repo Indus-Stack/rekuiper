@@ -89,7 +89,7 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
                 "properties": {
                     "sql": {
                         "type": "string",
-                        "description": "The complete rekuiper DDL statement specifying the stream name, optional typed field definitions, and datasource options in the WITH clause. Examples: 'CREATE STREAM telemetry (temp float, humidity float, status string) WITH (TYPE=\"mqtt\", FORMAT=\"json\", DATASOURCE=\"factory/line1/sensors\", CONF_KEY=\"broker_tls\")' or 'CREATE STREAM httpDemo () WITH (TYPE=\"httppush\", DATASOURCE=\"/api/data\", FORMAT=\"json\")'"
+                        "description": "The complete rekuiper DDL statement specifying the stream name, optional typed field definitions, and datasource options in the WITH clause. Examples: 'CREATE STREAM telemetry (temp float, humidity float, status string) WITH (TYPE=\"mqtt\", FORMAT=\"json\", DATASOURCE=\"factory/line1/sensors\", CONF_KEY=\"broker_tls\")' or 'CREATE STREAM kafkaDemo () WITH (TYPE=\"kafka\", DATASOURCE=\"events\", OFFSET_RESET=\"earliest\")' or 'CREATE STREAM httpDemo () WITH (TYPE=\"httppush\", DATASOURCE=\"/api/data\", FORMAT=\"json\")'"
                     }
                 },
                 "required": ["sql"]
@@ -248,7 +248,7 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
                     },
                     "actions": {
                         "type": "array",
-                        "description": "Array of output sink configurations defining where processed results are dispatched. Common sink options include: 'sendSingle' (boolean, default false for REST/MQTT/WebSocket, true for File/Redis/Kafka), 'fields' (array of projected field names), 'excludeFields' (array of fields to omit), 'dataField' (string, extracts nested object), 'format' ('json', 'delimited', etc.), 'delimiter' (string), 'batchSize' (buffer record count), and 'lingerInterval' (buffer flush timeout ms). Example: [{\"mqtt\": {\"server\": \"tcp://127.0.0.1:1883\", \"topic\": \"factory/alerts\", \"sendSingle\": true, \"dataTemplate\": \"{\\\"alert\\\": \\\"overheat\\\", \\\"device\\\": \\\"{{.device_id}}\\\", \\\"avg_temp\\\": {{.avg_temp}}}\"}}]"
+                        "description": "Array of output sink configurations defining where processed results are dispatched. Common sink options include: 'disabled' (boolean, temporarily mutes sink action without deleting configuration), 'sendSingle' (boolean, default false for REST/MQTT/WebSocket, true for File/Redis/Kafka), 'fields' (array of projected field names; for SQL sinks when unset, dynamic row keys must match [A-Za-z_][A-Za-z0-9_]*), 'excludeFields' (array of fields to omit), 'dataField' (string, extracts nested object), 'format' ('json', 'delimited', etc.), 'delimiter' (string), 'batchSize' (buffer record count), and 'lingerInterval' (buffer flush timeout ms). Example: [{\"mqtt\": {\"server\": \"tcp://127.0.0.1:1883\", \"topic\": \"factory/alerts\", \"sendSingle\": true, \"disabled\": false, \"dataTemplate\": \"{\\\"alert\\\": \\\"overheat\\\", \\\"device\\\": \\\"{{.device_id}}\\\", \\\"avg_temp\\\": {{.avg_temp}}}\"}}]"
                     },
                     "options": {
                         "type": "object",
@@ -274,7 +274,7 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
                     },
                     "actions": {
                         "type": "array",
-                        "description": "Updated action sink definitions."
+                        "description": "Updated action sink definitions. Individual sinks can be temporarily muted with 'disabled': true."
                     },
                     "options": {
                         "type": "object",
@@ -585,7 +585,7 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
         // =========================================================================
         ToolDefinition {
             name: "get_configs".to_string(),
-            description: "Retrieves global runtime configuration parameters for the rekuiper daemon, including logging level, default source/sink timeouts, buffer capacities, and TLS settings.".to_string(),
+            description: "Retrieves global runtime configuration parameters for the rekuiper daemon, including network listener bindings (restIp, ip, httpServerIp hardened to 127.0.0.1 by default), logging level, default source/sink timeouts, buffer capacities, and TLS settings.".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {}
@@ -798,7 +798,12 @@ pub async fn execute_tool(
             let mut parser = Parser::new(sql);
             match parser.parse_select() {
                 Ok(stmt) => {
-                    let info = json!({
+                    let mut sources = vec![stmt.from.clone()];
+                    for j in &stmt.joins {
+                        sources.push(j.target.clone());
+                    }
+                    let is_multi_stream = !stmt.joins.is_empty();
+                    let mut info = json!({
                         "valid": true,
                         "statement_type": "SELECT",
                         "projected_fields_count": stmt.fields.len(),
@@ -806,17 +811,44 @@ pub async fn execute_tool(
                         "has_group_by": !stmt.group_by.is_empty(),
                         "has_window": stmt.window.is_some(),
                         "has_having": stmt.having.is_some(),
-                        "sources": stmt.from,
+                        "sources": sources,
+                        "is_multi_stream_join": is_multi_stream,
                     });
+                    if is_multi_stream {
+                        info["multi_stream_policy_requirement"] = json!("All joined streams must share identical BUFFER_FULL_POLICY ('block' or 'dropOldest') to prevent asymmetric backpressure deadlocks.");
+                    }
                     CallToolResult::ok(serde_json::to_string_pretty(&info).unwrap_or_default())
                 }
                 Err(err) => {
                     let mut p_stream = Parser::new(sql);
                     if let Ok(create_stmt) = p_stream.parse_create_stream() {
+                        for (k, v) in &create_stmt.options {
+                            if k.eq_ignore_ascii_case("buffer_full_policy")
+                                && !v.eq_ignore_ascii_case("block")
+                                && !v.eq_ignore_ascii_case("dropOldest")
+                            {
+                                return CallToolResult::err(format!(
+                                    "Invalid BUFFER_FULL_POLICY: '{}', must be 'block' or 'dropOldest'",
+                                    v
+                                ));
+                            }
+                        }
+                        let fields_json = create_stmt
+                            .fields
+                            .iter()
+                            .map(|f| {
+                                json!({
+                                    "name": f.name,
+                                    "type": f.data_type,
+                                    "default": f.default_value
+                                })
+                            })
+                            .collect::<Vec<_>>();
                         let info = json!({
                             "valid": true,
                             "statement_type": "CREATE STREAM",
                             "stream_name": create_stmt.name,
+                            "fields": fields_json,
                             "options": create_stmt.options,
                         });
                         return CallToolResult::ok(

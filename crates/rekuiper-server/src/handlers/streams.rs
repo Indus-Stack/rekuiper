@@ -28,6 +28,7 @@ pub fn to_stream_fields(cols: Vec<StreamColumn>) -> Vec<StreamField> {
         .map(|c| StreamField {
             name: c.name,
             field_type: c.data_type,
+            default_value: c.default_value,
         })
         .collect()
 }
@@ -52,6 +53,69 @@ pub fn describe_table(def: &TableDefinition) -> Value {
         "StreamType": 1,
         "Statement": serde_json::Value::Null,
     })
+}
+
+fn validate_video_options(
+    options: &HashMap<String, String>,
+    source_configs: &std::sync::Arc<parking_lot::RwLock<HashMap<String, Value>>>,
+) -> Result<(), String> {
+    if !options
+        .iter()
+        .any(|(k, v)| k.eq_ignore_ascii_case("type") && v.eq_ignore_ascii_case("video"))
+    {
+        return Ok(());
+    }
+    let mut vid_cfg = rekuiper_connectors::VideoSourceConfig::default();
+    if let Some(conf_key) = options
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("conf_key") || k.eq_ignore_ascii_case("confkey"))
+        .map(|(_, v)| v.trim())
+        .filter(|s| !s.is_empty())
+    {
+        let lookup = format!("video/{}", conf_key);
+        let configs_guard = source_configs.read();
+        let conf_val = configs_guard
+            .get(&lookup)
+            .or_else(|| configs_guard.get(conf_key))
+            .cloned();
+        drop(configs_guard);
+        if let Some(val) = conf_val {
+            if let Ok(c) = serde_json::from_value::<rekuiper_connectors::VideoSourceConfig>(val) {
+                vid_cfg = c;
+            }
+        }
+    }
+    if let Some(url) = options
+        .iter()
+        .find(|(k, _)| {
+            k.eq_ignore_ascii_case("url")
+                || k.eq_ignore_ascii_case("server")
+                || k.eq_ignore_ascii_case("datasource")
+        })
+        .map(|(_, v)| v.trim())
+        .filter(|s| !s.is_empty())
+    {
+        vid_cfg.url = url.to_string();
+    }
+    if let Some(interval) = options
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("interval"))
+        .map(|(_, v)| v.trim())
+        .filter(|s| !s.is_empty())
+    {
+        vid_cfg.set_interval_str(interval);
+    }
+    if let Some(fp) = options
+        .iter()
+        .find(|(k, _)| {
+            k.eq_ignore_ascii_case("ffmpeg_path") || k.eq_ignore_ascii_case("ffmpegpath")
+        })
+        .map(|(_, v)| v.trim())
+        .filter(|s| !s.is_empty())
+    {
+        vid_cfg.ffmpeg_path = fp.to_string();
+    }
+    vid_cfg.validate()
 }
 
 pub async fn list_streams(State(state): State<AppState>) -> impl IntoResponse {
@@ -122,6 +186,30 @@ pub async fn create_stream(
                         )
                             .into_response();
                     }
+                    if (k.eq_ignore_ascii_case("offset_reset")
+                        || k.eq_ignore_ascii_case("offsetreset"))
+                        && !v.eq_ignore_ascii_case("earliest")
+                        && !v.eq_ignore_ascii_case("latest")
+                    {
+                        return (
+                            StatusCode::BAD_REQUEST,
+                            format!(
+                                "Invalid offset_reset: '{}', must be 'earliest' or 'latest'",
+                                v
+                            ),
+                        )
+                            .into_response();
+                    }
+                }
+                if let Err(e) = validate_video_options(&stmt.options, &state.source_configs) {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        Json(json!({
+                            "error": 3000,
+                            "message": format!("Stream command error: {}", e)
+                        })),
+                    )
+                        .into_response();
                 }
                 let stream_def = StreamDefinition {
                     name: stmt.name.clone(),
@@ -285,6 +373,29 @@ pub async fn update_stream(
             )
                 .into_response();
         }
+        if (k.eq_ignore_ascii_case("offset_reset") || k.eq_ignore_ascii_case("offsetreset"))
+            && !v.eq_ignore_ascii_case("earliest")
+            && !v.eq_ignore_ascii_case("latest")
+        {
+            return (
+                StatusCode::BAD_REQUEST,
+                format!(
+                    "Invalid offset_reset: '{}', must be 'earliest' or 'latest'",
+                    v
+                ),
+            )
+                .into_response();
+        }
+    }
+    if let Err(e) = validate_video_options(&stmt.options, &state.source_configs) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "error": 3000,
+                "message": format!("Stream command error: {}", e)
+            })),
+        )
+            .into_response();
     }
     let stream_def = StreamDefinition {
         name: name.clone(),
@@ -793,5 +904,86 @@ pub async fn get_table_schema(State(state): State<AppState>, Path(name): Path<St
             })),
         )
             .into_response()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::AppState;
+    use rekuiper_core::{RuleManager, StreamBus, StreamManager, TableManager};
+
+    #[tokio::test]
+    async fn test_create_stream_rejects_disallowed_video_url() {
+        let bus = StreamBus::new();
+        let state = AppState::new(
+            "test".to_string(),
+            rekuiper_conf::KuiperConfig::default(),
+            StreamManager::new(),
+            TableManager::new(),
+            RuleManager::new(bus.clone()),
+            bus,
+        );
+        let payload = CreateStreamPayload {
+            sql: Some(
+                "CREATE STREAM v_bad () WITH (TYPE=\"video\", URL=\"/etc/passwd\")".to_string(),
+            ),
+            name: None,
+        };
+        let resp = create_stream(State(state), Json(payload)).await;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_create_stream_accepts_valid_video_url() {
+        let bus = StreamBus::new();
+        let state = AppState::new(
+            "test".to_string(),
+            rekuiper_conf::KuiperConfig::default(),
+            StreamManager::new(),
+            TableManager::new(),
+            RuleManager::new(bus.clone()),
+            bus,
+        );
+        let payload = CreateStreamPayload {
+            sql: Some(
+                "CREATE STREAM v_good () WITH (TYPE=\"video\", URL=\"rtsp://127.0.0.1:8554/live\")"
+                    .to_string(),
+            ),
+            name: None,
+        };
+        let resp = create_stream(State(state), Json(payload)).await;
+        assert_eq!(resp.status(), StatusCode::CREATED);
+    }
+
+    #[tokio::test]
+    async fn test_update_stream_rejects_disallowed_video_url() {
+        let bus = StreamBus::new();
+        let state = AppState::new(
+            "test".to_string(),
+            rekuiper_conf::KuiperConfig::default(),
+            StreamManager::new(),
+            TableManager::new(),
+            RuleManager::new(bus.clone()),
+            bus,
+        );
+        let create_payload = CreateStreamPayload {
+            sql: Some(
+                "CREATE STREAM v_up () WITH (TYPE=\"video\", URL=\"rtsp://127.0.0.1:8554/live\")"
+                    .to_string(),
+            ),
+            name: None,
+        };
+        let resp = create_stream(State(state.clone()), Json(create_payload)).await;
+        assert_eq!(resp.status(), StatusCode::CREATED);
+
+        let update_body = axum::body::Bytes::from(
+            json!({
+                "sql": "CREATE STREAM v_up () WITH (TYPE=\"video\", URL=\"/etc/shadow\")"
+            })
+            .to_string(),
+        );
+        let update_resp = update_stream(State(state), Path("v_up".to_string()), update_body).await;
+        assert_eq!(update_resp.status(), StatusCode::BAD_REQUEST);
     }
 }

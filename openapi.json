@@ -6,7 +6,7 @@
   "info": {
     "title": "rekuiper REST Management API",
     "description": "Authoritative OpenAPI contract for the management REST routes registered by rekuiper (100% wire-compatible with LF Edge eKuiper v2.4.1). Optional components depend on build tags; JWT authentication, when enabled, expects a raw RS256 token in the Authorization header.",
-    "version": "0.508.0",
+    "version": "0.509.0",
     "contact": {
       "name": "I-Dacs Labs",
       "url": "https://i-dacs.com"

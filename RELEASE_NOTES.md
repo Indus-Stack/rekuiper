@@ -1,3 +1,26 @@
+# Release Notes - rekuiper v0.509-beta
+
+`rekuiper` v0.509-beta delivers video source ingestion, ZeroMQ streaming connectors, upstream eKuiper bugfix parities, dynamic identifier validation, and CI hardening.
+
+Key highlights:
+- **Video Source Connector**: Added a built-in `video` source. It ingests live RTSP and HTTP camera streams through FFmpeg pipes with interval sampling (`interval`) and custom input arguments.
+- **ZeroMQ Sink and Source**: Added a built-in ZeroMQ streaming connector (`zmq`). It supports PUB/SUB sockets with bind or connect modes, dynamic topics, and payload decoding.
+- **Image Sink Retention Pruning**: Implemented retention directory pruning by age (`maxAge`) and count (`maxCount`) with dynamic configuration updates and idle task cleanup.
+- **Simulator & Random Source Parity**: Supported millisecond duration strings (`50ms`, `1s`) and numeric interval parsing with `CONF_KEY` resolution and stream DDL inline overrides.
+- **Upstream eKuiper Parity Features**:
+  - `DEFAULT` column values in stream DDL (`CREATE STREAM s (id BIGINT DEFAULT 100)`) with automatic ingress default filling (#PR-4025 parity).
+  - Joined stream `BUFFER_FULL_POLICY` validation and enforcement (#PR-4133 parity).
+  - Disabled sink action option (`disable: true`) skipping action execution without rule disruption (#PR-4100 parity).
+  - Dynamic SQL sink identifier validation and sanitization (#PR-4080 parity).
+  - Kafka `offsetReset` configuration options (#PR-4190 parity).
+  - Default loopback binding (`127.0.0.1`) for network listeners (#PR-4089 security parity).
+- **Hardened CI & Linter Compliance**: Resolved clippy warnings across `video` and `sinks`, resolved duration assertions, and formatted the workspace.
+
+- Docker image: `ankurkrp/rekuiper:0.509-beta` (plus `latest`)
+- Helm chart: `deploy/chart/ekuiper` (`AppVersion: 0.509-beta`)
+
+---
+
 # Release Notes - rekuiper v0.508-beta
 
 `rekuiper` v0.508-beta achieves upstream LF Edge eKuiper parity across sink options, dynamic templates, DDL validation, built-in SQL functions, HTTPPush listeners, REST API envelopes, CLI tools, and Prometheus metrics.
@@ -12,7 +35,12 @@ Key highlights:
 - **Fail-Fast Data Import Validation**: Enforced upfront payload validation on `POST /async/data/import`. The endpoint returns HTTP 400 Bad Request with a clear message if the request body is empty or malformed.
 - **REST API Response Envelopes**: Standardized all error responses to uniform JSON envelopes (`{"error": <code>, "message": "..."}`) with `application/json` content type. Documented intentional RFC 9110 HTTP status superiorities in `concepts/ekuiper_compatibility.md`.
 - **CLI Subcommands and POSIX Exit Codes**: Added `explain rule` and `query` subcommands. Extended `show`, `drop`, and `create schema` subcommands. Standardized POSIX exit codes and formatted text table outputs.
-- **Model Context Protocol (MCP) Parity**: Added `explain_rule` tool and updated `import_data` tool with partial merge mode and fail-fast validation in ASD-STE100.
+- **Native InfluxDB v1 & v2 Sinks**: Implemented built-in `influx` and `influx2` sinks compiling directly into the engine binary with zero C dynamic dependencies. Supports InfluxDB Line Protocol serialization, dynamic measurements, tag templates, token authentication, and MCP schema inspection.
+- **Native TDengine 3.x REST Sink**: Implemented built-in `tdengine` / `tdengine3` sink connecting to TDengine 3.x REST service (`/rest/sql`). Supports regular table inserts, dynamic table templates, super tables (`USING <sTable> TAGS (...)`), and MCP resource schemas without requiring `libtaos.so`.
+- **Native Apache IoTDB Sink**: Implemented built-in `iotdb` sink connecting directly to Apache IoTDB REST service (`/rest/v1/insertRecord`). Supports dynamic tree model device path templates, explicit or projected measurement arrays, batch tablet aggregation, and MCP resource inspection.
+- **Native Image Sink**: Implemented built-in `image` sink writing binary camera frames (JPEG/PNG) to disk with automated age (`maxAge`) and count (`maxCount`) retention pruning.
+- **Random Source Compatibility Alias**: Added native backward-compatibility alias mapping `TYPE="random"` stream DDL directly to the high-performance Simulator source engine with `random/` and `simulator/` configuration resolution.
+- **Model Context Protocol (MCP) Parity**: Added `explain_rule` tool and updated `import_data` tool with partial merge mode and fail-fast validation in ASD-STE100. Added `audit_security_posture` prompt, `rekuiper://schemas/influx`, `rekuiper://schemas/tdengine`, `rekuiper://schemas/iotdb`, `rekuiper://schemas/image`, and `rekuiper://schemas/random` resources.
 
 - Docker image: `ankurkrp/rekuiper:0.508-beta` (plus `latest`)
 - Helm chart: `deploy/chart/ekuiper` (`AppVersion: 0.508-beta`)

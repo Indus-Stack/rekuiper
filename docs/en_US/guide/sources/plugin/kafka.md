@@ -18,6 +18,7 @@ Configure the Kafka source in `$rekuiper/etc/sources/kafka.yaml` or directly in 
 | `topic` | True | Stream `DATASOURCE` | Target Kafka topic name. If omitted, rekuiper uses the stream `DATASOURCE`. |
 | `partition` | True | `0` | Specific topic partition index consumed by the connector. |
 | `groupId` | True | None | Kafka consumer group identifier. |
+| `offsetReset` | True | `"latest"` | Initial offset position when partition begins consuming: `"earliest"` or `"latest"`. |
 
 rekuiper ingests messages from the configured topic partition and decodes JSON objects or arrays into stream records automatically.
 

@@ -323,15 +323,37 @@ pub struct SqlSink {
     pub config: SqlConnectorConfig,
 }
 
+/// Validates whether a dynamic column name is a safe SQL identifier matching
+/// `[A-Za-z_][A-Za-z0-9_]*` to prevent syntax corruption and SQL injection.
+pub fn is_valid_sql_identifier(name: &str) -> bool {
+    if name.is_empty() {
+        return false;
+    }
+    let mut chars = name.chars();
+    let first = chars.next().unwrap();
+    if !first.is_ascii_alphabetic() && first != '_' {
+        return false;
+    }
+    chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
 impl SqlSink {
     pub async fn insert_record(&self, record: &StreamRecord) -> Result<()> {
         let fields = if self.config.fields.is_empty() {
-            let mut cols: Vec<String> = record
+            let mut cols: Vec<String> = Vec::new();
+            for k in record
                 .data
                 .keys()
                 .filter(|k| *k != META_KEY && !k.starts_with("__"))
-                .cloned()
-                .collect();
+            {
+                if !is_valid_sql_identifier(k) {
+                    anyhow::bail!(
+                        "Invalid dynamic field name '{}': SQL sink requires identifiers matching [A-Za-z_][A-Za-z0-9_]* when fields is unset",
+                        k
+                    );
+                }
+                cols.push(k.clone());
+            }
             cols.sort();
             cols
         } else {
@@ -396,7 +418,17 @@ impl SqlSink {
         let fields = if self.config.fields.is_empty() {
             let mut set = std::collections::BTreeSet::new();
             for r in records {
-                for k in r.data.keys() {
+                for k in r
+                    .data
+                    .keys()
+                    .filter(|k| *k != META_KEY && !k.starts_with("__"))
+                {
+                    if !is_valid_sql_identifier(k) {
+                        anyhow::bail!(
+                            "Invalid dynamic field name '{}': SQL sink requires identifiers matching [A-Za-z_][A-Za-z0-9_]* when fields is unset",
+                            k
+                        );
+                    }
                     set.insert(k.clone());
                 }
             }

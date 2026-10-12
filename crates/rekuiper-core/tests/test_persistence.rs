@@ -27,10 +27,7 @@ fn stream_def(name: &str) -> StreamDefinition {
     StreamDefinition {
         name: name.to_string(),
         sql: format!("CREATE STREAM {} () WITH (FORMAT=\"json\")", name),
-        stream_fields: vec![StreamField {
-            name: "id".to_string(),
-            field_type: "bigint".to_string(),
-        }],
+        stream_fields: vec![StreamField::new("id", "bigint")],
         options: HashMap::new(),
     }
 }
@@ -232,10 +229,9 @@ async fn test_stream_persistence_failure_injection() {
     // 3. Injected write failure during update
     failing_kv.fail_set.store(true, Ordering::SeqCst);
     let mut updated_def = stream_def("s_fail");
-    updated_def.stream_fields.push(StreamField {
-        name: "temp".to_string(),
-        field_type: "float".to_string(),
-    });
+    updated_def
+        .stream_fields
+        .push(StreamField::new("temp", "float"));
     let update_err = streams.update_stream(updated_def).await;
     assert!(
         update_err.is_err(),

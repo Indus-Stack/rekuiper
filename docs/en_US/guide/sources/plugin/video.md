@@ -1,22 +1,48 @@
 # Video Source Connector
 
-::: danger Status: Unsupported in rekuiper (Legacy eKuiper Go Plugin)
-The Video source connector was implemented as a Go plugin in legacy eKuiper.
+The **Video source connector** ingests live RTSP camera feeds and HTTP video streams into `rekuiper` streaming pipelines. It extracts discrete image frames at a configurable cadence and emits them as stream events.
 
-**rekuiper is written in Rust and does NOT support or load Go dynamic plugins (`.so`).** The Video source connector is not implemented in rekuiper.
+> [!NOTE]
+> **Architecture**
+> The video connector is a built-in component. It does not require a dynamic shared library.
+> It starts an FFmpeg process with asynchronous pipes.
+> It divides the video stream into discrete JPEG frames by reading SOI (`0xFF 0xD8`) and EOI (`0xFF 0xD9`) markers.
 
-**Supported Alternatives in rekuiper**:
-- Ingest image frame telemetry or computer vision results through the built-in [HTTP Push Source](../builtin/http_push.md) or [WebSocket Source](../builtin/websocket.md).
-- For edge computer vision workflows, extract RTSP frames in an external process (such as a GStreamer or OpenCV pipeline) and send inferred metadata to rekuiper via [MQTT](../builtin/mqtt.md).
-:::
+---
 
-## Overview (Legacy Reference Only)
+## Prerequisites
 
-In legacy eKuiper (Go), the Video source connector extracted image frames from RTSP video streams by spawning an internal `ffmpeg` process. This page is preserved only as an architectural reference for users who migrate from legacy Go eKuiper deployments.
+The host system or container must have **FFmpeg** installed and accessible in the system `PATH` (or specified via `ffmpegPath`):
 
-## Legacy Configuration Overview
+```bash
+# Ubuntu / Debian
+apt-get install -y ffmpeg
 
-In legacy eKuiper, the connector configuration resided in `etc/sources/video.yaml`:
+# Alpine Linux
+apk add ffmpeg
+
+# Verify installation
+ffmpeg -version
+```
+
+---
+
+## Configuration Properties
+
+Configurations can be supplied via configuration files (`etc/sources/video.yaml`), the REST API (`/config/sources/video`), or specified inline in the stream DDL `WITH` clause:
+
+| Property | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `url` | string | `""` | Network video stream address (e.g., `rtsp://camera1.local:8554/live`, `http://...`). Only network streaming protocols are allowed; local file paths are prohibited. |
+| `interval` | integer / string | `1000` | Frame capture interval. Accepts milliseconds (e.g. `1000`) or duration strings (e.g. `"500ms"`, `"1s"`, `"2m"`). Default is `1000` (1 frame per second). |
+| `codec` | string | `"mjpeg"` | Frame extraction codec for `image2pipe` streaming. Default is `"mjpeg"`. |
+| `debugResp` | boolean | `false` | When `true`, logs FFmpeg process `stderr` output to the engine logs for diagnostics. |
+| `inputArgs` | object | `{}` | Key-value mapping of custom input parameters passed to FFmpeg prior to `-i` (e.g., `{"rtsp_transport": "tcp"}`). |
+| `ffmpegPath` | string | `"ffmpeg"` | Path or executable binary name of the FFmpeg binary on the host system. |
+
+---
+
+## Configuration File Example (`etc/sources/video.yaml`)
 
 ```yaml
 default:
@@ -24,39 +50,89 @@ default:
   interval: 1000
   codec: mjpeg
   debugResp: false
+  inputArgs:
+    rtsp_transport: tcp
+
+high_frequency:
+  url: rtsp://camera-fast.local:8554/feed
+  interval: 200ms
+  codec: mjpeg
+  debugResp: true
 ```
 
-### Legacy Parameters
+---
 
-- `url`: Streaming video URL (such as `rtsp://localhost:8554/stream`).
-- `interval`: Frame extraction interval in milliseconds.
-- `codec`: Target video frame codec. Default was `'mjpeg'`.
-- `debugResp`: Boolean flag to log FFmpeg process output.
-- `inputArgs`: Map of custom arguments passed to the FFmpeg process.
+## Stream DDL Definition
 
-## Legacy Stream Definition
+Define a video stream using `TYPE = "video"`:
 
 ```sql
-CREATE STREAM video_stream () WITH (
-  FORMAT = "JSON",
-  CONF_KEY = "default",
-  TYPE = "video"
+CREATE STREAM camera_stream () WITH (
+  TYPE = "video",
+  URL = "rtsp://camera1.local:8554/live",
+  INTERVAL = "1000",
+  FORMAT = "json"
 );
 ```
 
-## Migration Path to rekuiper
-
-In rekuiper, run your frame extraction or computer vision model in a dedicated container or process. Publish the extracted telemetry (for example, bounding boxes, counts, or classifications) directly to rekuiper via MQTT:
+Or reference a pre-configured profile using `CONF_KEY`:
 
 ```sql
-CREATE STREAM detection_stream (
-  camera_id STRING,
-  object_class STRING,
-  confidence FLOAT,
-  ts BIGINT
-) WITH (
-  TYPE = "mqtt",
-  DATASOURCE = "cameras/+/detections",
+CREATE STREAM factory_floor_stream () WITH (
+  TYPE = "video",
+  CONF_KEY = "high_frequency",
   FORMAT = "json"
+);
+```
+
+---
+
+## Emitted Event Schema
+
+Each captured frame produces a stream record containing:
+
+| Field | Type | Description |
+| :--- | :--- | :--- |
+| `image` | string | Base64-encoded JPEG image binary bytes. |
+| `url` | string | Origin video stream URL. |
+| `size` | integer | Size of the JPEG image in bytes. |
+| `format` | string | Encoding format (`"mjpeg"`). |
+| `ts` | bigint | Unix millisecond timestamp when the frame was extracted. |
+
+---
+
+## Pipeline Examples
+
+### 1. Ingest Video Frames and Store to Disk with Retention
+
+Pair the video source stream with the native [Image Sink](../../sinks/plugin/image.md) to store snapshots and automatically prune files older than 48 hours:
+
+```json
+{
+  "id": "archive_camera_snapshots",
+  "sql": "SELECT image, url, ts FROM camera_stream",
+  "actions": [
+    {
+      "image": {
+        "path": "/data/camera_snapshots/camera1",
+        "format": "jpg",
+        "fileName": "frame_{{.ts}}.jpg",
+        "maxAge": 48,
+        "maxCount": 5000
+      }
+    }
+  ]
+}
+```
+
+### 2. Forward Extracted Frames over MQTT
+
+```sql
+CREATE RULE forward_frames_rule ()
+AS
+SELECT image, size, ts FROM camera_stream
+SINK mqtt WITH (
+  server = "tcp://127.0.0.1:1883",
+  topic = "vision/frames/camera1"
 );
 ```

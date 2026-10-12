@@ -34,8 +34,8 @@ basic:
   ip: 127.0.0.1
   # CLI port
   port: 20498
-  # REST service ip (0.0.0.0 so mapped Docker ports are reachable by default)
-  restIp: 0.0.0.0
+  # REST service ip (127.0.0.1 loopback default for security; set 0.0.0.0 for external network access)
+  restIp: 127.0.0.1
   # REST service port
   restPort: 9081
   # The global time zone from the IANA time zone database, or Local if not set.
