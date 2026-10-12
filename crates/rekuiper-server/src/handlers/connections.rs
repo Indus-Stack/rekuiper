@@ -89,6 +89,22 @@ pub async fn save_source_conf_key(
     } else {
         serde_json::from_slice::<Value>(&body).unwrap_or_else(|_| json!({}))
     };
+    if name.eq_ignore_ascii_case("video") {
+        if let Ok(cfg) =
+            serde_json::from_value::<rekuiper_connectors::VideoSourceConfig>(payload.clone())
+        {
+            if let Err(e) = cfg.validate_conf() {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({
+                        "error": 3000,
+                        "message": format!("Invalid video source configuration: {}", e)
+                    })),
+                )
+                    .into_response();
+            }
+        }
+    }
     let key = format!("{}/{}", name, conf_key);
     let _guard = state.config_op_lock.lock().await;
     if let Err(e) = persist_config_entry(&state, "source_configs", &key, &payload).await {
@@ -680,4 +696,59 @@ pub async fn update_connection(
     }
     state.connections.write().insert(id, stored.clone());
     Json(stored).into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rekuiper_core::{RuleManager, StreamBus, StreamManager, TableManager};
+
+    #[tokio::test]
+    async fn test_save_source_conf_key_rejects_disallowed_video_url() {
+        let bus = StreamBus::new();
+        let state = AppState::new(
+            "test".to_string(),
+            rekuiper_conf::KuiperConfig::default(),
+            StreamManager::new(),
+            TableManager::new(),
+            RuleManager::new(bus.clone()),
+            bus,
+        );
+        let payload = json!({
+            "url": "file:///etc/shadow"
+        });
+        let body = Bytes::from(payload.to_string());
+        let resp = save_source_conf_key(
+            State(state),
+            Path(("video".to_string(), "bad_conf".to_string())),
+            body,
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_save_source_conf_key_accepts_valid_video_conf() {
+        let bus = StreamBus::new();
+        let state = AppState::new(
+            "test".to_string(),
+            rekuiper_conf::KuiperConfig::default(),
+            StreamManager::new(),
+            TableManager::new(),
+            RuleManager::new(bus.clone()),
+            bus,
+        );
+        let payload = json!({
+            "interval": 500,
+            "url": "rtsp://camera.internal:554/live"
+        });
+        let body = Bytes::from(payload.to_string());
+        let resp = save_source_conf_key(
+            State(state),
+            Path(("video".to_string(), "good_conf".to_string())),
+            body,
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
 }

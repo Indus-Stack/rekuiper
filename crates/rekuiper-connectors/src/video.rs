@@ -108,6 +108,26 @@ impl VideoSourceConfig {
         }
         Ok(())
     }
+
+    /// Validates standalone configuration properties, allowing empty URL but validating URL format if present and all input arguments.
+    pub fn validate_conf(&self) -> Result<(), String> {
+        let trimmed_url = self.url.trim();
+        if !trimmed_url.is_empty() && !is_allowed_video_url(trimmed_url) {
+            return Err(format!(
+                "invalid video source URL '{}': only streaming protocols (rtsp, rtsps, http, https, rtmp, rtmps, srt, udp, tcp) are allowed",
+                self.url
+            ));
+        }
+        for k in self.input_args.keys() {
+            if !is_allowed_input_arg(k) {
+                return Err(format!(
+                    "input argument '{}' is not in the allowed video source argument whitelist",
+                    k
+                ));
+            }
+        }
+        Ok(())
+    }
 }
 
 fn deserialize_interval<'de, D>(deserializer: D) -> Result<u64, D::Error>

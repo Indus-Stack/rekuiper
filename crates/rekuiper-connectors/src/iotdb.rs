@@ -75,6 +75,34 @@ impl IotdbConfig {
         format!("Basic {}", encoded)
     }
 
+    fn resolve_timestamp(&self, record: &HashMap<String, Value>) -> Result<i64, String> {
+        if let Some(v) = record.get(&self.ts_field_name) {
+            match v {
+                Value::Number(n) => n
+                    .as_i64()
+                    .or_else(|| n.as_f64().map(|f| f as i64))
+                    .ok_or_else(|| {
+                        format!("invalid numeric timestamp in '{}'", self.ts_field_name)
+                    }),
+                Value::String(s) => s.parse::<i64>().map_err(|_| {
+                    format!(
+                        "unparseable string timestamp '{}' in '{}'",
+                        s, self.ts_field_name
+                    )
+                }),
+                other => Err(format!(
+                    "unsupported timestamp type {:?} in '{}'",
+                    other, self.ts_field_name
+                )),
+            }
+        } else {
+            Ok(SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_millis() as i64)
+                .unwrap_or(0))
+        }
+    }
+
     /// Formats an event record into an Apache IoTDB REST tablet payload (`/rest/v1/insertTablet`).
     pub fn build_insert_payload(&self, record: &HashMap<String, Value>) -> Result<Value, String> {
         if record.is_empty() {
@@ -95,33 +123,7 @@ impl IotdbConfig {
         }
 
         // 2. Resolve timestamp strictly
-        let ts = if let Some(v) = record.get(&self.ts_field_name) {
-            match v {
-                Value::Number(n) => n
-                    .as_i64()
-                    .or_else(|| n.as_f64().map(|f| f as i64))
-                    .ok_or_else(|| {
-                        format!("invalid numeric timestamp in '{}'", self.ts_field_name)
-                    })?,
-                Value::String(s) => s.parse::<i64>().map_err(|_| {
-                    format!(
-                        "unparseable string timestamp '{}' in '{}'",
-                        s, self.ts_field_name
-                    )
-                })?,
-                other => {
-                    return Err(format!(
-                        "unsupported timestamp type {:?} in '{}'",
-                        other, self.ts_field_name
-                    ))
-                }
-            }
-        } else {
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map(|d| d.as_millis() as i64)
-                .unwrap_or(0)
-        };
+        let ts = self.resolve_timestamp(record)?;
 
         // 3. Resolve measurements, dataTypes, and column-major values
         let mut measurements: Vec<String> = Vec::new();
@@ -206,21 +208,7 @@ impl IotdbConfig {
                 continue;
             }
 
-            let ts = if let Some(v) = rec.get(&self.ts_field_name) {
-                match v {
-                    Value::Number(n) => n
-                        .as_i64()
-                        .or_else(|| n.as_f64().map(|f| f as i64))
-                        .unwrap_or(0),
-                    Value::String(s) => s.parse::<i64>().unwrap_or(0),
-                    _ => 0,
-                }
-            } else {
-                SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .map(|d| d.as_millis() as i64)
-                    .unwrap_or(0)
-            };
+            let ts = self.resolve_timestamp(rec)?;
 
             let mut found = false;
             for b in &mut device_batches {
@@ -287,7 +275,16 @@ impl IotdbConfig {
                 let col: Vec<Value> = batch
                     .rows
                     .iter()
-                    .map(|r| r.get(&m).cloned().unwrap_or(Value::Null))
+                    .map(|r| match r.get(&m) {
+                        Some(v) if !v.is_null() => {
+                            if infer_iotdb_data_type(v) == dt {
+                                v.clone()
+                            } else {
+                                Value::Null
+                            }
+                        }
+                        _ => Value::Null,
+                    })
                     .collect();
 
                 measurements.push(m);
@@ -449,5 +446,53 @@ mod tests {
         assert_eq!(b["dataTypes"], json!(["DOUBLE", "TEXT"]));
         assert_eq!(b["timestamps"], json!([1000, 2000]));
         assert_eq!(b["values"], json!([[120, 135], ["running", "idle"]]));
+    }
+
+    #[test]
+    fn test_iotdb_build_batch_tablet_payload_rejects_invalid_timestamp() {
+        let cfg = IotdbConfig {
+            addr: "127.0.0.1:18080".to_string(),
+            username: "root".to_string(),
+            password: "root".to_string(),
+            device: "root.sg.dev".to_string(),
+            measurements: Some(vec!["speed".to_string()]),
+            ts_field_name: "ts".to_string(),
+        };
+
+        let mut r1 = HashMap::new();
+        r1.insert("speed".to_string(), json!(120));
+        r1.insert("ts".to_string(), json!("not_a_valid_number"));
+
+        let res = cfg.build_batch_insert_payloads(&[r1]);
+        assert!(res.is_err());
+        assert!(res.unwrap_err().contains("unparseable string timestamp"));
+    }
+
+    #[test]
+    fn test_iotdb_build_batch_tablet_payload_handles_mixed_types() {
+        let cfg = IotdbConfig {
+            addr: "127.0.0.1:18080".to_string(),
+            username: "root".to_string(),
+            password: "root".to_string(),
+            device: "root.sg.dev".to_string(),
+            measurements: Some(vec!["speed".to_string()]),
+            ts_field_name: "ts".to_string(),
+        };
+
+        let mut r1 = HashMap::new();
+        r1.insert("speed".to_string(), json!(120));
+        r1.insert("ts".to_string(), json!(1000i64));
+
+        let mut r2 = HashMap::new();
+        // r2 has a string in a DOUBLE measurement column
+        r2.insert("speed".to_string(), json!("offline"));
+        r2.insert("ts".to_string(), json!(2000i64));
+
+        let batches = cfg.build_batch_insert_payloads(&[r1, r2]).unwrap();
+        assert_eq!(batches.len(), 1);
+        let b = &batches[0];
+        assert_eq!(b["dataTypes"], json!(["DOUBLE"]));
+        // Mismatched type "offline" is nulled out so tablet is not rejected
+        assert_eq!(b["values"], json!([[120, null]]));
     }
 }

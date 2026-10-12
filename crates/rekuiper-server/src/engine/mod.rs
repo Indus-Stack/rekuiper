@@ -962,6 +962,21 @@ pub(crate) fn bootstrap_stream_sources(
     if let Some(config) =
         resolve_video_source(&state.stream_manager, &state.source_configs, stream_name)
     {
+        if let Err(e) = config.validate() {
+            tracing::error!(
+                "[RULE {}] video source validation failed for stream '{}': {}",
+                rule_id,
+                stream_name,
+                e
+            );
+            if let Some(handle) = state.rule_manager.rule_status_handle(rule_id) {
+                let mut status = handle.write();
+                status.status = "error".to_string();
+                status.message = format!("Video source validation error: {}", e);
+                status.last_exception = e;
+            }
+            return;
+        }
         let stream_tx = state.stream_bus.get_or_create(stream_name);
         let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
         register_rule_stream_source(state, stream_name, rule_id, cancel_tx);
