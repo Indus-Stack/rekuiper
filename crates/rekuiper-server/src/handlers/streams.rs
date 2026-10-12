@@ -138,6 +138,82 @@ pub async fn create_stream(
                             .into_response();
                     }
                 }
+                if stmt
+                    .options
+                    .iter()
+                    .any(|(k, v)| k.eq_ignore_ascii_case("type") && v.eq_ignore_ascii_case("video"))
+                {
+                    let mut vid_cfg = rekuiper_connectors::VideoSourceConfig::default();
+                    if let Some(conf_key) = stmt
+                        .options
+                        .iter()
+                        .find(|(k, _)| {
+                            k.eq_ignore_ascii_case("conf_key") || k.eq_ignore_ascii_case("confkey")
+                        })
+                        .map(|(_, v)| v.trim())
+                        .filter(|s| !s.is_empty())
+                    {
+                        let lookup = format!("video/{}", conf_key);
+                        let configs_guard = state.source_configs.read();
+                        let conf_val = configs_guard
+                            .get(&lookup)
+                            .or_else(|| configs_guard.get(conf_key))
+                            .cloned();
+                        drop(configs_guard);
+                        if let Some(val) = conf_val {
+                            if let Ok(c) = serde_json::from_value::<
+                                rekuiper_connectors::VideoSourceConfig,
+                            >(val)
+                            {
+                                vid_cfg = c;
+                            }
+                        }
+                    }
+                    if let Some(url) = stmt
+                        .options
+                        .iter()
+                        .find(|(k, _)| {
+                            k.eq_ignore_ascii_case("url")
+                                || k.eq_ignore_ascii_case("server")
+                                || k.eq_ignore_ascii_case("datasource")
+                        })
+                        .map(|(_, v)| v.trim())
+                        .filter(|s| !s.is_empty())
+                    {
+                        vid_cfg.url = url.to_string();
+                    }
+                    if let Some(interval) = stmt
+                        .options
+                        .iter()
+                        .find(|(k, _)| k.eq_ignore_ascii_case("interval"))
+                        .map(|(_, v)| v.trim())
+                        .filter(|s| !s.is_empty())
+                    {
+                        vid_cfg.set_interval_str(interval);
+                    }
+                    if let Some(fp) = stmt
+                        .options
+                        .iter()
+                        .find(|(k, _)| {
+                            k.eq_ignore_ascii_case("ffmpeg_path")
+                                || k.eq_ignore_ascii_case("ffmpegpath")
+                        })
+                        .map(|(_, v)| v.trim())
+                        .filter(|s| !s.is_empty())
+                    {
+                        vid_cfg.ffmpeg_path = fp.to_string();
+                    }
+                    if let Err(e) = vid_cfg.validate() {
+                        return (
+                            StatusCode::BAD_REQUEST,
+                            Json(json!({
+                                "error": 3000,
+                                "message": format!("Stream command error: {}", e)
+                            })),
+                        )
+                            .into_response();
+                    }
+                }
                 let stream_def = StreamDefinition {
                     name: stmt.name.clone(),
                     sql: sql.clone(),
@@ -821,5 +897,55 @@ pub async fn get_table_schema(State(state): State<AppState>, Path(name): Path<St
             })),
         )
             .into_response()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::AppState;
+    use rekuiper_core::{RuleManager, StreamBus, StreamManager, TableManager};
+
+    #[tokio::test]
+    async fn test_create_stream_rejects_disallowed_video_url() {
+        let bus = StreamBus::new();
+        let state = AppState::new(
+            "test".to_string(),
+            rekuiper_conf::KuiperConfig::default(),
+            StreamManager::new(),
+            TableManager::new(),
+            RuleManager::new(bus.clone()),
+            bus,
+        );
+        let payload = CreateStreamPayload {
+            sql: Some(
+                "CREATE STREAM v_bad () WITH (TYPE=\"video\", URL=\"/etc/passwd\")".to_string(),
+            ),
+            name: None,
+        };
+        let resp = create_stream(State(state), Json(payload)).await;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_create_stream_accepts_valid_video_url() {
+        let bus = StreamBus::new();
+        let state = AppState::new(
+            "test".to_string(),
+            rekuiper_conf::KuiperConfig::default(),
+            StreamManager::new(),
+            TableManager::new(),
+            RuleManager::new(bus.clone()),
+            bus,
+        );
+        let payload = CreateStreamPayload {
+            sql: Some(
+                "CREATE STREAM v_good () WITH (TYPE=\"video\", URL=\"rtsp://127.0.0.1:8554/live\")"
+                    .to_string(),
+            ),
+            name: None,
+        };
+        let resp = create_stream(State(state), Json(payload)).await;
+        assert_eq!(resp.status(), StatusCode::CREATED);
     }
 }

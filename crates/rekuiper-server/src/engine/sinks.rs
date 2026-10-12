@@ -2107,12 +2107,7 @@ pub(crate) async fn send_action(
             }
         }
         PreparedAction::Iotdb { config, .. } => {
-            let is_batch = output.data.contains_key(BATCH_ROWS_KEY);
-            let default_url = if is_batch {
-                config.tablet_endpoint_url()
-            } else {
-                config.record_endpoint_url()
-            };
+            let default_url = config.endpoint_url();
             let url = destination.unwrap_or(&default_url);
             let payloads = if let Some(Value::Array(arr)) = output.data.get(BATCH_ROWS_KEY) {
                 let mut rows = Vec::new();

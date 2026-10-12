@@ -85,6 +85,29 @@ impl VideoSourceConfig {
     pub fn set_interval_str(&mut self, s: &str) {
         self.interval = parse_interval_str(s);
     }
+
+    /// Validates configuration properties, rejecting non-network URLs and forbidden arguments.
+    pub fn validate(&self) -> Result<(), String> {
+        let trimmed_url = self.url.trim();
+        if trimmed_url.is_empty() {
+            return Err("video source URL cannot be empty".to_string());
+        }
+        if !is_allowed_video_url(trimmed_url) {
+            return Err(format!(
+                "invalid video source URL '{}': only streaming protocols (rtsp, rtsps, http, https, rtmp, rtmps, srt, udp, tcp) are allowed",
+                self.url
+            ));
+        }
+        for k in self.input_args.keys() {
+            if !is_allowed_input_arg(k) {
+                return Err(format!(
+                    "input argument '{}' is not in the allowed video source argument whitelist",
+                    k
+                ));
+            }
+        }
+        Ok(())
+    }
 }
 
 fn deserialize_interval<'de, D>(deserializer: D) -> Result<u64, D::Error>

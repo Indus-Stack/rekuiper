@@ -1,6 +1,6 @@
 # Video Source Connector
 
-The **Video source connector** ingests live RTSP camera feeds, HTTP video streams, and video files into `rekuiper` streaming pipelines. It extracts discrete image frames at a configurable cadence and emits them as stream events.
+The **Video source connector** ingests live RTSP camera feeds and HTTP video streams into `rekuiper` streaming pipelines. It extracts discrete image frames at a configurable cadence and emits them as stream events.
 
 > [!NOTE]
 > **Architecture**
@@ -33,7 +33,7 @@ Configurations can be supplied via configuration files (`etc/sources/video.yaml`
 
 | Property | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
-| `url` | string | `""` | Video stream address (e.g., `rtsp://camera1.local:8554/live`, `http://...`, or local file path). |
+| `url` | string | `""` | Network video stream address (e.g., `rtsp://camera1.local:8554/live`, `http://...`). Only network streaming protocols are allowed; local file paths are prohibited. |
 | `interval` | integer / string | `1000` | Frame capture interval. Accepts milliseconds (e.g. `1000`) or duration strings (e.g. `"500ms"`, `"1s"`, `"2m"`). Default is `1000` (1 frame per second). |
 | `codec` | string | `"mjpeg"` | Frame extraction codec for `image2pipe` streaming. Default is `"mjpeg"`. |
 | `debugResp` | boolean | `false` | When `true`, logs FFmpeg process `stderr` output to the engine logs for diagnostics. |
