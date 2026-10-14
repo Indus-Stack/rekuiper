@@ -7,4 +7,9 @@ targets = []
 [advisories]
 unmaintained = "all"
 yanked = "warn"
-ignore = []
+ignore = [
+    # RUSTSEC-2026-0099: Name constraints on wildcard certs in rustls-webpki 0.102.8 (transitive via rumqttc 0.24)
+    "RUSTSEC-2026-0099",
+    # RUSTSEC-2026-0104: CRL parsing panic in rustls-webpki 0.102.8 (transitive via rumqttc 0.24; rekuiper does not use CRLs)
+    "RUSTSEC-2026-0104",
+]
