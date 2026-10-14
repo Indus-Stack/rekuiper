@@ -29,7 +29,7 @@ macro_rules! meta {
     };
 }
 
-/// Every built-in function (185 entries), mirroring the evaluator dispatch.
+/// Every built-in function (221 entries), mirroring the evaluator dispatch.
 pub fn builtin_function_metadata() -> &'static [FunctionMeta] {
     static CATALOG: &[FunctionMeta] = &[
         // Math, trigonometry & bitwise (35).

@@ -90,7 +90,7 @@ Combines records across multiple streams or between a stream and a table. Multi-
 ### Syntax
 
 ```sql
-[LEFT | RIGHT | FULL | CROSS] JOIN
+[LEFT | RIGHT | FULL | CROSS | ASOF | LEFT ASOF] JOIN
 source_stream [AS alias]
 ON stream1.column_name = stream2.column_name
 ```
@@ -119,6 +119,18 @@ ON stream1.column_name = stream2.column_name
 
   ```sql
   SELECT * FROM stream1 CROSS JOIN stream2 GROUP BY COUNTWINDOW(5);
+  ```
+
+- **ASOF JOIN**: Pairs each record from the left stream with the latest matching record from the right stream. It does not generate a Cartesian product. It aligns high-frequency streams with low-frequency streams without window buffering:
+
+  ```sql
+  SELECT s.id, s.val, r.price FROM s ASOF JOIN r ON s.id = r.id;
+  ```
+
+- **LEFT ASOF JOIN**: Preserves the left stream record even when no prior right stream record exists. Missing right fields evaluate to `NULL`:
+
+  ```sql
+  SELECT s.id, s.val, r.price FROM s LEFT ASOF JOIN r ON s.id = r.id;
   ```
 
 ## WHERE
