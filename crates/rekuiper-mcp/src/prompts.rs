@@ -130,6 +130,27 @@ pub fn get_prompt_definitions() -> Vec<PromptDefinition> {
             description: Some("Audits rekuiper daemon runtime security configuration: verifies whether REST (`restIp`) and SSE (`httpServerIp`) listeners are bound to secure loopback (`127.0.0.1`) or exposed externally (`0.0.0.0`), audits REST JWT authentication status, and checks private network access policy (`enable_private_net`).".to_string()),
             arguments: vec![],
         },
+        PromptDefinition {
+            name: "generate_cep_rule".to_string(),
+            description: Some("Constructs a Complex Event Processing (CEP) sequence matching rule using sequence_match or sequence_count across temporal event streams (e.g. detecting state transitions like 'start -> error -> recovery' within a time window).".to_string()),
+            arguments: vec![
+                PromptArgument {
+                    name: "stream_name".to_string(),
+                    description: Some("Identifier of the source stream providing incoming events.".to_string()),
+                    required: true,
+                },
+                PromptArgument {
+                    name: "pattern".to_string(),
+                    description: Some("Sequence regular expression pattern matching event conditions (e.g. '(?1)(?2)*(?3)').".to_string()),
+                    required: true,
+                },
+                PromptArgument {
+                    name: "timestamp_field".to_string(),
+                    description: Some("Timestamp field or expression used for temporal ordering (e.g. 'ts' or 'tstamp()').".to_string()),
+                    required: true,
+                },
+            ],
+        },
     ]
 }
 
@@ -369,6 +390,38 @@ pub fn get_prompt_messages(name: &str, args: Option<Value>) -> Result<Vec<Prompt
                          4. Provide actionable hardening recommendations for production deployments."
                             .to_string(),
                     ),
+                },
+            ])
+        }
+
+        "generate_cep_rule" => {
+            let stream = args
+                .as_ref()
+                .and_then(|a| a.get("stream_name"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("events");
+            let pattern = args
+                .as_ref()
+                .and_then(|a| a.get("pattern"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("(?1)(?2)*(?3)");
+            let ts_field = args
+                .as_ref()
+                .and_then(|a| a.get("timestamp_field"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("ts");
+
+            Ok(vec![
+                PromptMessage {
+                    role: "user".to_string(),
+                    content: ContentItem::text(format!(
+                        "Design a Complex Event Processing (CEP) rule for stream '{}' matching pattern '{}' on timestamp '{}':\n\
+                         1. Use `sequence_match('{}', {}, cond1, cond2, ...)` or `sequence_count` in the SELECT clause.\n\
+                         2. Configure the continuous window (e.g. `SlidingWindow(ss, 60)`) to bound the event matching sequence.\n\
+                         3. Validate the streaming query with `validate_sql`.\n\
+                         4. Test sample event sequences with `test_sql_expression` to verify positive matches and negative non-matches.",
+                        stream, pattern, ts_field, pattern, ts_field
+                    )),
                 },
             ])
         }

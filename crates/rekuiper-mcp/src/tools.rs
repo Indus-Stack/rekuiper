@@ -11,7 +11,7 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
         // =========================================================================
         ToolDefinition {
             name: "validate_sql".to_string(),
-            description: "Zero-network offline AST parser and static validator for rekuiper streaming SQL dialect and DDL syntax. Performs lexical tokenization, grammar parsing, column projection validation, WHERE expression type-checking, window clause verification (TumblingWindow, HoppingWindow, SlidingWindow, SessionWindow, CountWindow), and DDL schema validation (including BUFFER_FULL_POLICY='block|dropOldest', DATASOURCE, FORMAT) using native rekuiper-sql without connecting to or mutating a running daemon.".to_string(),
+            description: "Zero-network offline AST parser and static validator for rekuiper streaming SQL dialect and DDL syntax. Performs lexical tokenization, grammar parsing, column projection validation, WHERE expression type-checking, window clause verification (TumblingWindow, HoppingWindow, SlidingWindow, SessionWindow, CountWindow), CEP temporal sequence pattern functions (sequence_match, sequence_count), ASOF JOIN stream enrichment syntax, and DDL schema validation (including DEFAULT column values, BUFFER_FULL_POLICY='block|dropOldest', DATASOURCE, FORMAT) using native rekuiper-sql without connecting to or mutating a running daemon.".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -25,7 +25,7 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
         },
         ToolDefinition {
             name: "test_sql_expression".to_string(),
-            description: "In-memory streaming query simulator: parses and executes a rekuiper SQL SELECT query against a mock JSON event payload using the native rekuiper-sql evaluator. Tests vector similarity & distance functions (cosine_similarity, vector_l2, vector_dot, vector_match), array functions (array_positions, array_contains, deduplicate), streaming stateful analytics (lead, lag, acc_distinct_collect, distinct_acc, had_changed), mathematical transformations, and WHERE filter predicates in isolation, returning either the transformed JSON projection or a filtered notification.".to_string(),
+            description: "In-memory streaming query simulator: parses and executes a rekuiper SQL SELECT query against a mock JSON event payload using the native rekuiper-sql evaluator. Tests vector similarity & distance functions (cosine_similarity, vector_l2, vector_dot, vector_match), array & object functions (array_positions, array_contains, deduplicate, json_map, object_erase), CEP sequence matching (sequence_match, sequence_count), streaming stateful analytics (lead, lag, acc_distinct_collect, distinct_acc, had_changed), mathematical & conversion functions (log2, log10, isnan, isnumeric, nvl, uuid), and WHERE filter predicates in isolation, returning either the transformed JSON projection or a filtered notification.".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {

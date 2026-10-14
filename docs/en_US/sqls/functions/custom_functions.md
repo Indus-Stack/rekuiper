@@ -207,3 +207,45 @@ To execute inference:
 ```sql
 SELECT tfLite(model_name, input_data) FROM tfdemo
 ```
+
+## WebAssembly (Wasm) Plugin: wasm_run
+
+```text
+wasm_run(module_name, func_name, arg1, arg2, ...)
+wasm(module_name, func_name, arg1, arg2, ...)
+```
+
+Executes an exported function from a compiled WebAssembly (`.wasm`) module registered in the embedded rekuiper Wasm runtime.
+
+Modules are registered via the REST API (`POST /plugins/wasm`) or the MCP `register_wasm_plugin` tool. Exported functions can either be invoked directly as UDFs or dispatched dynamically via `wasm_run`.
+
+### Parameters
+
+- `module_name`: A string identifier matching the registered Wasm plugin module name (e.g. `'math'`, `'crypto'`, `'detector'`).
+- `func_name`: A string identifying the exported function inside the Wasm module to execute.
+- `arg1, arg2, ...`: Zero or more arguments passed directly to the Wasm function.
+
+### Return Value
+
+The calculated return value from the WebAssembly function execution. Returns `null` if the module or function does not exist, argument count/types mismatch, or execution encounters an internal trap.
+
+### Examples
+
+Execute an arithmetic addition function inside a Wasm module named `math`:
+
+```sql
+SELECT wasm_run('math', 'add', 10, 20) AS total FROM demo;
+```
+
+Result:
+
+```json
+{"total": 30}
+```
+
+Invoke an edge anomaly detection algorithm compiled from Rust or C to Wasm:
+
+```sql
+SELECT wasm('detector', 'evaluate_vibration', vibe, rpm) AS anomaly_score FROM telemetry;
+```
+

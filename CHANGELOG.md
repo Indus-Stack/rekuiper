@@ -10,10 +10,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > See `BENCHMARK-AUDIT.md` and `test/BENCHMARKS.md` for the audited methodology.
 > No latency-histogram p99 is claimed.
 
+## [1.0.0-rc2] - 2026-10-14
+
+### Added
+- **Complete SQL Function Documentation Coverage**: Documented all 221 built-in SQL functions and aliases across category reference pages with live-verified inputs, outputs, and edge cases (100.0% catalog parity).
+- **Public Benchmark Documentation**: Published audited in-process streaming engine benchmarks for rekuiper v1.0.0-rc2 exceeding 2,144,000 EPS (zero-parse pipeline) and 994,000 EPS (end-to-end JSON).
+- **Complex Event Processing Prompts**: Added `generate_cep_rule` prompt template to `rekuiper-mcp` for sequence match rule synthesis.
+- **WASM Plugin Execution**: Documented `wasm_run` and `wasm` UDF execution syntax for compiled WebAssembly modules.
+
+### Changed
+- **Zero-Vulnerability Dependency Stack**: Upgraded `sqlx` to 0.8.6 and replaced unmaintained `serde_yaml` with `serde_norway` 0.9.
+- **Automated Advisory CI Gate**: Integrated `cargo-deny` security scanning in continuous integration workflow.
+- **Expanded MCP Intelligence**: Extended `validate_sql` and `test_sql_expression` tool schemas with CEP sequence matching, ASOF joins, and stream DEFAULT field syntax.
+
 ## [1.0.0-rc1] - 2026-10-14
 
 ### Added
-- **High-Throughput Streaming Engine**: Processes 1,078,357 events each second in end-to-end benchmarks (500,000 records in 463.66 ms). Pure engine throughput reaches 1,733,311 events each second (288.46 ms).
+- **High-Throughput Streaming Engine**: Processes 1,078,357 events each second in end-to-end benchmarks (500,000 records in 463.66 ms). In-process engine throughput reaches 1,733,311 events each second (288.46 ms).
 - **Zero-Clone Borrowed WHERE Expressions**: Compares record values directly against literal values without cloning memory buffers.
 - **CPU Register Arithmetic**: Computes numeric operations (`+`, `-`, `*`, `/`) directly in hardware registers.
 - **Complex Event Processing Functions**: Adds deterministic finite automaton functions `sequence_match` and `sequence_count`. Stores a maximum of 10,000 partition keys to bound memory.

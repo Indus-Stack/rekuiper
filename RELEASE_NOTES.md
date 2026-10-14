@@ -1,9 +1,25 @@
+# Release Notes - rekuiper v1.0.0-rc2
+
+`rekuiper` v1.0.0-rc2 delivers full SQL catalog parity across documentation, published in-process engine performance benchmarks exceeding 2,144,000 EPS, zero-vulnerability control plane dependencies, and expanded Model Context Protocol (MCP) server intelligence.
+
+Key highlights:
+- **100% SQL Catalog Documentation Parity**: All 221 built-in SQL functions and aliases now have complete documentation across category guides with verified parameters, return types, and examples.
+- **Published In-Process Engine Benchmark**: Published audited in-process streaming benchmark results for rekuiper v1.0.0-rc2. The zero-parse in-process engine pipeline processes **2,144,375 events/sec** (233.17 ms for 500,000 records). The end-to-end JSON pipeline processes **994,118 events/sec** (502.96 ms) on one CPU core with zero garbage collection pauses.
+- **Zero-Vulnerability Dependency Stack**: Resolved Issue #38 by replacing unmaintained `serde_yaml` with `serde_norway 0.9` and upgrading `sqlx` to 0.8.6. Enforced automated CI security checks via `cargo-deny`.
+- **Complex Event Processing Prompts & Tools**: Added the `generate_cep_rule` prompt template and expanded `validate_sql` and `test_sql_expression` tools for `sequence_match`, `sequence_count`, and `ASOF JOIN`.
+- **WebAssembly Runtime Syntax**: Documented `wasm_run` and `wasm` execution syntax for compiling custom algorithms into WebAssembly modules.
+
+- Docker image: `ankurkrp/rekuiper:1.0.0-rc2` (plus `latest`)
+- Helm chart: `deploy/chart/ekuiper` (`AppVersion: 1.0.0-rc2`)
+
+---
+
 # Release Notes - rekuiper v1.0.0-rc1 (RC1v1)
 
 `rekuiper` v1.0.0-rc1 provides high-throughput streaming SQL processing. It includes temporal ASOF joins, complex event processing, 221 built-in SQL functions, and 48 Model Context Protocol (MCP) tools.
 
 Key highlights:
-- **High Throughput Streaming SQL Engine**: The engine processes 1,078,357 events each second in end-to-end benchmarks (500,000 records in 463.66 ms). The pure engine loop processes 1,733,311 events each second (288.46 ms).
+- **High Throughput Streaming SQL Engine**: The engine processes 1,078,357 events each second in end-to-end benchmarks (500,000 records in 463.66 ms). The zero-parse in-process pipeline processes 1,733,311 events each second (288.46 ms).
 - **Zero-Clone Borrowed WHERE Filter**: The filter compares `column <op> literal` directly with borrowed references. This removes 1,000,000 value copy operations during 500,000 evaluations.
 - **Fast CPU Register Arithmetic**: The evaluator computes math expressions (`+`, `-`, `*`, `/`) directly in CPU floating-point registers. This avoids intermediate JSON memory allocations.
 - **Bounded-Memory Complex Event Processing**: The functions `sequence_match` and `sequence_count` track multi-step event sequences. The state machine stores a maximum of 10,000 partition keys to limit memory usage.

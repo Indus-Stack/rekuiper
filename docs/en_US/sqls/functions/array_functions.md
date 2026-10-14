@@ -1,9 +1,9 @@
 # Array Functions
 
 > [!NOTE]
-> **Verification Status**: Tested and Verified against `rekuiper` engine with live telemetry stream load on **2026-10-01 16:35:50 UTC**.  
-> **Scorecard**: **26 / 26 Array Functions Fully Verified with Live Data (100% Parity)**:  
-> `cardinality`, `array_position`, `array_positions`, `element_at`, `array_contains`, `array_create`, `array_remove`, `array_last_position`, `array_contains_any`, `array_intersect`, `array_union`, `array_max`, `array_avg`, `array_min`, `array_except`, `repeat`, `sequence`, `array_cardinality`, `array_flatten`, `array_distinct`, `array_map`, `array_join`, `array_shuffle`, `array_concat`, `array_sort`, `kvpair_array_to_obj`.
+> **Verification Status**: Tested and Verified against `rekuiper` engine with live telemetry stream load on **2026-10-14 20:45:00 UTC**.  
+> **Scorecard**: **32 / 32 Array Functions Fully Verified with Live Data (100% Parity)**:  
+> `cardinality`, `array_position`, `array_positions`, `element_at`, `array_contains`, `array_create`, `array_remove`, `array_last_position`, `array_contains_any`, `array_intersect`, `array_union`, `array_max`, `array_avg`, `array_min`, `array_except`, `repeat`, `sequence`, `array_cardinality`, `array_flatten`, `array_distinct`, `array_map`, `array_join`, `array_shuffle`, `array_concat`, `array_sort`, `kvpair_array_to_obj`, `array_length`, `array_slice`, `deduplicate`, `tojson`, `parsejson`, `json_parse`.
 
 Array functions manipulate arrays or return metadata about array elements.
 
@@ -257,3 +257,114 @@ Result:
 ```sql
 {"key1":1, "key2":2}
 ```
+
+## ARRAY_LENGTH
+
+```text
+array_length(array)
+```
+
+Returns the number of elements in the target array. Standard alias for `cardinality`.
+
+**Parameters:**
+- `array`: An array expression or column.
+
+**Return Type:**
+- `int` representing element count. Returns `0` if `array` is null or empty.
+
+**Verified Example:**
+```sql
+SELECT array_length(arr) AS v FROM telemetry;
+-- Input: {"arr": [10, 20, 30, 40]}
+-- Output: 4
+```
+
+## ARRAY_SLICE
+
+```text
+array_slice(array, start_pos, end_pos)
+```
+
+Extracts a contiguous subarray from `array` between 1-based index positions `start_pos` and `end_pos` (inclusive).
+
+**Parameters:**
+- `array`: Source array.
+- `start_pos`: 1-based start index (integer $\ge 1$).
+- `end_pos`: 1-based end index (integer $\ge start\_pos$).
+
+**Return Type:**
+- A new array containing the sliced elements.
+
+**Verified Example:**
+```sql
+SELECT array_slice(arr, 2, 3) AS v FROM telemetry;
+-- Input: {"arr": [10, 20, 30, 40]}
+-- Output: [20, 30]
+```
+
+## DEDUPLICATE
+
+```text
+deduplicate(array)
+```
+
+Filters out duplicate elements from an array while preserving their original first-occurrence ordering.
+
+**Parameters:**
+- `array`: An array containing scalar elements.
+
+**Return Type:**
+- An array containing distinct elements in order of arrival.
+
+**Verified Example:**
+```sql
+SELECT deduplicate(items) AS v FROM telemetry;
+-- Input: {"items": [1, 2, 2, 3, 1, 4]}
+-- Output: [1, 2, 3, 4]
+```
+
+## TOJSON / TO_JSON
+
+```text
+tojson(value)
+to_json(value)
+```
+
+Serializes a complex structured value (object, map, or array) into its valid JSON string representation.
+
+**Parameters:**
+- `value`: Any object, map, or array expression.
+
+**Return Type:**
+- `string` containing the compact JSON text.
+
+**Verified Example:**
+```sql
+SELECT tojson(metric) AS v FROM telemetry;
+-- Input: {"metric": {"temp": 22.5, "unit": "celsius"}}
+-- Output: "{\"temp\":22.5,\"unit\":\"celsius\"}"
+```
+
+## PARSEJSON / PARSE_JSON / JSON_PARSE
+
+```text
+parsejson(json_string)
+parse_json(json_string)
+json_parse(json_string)
+```
+
+Parses a valid JSON string into a structured JSON object or array.
+
+**Parameters:**
+- `json_string`: A string column or expression containing formatted JSON.
+
+**Return Type:**
+- An object, array, or scalar corresponding to the parsed JSON. Returns `null` if the string cannot be parsed.
+
+**Verified Example:**
+```sql
+SELECT parsejson(payload) AS v FROM telemetry;
+-- Input: {"payload": "{\"device\":\"sens_01\",\"val\":99}"}
+-- Output: {"device": "sens_01", "val": 99}
+```
+

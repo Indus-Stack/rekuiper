@@ -40,7 +40,7 @@ BORDER_COLOR = (226, 232, 240)
 LANES = [
     {
         "name": "rekuiper",
-        "title": "rekuiper (Pure Rust)",
+        "title": "rekuiper (Native Rust)",
         "sub": "Single Core | RAM: 8.2 MB | 0 Drops",
         "color": (194, 65, 12),       # Vibrant Terracotta Rust
         "light_color": (255, 112, 67),

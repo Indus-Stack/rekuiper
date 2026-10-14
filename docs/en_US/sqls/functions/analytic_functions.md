@@ -419,14 +419,14 @@ acc_collect(a)
 
 Results: `[1]`, `[1,2]`, `[1,2,3]`.
 
-### ACC_DISTINCT_COLLECT
+### ACC_DISTINCT_COLLECT / DISTINCT_ACC
 
 ```text
 acc_distinct_collect(expr)
 distinct_acc(expr)
 ```
 
-Collects distinct non-nil expression results into an array.
+Collects distinct non-nil expression results into an array. `distinct_acc(expr)` is an exact drop-in synonym.
 Preserves the order of first arrival.
 Ignores duplicate values.
 
