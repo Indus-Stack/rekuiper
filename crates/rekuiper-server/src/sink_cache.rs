@@ -429,7 +429,7 @@ mod tests {
         data.insert("seq".to_string(), json!(i));
         StreamRecord {
             timestamp: i as i64,
-            data,
+            data: data.into(),
         }
     }
 

@@ -34,7 +34,7 @@ This demo needs only Docker. A built-in simulator makes the data.
 **1. Start the engine.**
 
 ```bash
-docker run -d --name rekuiper -p 9081:9081 ankurkrp/rekuiper:0.509-beta
+docker run -d --name rekuiper -p 9081:9081 ankurkrp/rekuiper:1.0.0-rc1
 ```
 
 **2. Register simulated sensor readings, ten per second.**
@@ -128,10 +128,12 @@ All tests run in a container limited to one CPU core and 1 GiB of RAM.
 
 | Measure | Result | Tested on |
 | :--- | :--- | :--- |
-| MQTT throughput, single rule | 150,000 to 200,000 messages per second | 0.500 |
+| End-to-end streaming SQL throughput | 1,078,357 events per second (463 ms for 500k records) | 1.0.0-rc1 |
+| Pure engine SQL pipeline (zero-parse) | 1,733,311 events per second (288 ms for 500k records) | 1.0.0-rc1 |
 | Parallel rules on one stream | 1,000 rules, 500,000 evaluations per second | 0.505 |
+| MQTT throughput, single rule | 150,000 to 200,000 messages per second | 0.500 |
 | Heap memory under load | 4.4 to 10.2 MiB | 0.500 |
-| Footprint | One static binary, about 30 MB | 0.509 |
+| Footprint | One static binary, about 30 MB | 1.0.0-rc1 |
 
 Full method, hardware limits, and comparisons with eKuiper, Telegraf, and Redpanda Connect: [Benchmark Overview](docs/en_US/benchmarks/overview.md).
 
@@ -154,12 +156,15 @@ Details: [Sources](docs/en_US/guide/sources/overview.md) · [Sinks](docs/en_US/g
 
 ## What else is in the box
 
-- **Stream SQL.** Tumbling, hopping, sliding, count, and session windows. Stream-to-stream and stream-to-table joins. A large library of built-in functions. See the [SQL Reference](docs/en_US/sqls/overview.md).
+- **Stream SQL.** Tumbling, hopping, sliding, count, and session windows. Stream-to-stream, stream-to-table, and temporal `ASOF JOIN` / `LEFT ASOF JOIN`. A rich library of **221 built-in functions** (including DFA CEP `sequence_match`/`sequence_count`, CompactDdSketch percentiles, Welford variance, and vector math). See the [SQL Reference](docs/en_US/sqls/overview.md).
+- **High-Throughput Zero-Clone Engine.** Zero-clone borrowed WHERE comparisons, register-level arithmetic evaluation (`try_eval_numeric_fast`), and reference-counted `SharedMap` CoW across rules.
+- **Rete-Lite StreamBus Routing.** Single-subscriber lock-free channel fast-paths and multi-rule indexable predicate routing.
+- **Parquet Columnar Buffering.** Automatic batch buffering with Arrow RecordBatch output and internal metadata isolation.
 - **Bounded memory.** Queues between sources, rules, and sinks have fixed sizes. A slow destination slows the source; it does not fill the memory.
 - **Extensions.** Write SQL functions as sandboxed WebAssembly modules.
 - **Secrets.** Read credentials from HashiCorp Vault or environment variables.
 - **Operations.** Prometheus metrics, a Helm chart, and a `kuiper` CLI.
-- **AI tooling.** A Model Context Protocol (MCP) server lets AI coding assistants validate SQL and manage rules. See [MCP](docs/en_US/mcp/overview.md).
+- **AI tooling.** A Model Context Protocol (MCP) server (`rekuiper-mcp`) exposing **48 tools** (including `explain_pipeline_profile`), 15 live resources, and prompt workflows. See [MCP](docs/en_US/mcp/overview.md).
 
 ---
 
@@ -177,7 +182,7 @@ rekuiper implements the LF Edge eKuiper REST API, SQL dialect, rule format, and 
 
 | Method | Command or link |
 | :--- | :--- |
-| Docker | `docker run -d -p 9081:9081 ankurkrp/rekuiper:0.509-beta` |
+| Docker | `docker run -d -p 9081:9081 ankurkrp/rekuiper:1.0.0-rc1` |
 | Docker Compose | `docker compose -f deploy/docker/docker-compose.yml up -d` |
 | Kubernetes | `helm install rekuiper deploy/chart/ekuiper` ([chart docs](deploy/chart/ekuiper/README.md)) |
 | Binaries | [Releases](https://github.com/ankur-paan/rekuiper/releases) |

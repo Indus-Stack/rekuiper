@@ -1,5 +1,5 @@
 BIN_DIR ?= bin
-VERSION ?= 0.509.0-beta
+VERSION ?= 1.0.0-rc1
 
 .PHONY: all
 all: build

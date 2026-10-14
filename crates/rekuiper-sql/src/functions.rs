@@ -1596,6 +1596,22 @@ pub fn builtin_function_metadata() -> &'static [FunctionMeta] {
             "1",
             "distinct_acc(val)"
         ),
+        meta!(
+            "sequence_match",
+            "analytic",
+            "Determines whether multiple pattern steps occurred in temporal order within max_span_ms.",
+            false,
+            "3+",
+            "sequence_match(30000, temp > 80.0, pressure > 120.0)"
+        ),
+        meta!(
+            "sequence_count",
+            "analytic",
+            "Counts the number of times multiple pattern steps occurred in temporal order within max_span_ms.",
+            false,
+            "3+",
+            "sequence_count(30000, temp > 80.0, pressure > 120.0)"
+        ),
         // Contextual / system (6).
         meta!(
             "event_time",
@@ -1724,11 +1740,11 @@ pub fn builtin_function_metadata() -> &'static [FunctionMeta] {
 }
 
 /// Whether `name` is a built-in function (matched case-insensitively,
-// like SQL resolution).
+/// like SQL resolution).
 pub fn is_builtin_function(name: &str) -> bool {
-    builtin_function_metadata()
-        .iter()
-        .any(|meta| meta.name.eq_ignore_ascii_case(name))
+    static BUILTIN_SET: std::sync::LazyLock<std::collections::HashSet<&'static str>> =
+        std::sync::LazyLock::new(|| builtin_function_metadata().iter().map(|m| m.name).collect());
+    BUILTIN_SET.contains(name.to_ascii_lowercase().as_str())
 }
 
 #[cfg(test)]
@@ -1739,7 +1755,7 @@ mod tests {
     #[test]
     fn catalog_covers_all_builtins_exactly_once() {
         let catalog = builtin_function_metadata();
-        assert_eq!(catalog.len(), 219, "catalog must list 219 functions");
+        assert_eq!(catalog.len(), 221, "catalog must list 221 functions");
         let mut seen = HashSet::new();
         for meta in catalog {
             assert!(

@@ -2,7 +2,9 @@
 //! the row-free incremental evaluator, SESSIONWINDOW parsing and source
 //! metadata visibility.
 
-use rekuiper_sql::{Evaluator, IncrementalWindow, Parser, TimeUnit, WindowDef};
+use rekuiper_sql::{
+    Evaluator, IncrementalWindow, Parser, SlidingIncrementalWindow, TimeUnit, WindowDef,
+};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 
@@ -269,4 +271,38 @@ fn window_having_had_changed_tracks_state_per_group() {
     assert_eq!(out2.len(), 1);
     assert_eq!(out2[0]["device"], json!("b"));
     assert_eq!(out2[0]["v"], json!(200));
+}
+
+#[test]
+fn test_sliding_incremental_window_eviction_and_extrema() {
+    let stmt = parse(
+        "SELECT count(*) AS c, sum(v) AS s, min(v) AS mn, max(v) AS mx FROM telem GROUP BY SLIDINGWINDOW(ss, 10)",
+    );
+    let mut sliding = SlidingIncrementalWindow::try_new(&stmt).expect("sliding plan");
+
+    // Push events at t=1000, 2000, 3000
+    sliding.push(1000, &row(json!({"v": 10})));
+    sliding.push(2000, &row(json!({"v": 5})));
+    sliding.push(3000, &row(json!({"v": 20})));
+
+    let snap = sliding.snapshot();
+    assert_eq!(snap.len(), 1);
+    assert_eq!(snap[0]["c"], json!(3));
+    assert_eq!(snap[0]["s"], json!(35));
+    assert_eq!(snap[0]["mn"], json!(5));
+    assert_eq!(snap[0]["mx"], json!(20));
+
+    // Evict before t=2500 -> removes t=1000 (v=10) and t=2000 (v=5)
+    sliding.evict_before(2500);
+    let snap2 = sliding.snapshot();
+    assert_eq!(snap2.len(), 1);
+    assert_eq!(snap2[0]["c"], json!(1));
+    assert_eq!(snap2[0]["s"], json!(20));
+    assert_eq!(snap2[0]["mn"], json!(20));
+    assert_eq!(snap2[0]["mx"], json!(20));
+
+    // Evict before t=4000 -> removes all
+    sliding.evict_before(4000);
+    assert!(sliding.is_empty());
+    assert!(sliding.snapshot().is_empty());
 }

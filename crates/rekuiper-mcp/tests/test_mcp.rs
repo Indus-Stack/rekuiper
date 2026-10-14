@@ -107,6 +107,9 @@ async fn test_tools_list() {
     assert!(tool_names.contains(&"list_wasm_plugins"));
     assert!(tool_names.contains(&"delete_wasm_plugin"));
     assert!(tool_names.contains(&"validate_secrets"));
+
+    // Profiler
+    assert!(tool_names.contains(&"explain_pipeline_profile"));
 }
 
 #[tokio::test]
@@ -567,4 +570,27 @@ async fn test_push_stream_data_tool_params() {
     assert_eq!(res["isError"], true);
     let text = res["content"][0]["text"].as_str().unwrap();
     assert!(text.contains("Missing required parameter: provide either 'name' or 'endpoint'"));
+}
+
+#[tokio::test]
+async fn test_explain_pipeline_profile() {
+    let handler = McpHandler::new("http://127.0.0.1:9081");
+
+    let req = JsonRpcRequest {
+        jsonrpc: "2.0".to_string(),
+        id: Some(json!(60)),
+        method: "tools/call".to_string(),
+        params: Some(json!({
+            "name": "explain_pipeline_profile",
+            "arguments": {
+                "sql": "SELECT id, count(*) as cnt FROM demo WHERE device_id = 'dev1' AND temp > 30.0 GROUP BY id, TumblingWindow(ss, 10)"
+            }
+        })),
+    };
+    let resp = handler.handle_request(req).await.unwrap();
+    let res = resp.result.unwrap();
+    assert_ne!(res["isError"], true);
+    let text = res["content"][0]["text"].as_str().unwrap();
+    assert!(text.contains("\"valid\": true"));
+    assert!(text.contains("streambus_rete_indexable_predicates"));
 }

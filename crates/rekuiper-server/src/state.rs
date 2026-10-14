@@ -51,6 +51,7 @@ pub struct TracerConfig {
 
 #[derive(Clone, Default)]
 pub struct TraceManager {
+    active_count: Arc<std::sync::atomic::AtomicUsize>,
     active_traces: Arc<RwLock<HashMap<String, String>>>,
     rule_traces: Arc<RwLock<HashMap<String, VecDeque<String>>>>,
     trace_spans: Arc<RwLock<HashMap<String, TraceSpan>>>,
@@ -80,16 +81,24 @@ impl TraceManager {
     }
 
     pub fn start_trace(&self, rule_id: &str, strategy: String) {
-        self.active_traces
-            .write()
-            .insert(rule_id.to_string(), strategy);
+        let mut guard = self.active_traces.write();
+        guard.insert(rule_id.to_string(), strategy);
+        self.active_count
+            .store(guard.len(), std::sync::atomic::Ordering::Release);
     }
 
     pub fn stop_trace(&self, rule_id: &str) {
-        self.active_traces.write().remove(rule_id);
+        let mut guard = self.active_traces.write();
+        guard.remove(rule_id);
+        self.active_count
+            .store(guard.len(), std::sync::atomic::Ordering::Release);
     }
 
+    #[inline]
     pub fn is_tracing(&self, rule_id: &str) -> bool {
+        if self.active_count.load(std::sync::atomic::Ordering::Relaxed) == 0 {
+            return false;
+        }
         self.active_traces.read().contains_key(rule_id)
     }
 
@@ -361,6 +370,10 @@ pub struct HttpPushEndpoint {
     pub format: String,
 }
 
+pub type StreamFieldMaskMap =
+    HashMap<String, Arc<parking_lot::RwLock<Option<rekuiper_connectors::codec::JsonFieldMask>>>>;
+
+#[allow(clippy::type_complexity)]
 #[derive(Clone)]
 pub struct AppState {
     pub start_time: Instant,
@@ -380,6 +393,7 @@ pub struct AppState {
     pub stream_source_cancels: Arc<RwLock<HashMap<String, Vec<tokio::sync::watch::Sender<bool>>>>>,
     pub rule_streams: Arc<RwLock<HashMap<String, HashSet<String>>>>,
     pub stream_attach_meta: Arc<RwLock<HashMap<String, Arc<std::sync::atomic::AtomicBool>>>>,
+    pub stream_field_masks: Arc<RwLock<StreamFieldMaskMap>>,
     pub http_push_endpoints: Arc<RwLock<HashMap<String, HttpPushEndpoint>>>,
     pub http_client: reqwest::Client,
     pub schema_manager: SchemaManager,
@@ -487,6 +501,7 @@ impl AppState {
             stream_source_cancels: Arc::new(RwLock::new(HashMap::new())),
             rule_streams: Arc::new(RwLock::new(HashMap::new())),
             stream_attach_meta: Arc::new(RwLock::new(HashMap::new())),
+            stream_field_masks: Arc::new(RwLock::new(HashMap::new())),
             http_push_endpoints: Arc::new(RwLock::new(HashMap::new())),
             schema_manager: SchemaManager::new(),
             plugin_manager: PluginManager::new(),
@@ -961,37 +976,61 @@ pub fn compile_and_register_js_udf(udf: &JavascriptUdf) -> Result<(), String> {
         return Err("id cannot be empty".to_string());
     }
 
-    let mut context = boa_engine::Context::default();
-    if let Err(e) = context.eval(boa_engine::Source::from_bytes(script.as_bytes())) {
-        return Err(format!("JavaScript compilation error: {:?}", e));
+    // Validate syntax once up front before registering
+    {
+        let mut ctx = boa_engine::Context::default();
+        if let Err(e) = ctx.eval(boa_engine::Source::from_bytes(script.as_bytes())) {
+            return Err(format!("JavaScript compilation error: {:?}", e));
+        }
     }
 
     let fn_name_owned = fn_name.to_string();
     let script_owned = script.to_string();
+    // Hash script so updated scripts with the same UDF name re-evaluate cleanly
+    let script_hash = {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        script_owned.hash(&mut hasher);
+        hasher.finish()
+    };
+
+    thread_local! {
+        static TLS_BOA: std::cell::RefCell<(
+            boa_engine::Context,
+            std::collections::HashMap<String, u64>,
+        )> = std::cell::RefCell::new((
+            boa_engine::Context::default(),
+            std::collections::HashMap::new(),
+        ));
+    }
+
     let handler: rekuiper_core::plugin::UdfFn = Arc::new(move |args: &[Value]| {
-        let mut context = boa_engine::Context::default();
-        if let Err(e) = context.eval(boa_engine::Source::from_bytes(script_owned.as_bytes())) {
-            tracing::warn!("JS UDF {} script init error: {:?}", fn_name_owned, e);
-            return Value::Null;
-        }
         let args_json = serde_json::to_string(args).unwrap_or_else(|_| "[]".to_string());
-        let invoke_code = format!(
-            "JSON.stringify((function() {{ let r = {}.apply(null, {}); return r === undefined ? null : r; }})())",
-            fn_name_owned, args_json
-        );
-        match context.eval(boa_engine::Source::from_bytes(invoke_code.as_bytes())) {
-            Ok(res) => {
-                if let Some(s) = res.as_string() {
-                    serde_json::from_str(&s.to_std_string_escaped()).unwrap_or(Value::Null)
-                } else {
+        TLS_BOA.with(|cell| {
+            let (context, loaded_scripts) = &mut *cell.borrow_mut();
+            if loaded_scripts.get(&fn_name_owned).copied() != Some(script_hash) {
+                if let Err(e) = context.eval(boa_engine::Source::from_bytes(script_owned.as_bytes()))
+                {
+                    tracing::warn!("JS UDF {} script init error: {:?}", fn_name_owned, e);
+                    return Value::Null;
+                }
+                loaded_scripts.insert(fn_name_owned.clone(), script_hash);
+            }
+            let invoke_code = format!(
+                "JSON.stringify((function() {{ let r = {}.apply(null, {}); return r === undefined ? null : r; }})())",
+                fn_name_owned, args_json
+            );
+            match context.eval(boa_engine::Source::from_bytes(invoke_code.as_bytes())) {
+                Ok(res) => res
+                    .as_string()
+                    .and_then(|s| serde_json::from_str(&s.to_std_string_escaped()).ok())
+                    .unwrap_or(Value::Null),
+                Err(e) => {
+                    tracing::warn!("JS UDF {} execution error: {:?}", fn_name_owned, e);
                     Value::Null
                 }
             }
-            Err(e) => {
-                tracing::warn!("JS UDF {} execution error: {:?}", fn_name_owned, e);
-                Value::Null
-            }
-        }
+        })
     });
 
     rekuiper_core::plugin::get_global_udf_registry().register_udf(fn_name, handler);

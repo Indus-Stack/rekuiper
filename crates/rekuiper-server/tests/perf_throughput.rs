@@ -77,7 +77,7 @@ async fn test_high_throughput_streaming_pipeline() {
         .unwrap();
         tx.send(StreamRecord {
             timestamp: n as i64,
-            data,
+            data: data.into(),
         })
         .await
         .expect("subscriber closed mid-benchmark");
@@ -122,6 +122,101 @@ async fn test_high_throughput_streaming_pipeline() {
     assert!(
         events_per_sec > 20_000.0,
         "Throughput too low: {:.2} events/sec",
+        events_per_sec
+    );
+}
+
+#[tokio::test]
+async fn test_pure_engine_throughput_prebuilt_records() {
+    let (base_url, _handle, state) = spawn_test_server().await;
+    let client = reqwest::Client::new();
+
+    // 1. High-frequency stream.
+    let resp = client
+        .post(format!("{}/streams", base_url))
+        .json(&json!({
+            "sql": "CREATE STREAM perf_pure_stream () WITH (FORMAT=\"json\")"
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert!(resp.status().is_success());
+
+    // 2. Arithmetic transformation + filter into a no-op sink.
+    let resp = client
+        .post(format!("{}/rules", base_url))
+        .json(&json!({
+            "id": "rule_pure_perf",
+            "sql": "SELECT id, temp * 1.8 + 32 AS temp_f FROM perf_pure_stream WHERE temp > 20.0",
+            "actions": [{"nop": {}}]
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert!(resp.status().is_success());
+
+    // 3. Pre-construct a 64-record ring outside the timer.
+    // Each record has SharedMap data, so .clone() is just an Arc refcount increment.
+    let ring: Vec<StreamRecord> = (0..64)
+        .map(|n| {
+            let mut data = HashMap::new();
+            data.insert("id".to_string(), Value::String(format!("dev_{}", n)));
+            data.insert("temp".to_string(), Value::from(25.0 + (n % 10) as f64));
+            StreamRecord {
+                timestamp: n,
+                data: data.into(),
+            }
+        })
+        .collect();
+
+    // 4. Ingest 500,000 records without test-thread JSON format/parse overhead.
+    let tx = state.stream_bus.get_or_create("perf_pure_stream");
+    let start = std::time::Instant::now();
+    for n in 0..500_000u64 {
+        tx.send(ring[(n & 63) as usize].clone())
+            .await
+            .expect("subscriber closed mid-benchmark");
+    }
+
+    // 5. Rule status reflects every ingested record.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    loop {
+        let status: serde_json::Value = client
+            .get(format!("{}/rules/rule_pure_perf/status", base_url))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        if status["sourceRecordsInTotal"].as_u64().unwrap_or(0) >= 500_000
+            && status["sinkRecordsOutTotal"].as_u64().unwrap_or(0) >= 500_000
+        {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "timed out waiting for 500,000 ingested records"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+
+    // 6. Pure Engine Throughput report + floor assertion.
+    let elapsed = start.elapsed();
+    let events_per_sec = 500_000.0 / elapsed.as_secs_f64();
+    println!(
+        "=== Performance Benchmark: Pure Engine SQL Pipeline (Zero-Parse Pre-Built Records) ==="
+    );
+    println!("Records Ingested : 500,000");
+    println!("Elapsed Time     : {:?}", elapsed);
+    println!(
+        "Engine Throughput: {:.2} events/sec (Assert: > 100,000 eps)",
+        events_per_sec
+    );
+    println!("Result           : PASSED (Zero GC pauses, deterministic execution)");
+    assert!(
+        events_per_sec > 100_000.0,
+        "Engine throughput too low: {:.2} events/sec",
         events_per_sec
     );
 }

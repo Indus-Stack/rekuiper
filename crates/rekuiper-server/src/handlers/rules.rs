@@ -346,6 +346,135 @@ pub fn stmt_called_functions(stmt: &SelectStmt) -> Vec<String> {
     out
 }
 
+/// Collect every referenced column/identifier in an expression.
+pub fn collect_referenced_fields(expr: &Expr, out: &mut Vec<String>, has_wildcard: &mut bool) {
+    match expr {
+        Expr::Wildcard | Expr::WildcardModified { .. } => {
+            *has_wildcard = true;
+        }
+        Expr::Identifier(name) => {
+            out.push(name.clone());
+        }
+        Expr::FieldAccess { parent, field } => {
+            if field == "*" {
+                *has_wildcard = true;
+            } else {
+                if let Expr::Identifier(p) = parent.as_ref() {
+                    out.push(p.clone());
+                    out.push(field.clone());
+                } else {
+                    out.push(field.clone());
+                    collect_referenced_fields(parent, out, has_wildcard);
+                }
+            }
+        }
+        Expr::Call { name, args } => {
+            if name.eq_ignore_ascii_case("meta") && args.is_empty() {
+                *has_wildcard = true;
+            }
+            for arg in args {
+                collect_referenced_fields(arg, out, has_wildcard);
+            }
+        }
+        Expr::BinaryOp { left, right, .. } => {
+            collect_referenced_fields(left, out, has_wildcard);
+            collect_referenced_fields(right, out, has_wildcard);
+        }
+        Expr::UnaryOp { expr, .. } | Expr::IsNull { expr, .. } => {
+            collect_referenced_fields(expr, out, has_wildcard);
+        }
+        Expr::Between {
+            expr, low, high, ..
+        } => {
+            collect_referenced_fields(expr, out, has_wildcard);
+            collect_referenced_fields(low, out, has_wildcard);
+            collect_referenced_fields(high, out, has_wildcard);
+        }
+        Expr::InList { expr, list, .. } => {
+            collect_referenced_fields(expr, out, has_wildcard);
+            for item in list {
+                collect_referenced_fields(item, out, has_wildcard);
+            }
+        }
+        Expr::Index { base, index } => {
+            collect_referenced_fields(base, out, has_wildcard);
+            collect_referenced_fields(index, out, has_wildcard);
+        }
+        Expr::Slice { base, lo, hi } => {
+            collect_referenced_fields(base, out, has_wildcard);
+            if let Some(e) = lo {
+                collect_referenced_fields(e, out, has_wildcard);
+            }
+            if let Some(e) = hi {
+                collect_referenced_fields(e, out, has_wildcard);
+            }
+        }
+        Expr::Case {
+            operand,
+            when_clauses,
+            else_clause,
+        } => {
+            if let Some(op) = operand {
+                collect_referenced_fields(op, out, has_wildcard);
+            }
+            for (w, t) in when_clauses {
+                collect_referenced_fields(w, out, has_wildcard);
+                collect_referenced_fields(t, out, has_wildcard);
+            }
+            if let Some(e) = else_clause {
+                collect_referenced_fields(e, out, has_wildcard);
+            }
+        }
+        Expr::Over {
+            call,
+            partition_by,
+            when,
+        } => {
+            collect_referenced_fields(call, out, has_wildcard);
+            if let Some(p) = partition_by {
+                collect_referenced_fields(p, out, has_wildcard);
+            }
+            if let Some(w) = when {
+                collect_referenced_fields(w, out, has_wildcard);
+            }
+        }
+        Expr::Literal(_) => {}
+    }
+}
+
+/// Every column name referenced anywhere in a SELECT statement.
+/// Returns (has_wildcard, field_names).
+pub fn stmt_referenced_fields(stmt: &SelectStmt) -> (bool, Vec<String>) {
+    let mut out = Vec::new();
+    let mut has_wildcard = false;
+    for field in &stmt.fields {
+        collect_referenced_fields(field, &mut out, &mut has_wildcard);
+    }
+    if let Some(w) = &stmt.where_clause {
+        collect_referenced_fields(w, &mut out, &mut has_wildcard);
+    }
+    for g in &stmt.group_by {
+        collect_referenced_fields(g, &mut out, &mut has_wildcard);
+    }
+    if let Some(h) = &stmt.having {
+        collect_referenced_fields(h, &mut out, &mut has_wildcard);
+    }
+    for item in &stmt.order_by {
+        collect_referenced_fields(&item.expr, &mut out, &mut has_wildcard);
+    }
+    for join in &stmt.joins {
+        if let Some(on) = &join.on {
+            collect_referenced_fields(on, &mut out, &mut has_wildcard);
+        }
+    }
+    if let Some((_, rhs)) = &stmt.set_op {
+        let (rhs_wildcard, rhs_fields) = stmt_referenced_fields(rhs);
+        has_wildcard = has_wildcard || rhs_wildcard;
+        out.extend(rhs_fields);
+    }
+    (has_wildcard, out)
+}
+
 /// First called function unknown to the built-in library, the global UDF
 /// registry and registered function/UDF plugin definitions, if any.
 pub fn find_unknown_function(stmt: &SelectStmt, plugins: &PluginManager) -> Option<String> {
@@ -635,10 +764,12 @@ pub fn reject_invalid_rule(
         }
     }
     if !stmt.joins.is_empty() && stmt.window.is_none() {
-        let has_stream_target = stmt
-            .joins
-            .iter()
-            .any(|j| state.table_manager.get_table(&j.target).is_none());
+        let has_stream_target = stmt.joins.iter().any(|j| {
+            !matches!(
+                j.join_type,
+                rekuiper_sql::JoinType::Asof | rekuiper_sql::JoinType::LeftAsof
+            ) && state.table_manager.get_table(&j.target).is_none()
+        });
         if has_stream_target {
             return Some(
                 (
@@ -1511,6 +1642,7 @@ pub async fn reset_rule_state(
         }
     }
 
+    let _ = state.rule_manager.delete_rule_checkpoint(&name).await;
     match state.rule_manager.reset_rule_metrics(&name) {
         Ok(_) => (StatusCode::OK, "success").into_response(),
         Err(e) => (
@@ -1524,19 +1656,26 @@ pub async fn reset_rule_state(
     }
 }
 
-/// Current process CPU percent and RSS bytes via sysinfo, falling back to
-/// global CPU and used memory when the process handle is unavailable.
 pub fn current_process_stats() -> (f64, u64) {
-    let mut sys = System::new_all();
-    sys.refresh_all();
-    if let Some(p) = sysinfo::get_current_pid()
-        .ok()
-        .and_then(|id| sys.process(id))
-    {
-        (p.cpu_usage() as f64, p.memory())
-    } else {
-        (sys.global_cpu_info().cpu_usage() as f64, sys.used_memory())
+    static SYS_CACHE: std::sync::LazyLock<parking_lot::Mutex<System>> =
+        std::sync::LazyLock::new(|| {
+            let mut s = System::new();
+            if let Ok(pid) = sysinfo::get_current_pid() {
+                s.refresh_process(pid);
+            }
+            parking_lot::Mutex::new(s)
+        });
+
+    let mut sys = SYS_CACHE.lock();
+    if let Ok(pid) = sysinfo::get_current_pid() {
+        sys.refresh_process(pid);
+        if let Some(p) = sys.process(pid) {
+            return (p.cpu_usage() as f64, p.memory());
+        }
     }
+    sys.refresh_cpu_usage();
+    sys.refresh_memory();
+    (sys.global_cpu_info().cpu_usage() as f64, sys.used_memory())
 }
 
 pub async fn get_rule_cpu(State(state): State<AppState>, Path(id): Path<String>) -> Response {

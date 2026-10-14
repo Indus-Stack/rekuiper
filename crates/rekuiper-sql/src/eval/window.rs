@@ -14,7 +14,7 @@ use super::{Evaluator, RuleState};
 use crate::ast::{Expr, SelectStmt, SortOrder};
 use serde_json::Value;
 use std::borrow::Cow;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::fmt::Write as _;
 
 static NULL: Value = Value::Null;
@@ -246,14 +246,105 @@ fn write_group_key(key: &mut String, value: &Value) {
     key.push('\u{1f}');
 }
 
-#[derive(Debug, Clone, Copy)]
-enum AggKind {
+/// Compact ~2 KB DDSketch for O(1) bounded-memory streaming percentiles and medians.
+/// Uses logarithmic buckets with gamma = 1.02 (~1% relative accuracy across all scales).
+#[derive(Debug, Clone)]
+pub struct CompactDdSketch {
+    counts: Vec<u64>,
+    offset: i32,
+    zero_count: u64,
+    total_count: u64,
+    min_val: f64,
+    max_val: f64,
+}
+
+impl Default for CompactDdSketch {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl CompactDdSketch {
+    const LN_GAMMA: f64 = 0.01980262729617973; // ln(1.02)
+    const MIN_TRACKABLE: f64 = 1e-9;
+
+    pub fn new() -> Self {
+        Self {
+            counts: vec![0; 512],
+            offset: -128,
+            zero_count: 0,
+            total_count: 0,
+            min_val: f64::INFINITY,
+            max_val: f64::NEG_INFINITY,
+        }
+    }
+
+    #[inline]
+    pub fn insert(&mut self, val: f64) {
+        if !val.is_finite() {
+            return;
+        }
+        self.total_count += 1;
+        if val < self.min_val {
+            self.min_val = val;
+        }
+        if val > self.max_val {
+            self.max_val = val;
+        }
+        if val <= Self::MIN_TRACKABLE {
+            self.zero_count += 1;
+            return;
+        }
+        let idx = (val.ln() / Self::LN_GAMMA).ceil() as i32;
+        let slot = (idx - self.offset).clamp(0, (self.counts.len() as i32) - 1) as usize;
+        self.counts[slot] += 1;
+    }
+
+    pub fn quantile(&self, q: f64) -> Option<f64> {
+        if self.total_count == 0 {
+            return None;
+        }
+        if self.total_count == 1 || (self.max_val - self.min_val).abs() <= f64::EPSILON {
+            return Some(self.min_val);
+        }
+        let q = q.clamp(0.0, 1.0);
+        if q == 0.0 {
+            return Some(self.min_val);
+        }
+        if q == 1.0 {
+            return Some(self.max_val);
+        }
+        let target_rank = (q * (self.total_count as f64)).ceil() as u64;
+        if target_rank <= self.zero_count {
+            return Some(self.min_val.max(0.0));
+        }
+        let mut cumulative = self.zero_count;
+        for (i, &c) in self.counts.iter().enumerate() {
+            cumulative += c;
+            if cumulative >= target_rank && c > 0 {
+                let bucket_idx = (i as i32) + self.offset;
+                let approx = ((bucket_idx as f64 - 0.5) * Self::LN_GAMMA).exp();
+                return Some(approx.clamp(self.min_val, self.max_val));
+            }
+        }
+        Some(self.max_val)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum AggKind {
     CountAll,
     Count,
     Sum,
     Avg,
     Min,
     Max,
+    Stddev,
+    Stddevs,
+    Var,
+    Vars,
+    Median,
+    Percentile(f64),
 }
 
 #[derive(Debug, Clone)]
@@ -281,6 +372,16 @@ enum Acc {
         n: u64,
     },
     Extreme(Option<Value>),
+    Welford {
+        kind: AggKind,
+        count: u64,
+        mean: f64,
+        m2: f64,
+    },
+    Sketch {
+        q: f64,
+        sketch: Box<CompactDdSketch>,
+    },
 }
 
 impl Acc {
@@ -295,10 +396,24 @@ impl Acc {
             },
             AggKind::Avg => Acc::Avg { sum: 0.0, n: 0 },
             AggKind::Min | AggKind::Max => Acc::Extreme(None),
+            AggKind::Stddev | AggKind::Stddevs | AggKind::Var | AggKind::Vars => Acc::Welford {
+                kind,
+                count: 0,
+                mean: 0.0,
+                m2: 0.0,
+            },
+            AggKind::Median => Acc::Sketch {
+                q: 0.5,
+                sketch: Box::new(CompactDdSketch::new()),
+            },
+            AggKind::Percentile(p) => Acc::Sketch {
+                q: p,
+                sketch: Box::new(CompactDdSketch::new()),
+            },
         }
     }
 
-    /// Mirrors `agg_count/sum/avg/min/max` exactly, one row at a time.
+    /// Mirrors `agg_count/sum/avg/min/max/stddev/percentile` exactly, one row at a time.
     fn update(&mut self, kind: AggKind, value: Option<&Value>) {
         match (self, kind) {
             (Acc::Count(n), AggKind::CountAll) => *n += 1,
@@ -351,6 +466,25 @@ impl Acc {
                     }
                 }
             }
+            (
+                Acc::Welford {
+                    count, mean, m2, ..
+                },
+                _,
+            ) => {
+                if let Some(x) = value.and_then(|v| v.as_f64()) {
+                    *count += 1;
+                    let delta = x - *mean;
+                    *mean += delta / (*count as f64);
+                    let delta2 = x - *mean;
+                    *m2 += delta * delta2;
+                }
+            }
+            (Acc::Sketch { sketch, .. }, _) => {
+                if let Some(x) = value.and_then(|v| v.as_f64()) {
+                    sketch.insert(x);
+                }
+            }
         }
     }
 
@@ -379,6 +513,46 @@ impl Acc {
                 }
             }
             Acc::Extreme(best) => best.unwrap_or(Value::Null),
+            Acc::Welford {
+                kind,
+                count,
+                mean: _,
+                m2,
+            } => match kind {
+                AggKind::Stddev => {
+                    if count == 0 {
+                        Value::Null
+                    } else {
+                        serde_json::json!((m2 / count as f64).sqrt())
+                    }
+                }
+                AggKind::Stddevs => {
+                    if count < 2 {
+                        Value::Null
+                    } else {
+                        serde_json::json!((m2 / (count - 1) as f64).sqrt())
+                    }
+                }
+                AggKind::Var => {
+                    if count == 0 {
+                        Value::Null
+                    } else {
+                        serde_json::json!(m2 / count as f64)
+                    }
+                }
+                AggKind::Vars => {
+                    if count < 2 {
+                        Value::Null
+                    } else {
+                        serde_json::json!(m2 / (count - 1) as f64)
+                    }
+                }
+                _ => Value::Null,
+            },
+            Acc::Sketch { q, sketch } => match sketch.quantile(q) {
+                Some(val) => serde_json::json!(val),
+                None => Value::Null,
+            },
         }
     }
 }
@@ -434,17 +608,32 @@ impl IncrementalWindow {
                 }
                 Expr::Call { name, args } => {
                     let lower = name.to_ascii_lowercase();
-                    if args.len() != 1 || Evaluator::contains_aggregate(&args[0]) {
+                    if args.is_empty() || Evaluator::contains_aggregate(&args[0]) {
                         return None;
                     }
                     let wildcard = matches!(args[0], Expr::Wildcard);
-                    let kind = match (lower.as_str(), wildcard) {
-                        ("count", true) => AggKind::CountAll,
-                        ("count", false) => AggKind::Count,
-                        ("sum", false) => AggKind::Sum,
-                        ("avg", false) => AggKind::Avg,
-                        ("min", false) => AggKind::Min,
-                        ("max", false) => AggKind::Max,
+                    let kind = match (lower.as_str(), wildcard, args.len()) {
+                        ("count", true, 1) => AggKind::CountAll,
+                        ("count", false, 1) => AggKind::Count,
+                        ("sum", false, 1) => AggKind::Sum,
+                        ("avg", false, 1) => AggKind::Avg,
+                        ("min", false, 1) => AggKind::Min,
+                        ("max", false, 1) => AggKind::Max,
+                        ("stddev", false, 1) => AggKind::Stddev,
+                        ("stddevs", false, 1) => AggKind::Stddevs,
+                        ("var", false, 1) => AggKind::Var,
+                        ("vars", false, 1) => AggKind::Vars,
+                        ("median", false, 1) => AggKind::Median,
+                        ("percentile" | "percentile_cont" | "percentile_disc", false, 2) => {
+                            let p = match &args[1] {
+                                Expr::Literal(Value::Number(num)) => num.as_f64()?,
+                                _ => return None,
+                            };
+                            if !(0.0..=1.0).contains(&p) {
+                                return None;
+                            }
+                            AggKind::Percentile(p)
+                        }
                         _ => return None,
                     };
                     Plan::Agg {
@@ -564,6 +753,404 @@ impl IncrementalWindow {
                     }
                     Plan::Agg { name, .. } => {
                         row.insert(name.clone(), acc.finish());
+                    }
+                }
+            }
+            out.push(row);
+        }
+        Evaluator::apply_order_limit(&self.order_stmt, &mut out);
+        out
+    }
+}
+
+/// Invertible O(1) accumulator for sliding and hopping time windows.
+/// - `COUNT`, `SUM`, `AVG` update in O(1) on both insertion and expiration.
+/// - `MIN` and `MAX` use a monotonic `VecDeque<(i64, f64, Value)>` for O(1) amortized
+///   sliding extrema without scanning the window buffer.
+#[derive(Debug, Clone)]
+pub enum SlidingAcc {
+    Count {
+        n: i64,
+        entries: VecDeque<(i64, bool)>,
+    },
+    Sum {
+        int_sum: i64,
+        float_sum: f64,
+        float_count: usize,
+        valid_count: usize,
+        entries: VecDeque<(i64, Option<i64>, Option<f64>)>,
+    },
+    Avg {
+        sum: f64,
+        n: u64,
+        entries: VecDeque<(i64, Option<f64>)>,
+    },
+    Extreme {
+        is_max: bool,
+        /// Monotonic queue of `(timestamp_ms, numeric_value, original_json_value)`
+        mono_deque: VecDeque<(i64, f64, Value)>,
+    },
+}
+
+impl SlidingAcc {
+    pub fn new(kind: AggKind) -> Self {
+        match kind {
+            AggKind::CountAll | AggKind::Count => SlidingAcc::Count {
+                n: 0,
+                entries: VecDeque::new(),
+            },
+            AggKind::Sum => SlidingAcc::Sum {
+                int_sum: 0,
+                float_sum: 0.0,
+                float_count: 0,
+                valid_count: 0,
+                entries: VecDeque::new(),
+            },
+            AggKind::Avg => SlidingAcc::Avg {
+                sum: 0.0,
+                n: 0,
+                entries: VecDeque::new(),
+            },
+            AggKind::Min => SlidingAcc::Extreme {
+                is_max: false,
+                mono_deque: VecDeque::new(),
+            },
+            AggKind::Max => SlidingAcc::Extreme {
+                is_max: true,
+                mono_deque: VecDeque::new(),
+            },
+            _ => SlidingAcc::Count {
+                n: 0,
+                entries: VecDeque::new(),
+            },
+        }
+    }
+
+    pub fn push(&mut self, kind: AggKind, ts: i64, value: Option<&Value>) {
+        match (self, kind) {
+            (SlidingAcc::Count { n, entries }, AggKind::CountAll) => {
+                *n += 1;
+                entries.push_back((ts, true));
+            }
+            (SlidingAcc::Count { n, entries }, _) => {
+                let valid = value.is_some_and(|v| !v.is_null());
+                if valid {
+                    *n += 1;
+                }
+                entries.push_back((ts, valid));
+            }
+            (
+                SlidingAcc::Sum {
+                    int_sum,
+                    float_sum,
+                    float_count,
+                    valid_count,
+                    entries,
+                },
+                _,
+            ) => {
+                if let Some(v) = value.filter(|v| v.is_number()) {
+                    let f = v.as_f64().unwrap_or(0.0);
+                    *float_sum += f;
+                    *valid_count += 1;
+                    if let Some(i) = v.as_i64() {
+                        *int_sum = int_sum.saturating_add(i);
+                        entries.push_back((ts, Some(i), Some(f)));
+                    } else {
+                        *float_count += 1;
+                        entries.push_back((ts, None, Some(f)));
+                    }
+                } else {
+                    entries.push_back((ts, None, None));
+                }
+            }
+            (SlidingAcc::Avg { sum, n, entries }, _) => {
+                if let Some(v) = value.filter(|v| v.is_number()) {
+                    let f = v.as_f64().unwrap_or(0.0);
+                    *sum += f;
+                    *n += 1;
+                    entries.push_back((ts, Some(f)));
+                } else {
+                    entries.push_back((ts, None));
+                }
+            }
+            (SlidingAcc::Extreme { is_max, mono_deque }, _) => {
+                if let Some(v) = value.filter(|v| v.is_number()) {
+                    let Some(f) = v.as_f64() else {
+                        return;
+                    };
+                    // Maintain monotonic order: pop back elements dominated by `f`
+                    while let Some(&(_, back_f, _)) = mono_deque.back() {
+                        let dominated = if *is_max { f >= back_f } else { f <= back_f };
+                        if dominated {
+                            mono_deque.pop_back();
+                        } else {
+                            break;
+                        }
+                    }
+                    mono_deque.push_back((ts, f, v.clone()));
+                }
+            }
+        }
+    }
+
+    /// Evict all entries strictly older than `cutoff_ts` in O(1) amortized time.
+    pub fn evict_before(&mut self, cutoff_ts: i64) {
+        match self {
+            SlidingAcc::Count { n, entries } => {
+                while let Some(&(ts, valid)) = entries.front() {
+                    if ts < cutoff_ts {
+                        if valid {
+                            *n -= 1;
+                        }
+                        entries.pop_front();
+                    } else {
+                        break;
+                    }
+                }
+            }
+            SlidingAcc::Sum {
+                int_sum,
+                float_sum,
+                float_count,
+                valid_count,
+                entries,
+            } => {
+                while let Some(&(ts, opt_i, opt_f)) = entries.front() {
+                    if ts < cutoff_ts {
+                        if let Some(f) = opt_f {
+                            *float_sum -= f;
+                            *valid_count = valid_count.saturating_sub(1);
+                            if let Some(i) = opt_i {
+                                *int_sum = int_sum.saturating_sub(i);
+                            } else {
+                                *float_count = float_count.saturating_sub(1);
+                            }
+                        }
+                        entries.pop_front();
+                    } else {
+                        break;
+                    }
+                }
+                if *valid_count == 0 {
+                    *int_sum = 0;
+                    *float_sum = 0.0;
+                    *float_count = 0;
+                }
+            }
+            SlidingAcc::Avg { sum, n, entries } => {
+                while let Some(&(ts, opt_f)) = entries.front() {
+                    if ts < cutoff_ts {
+                        if let Some(f) = opt_f {
+                            *sum -= f;
+                            *n = n.saturating_sub(1);
+                        }
+                        entries.pop_front();
+                    } else {
+                        break;
+                    }
+                }
+                if *n == 0 {
+                    *sum = 0.0;
+                }
+            }
+            SlidingAcc::Extreme { mono_deque, .. } => {
+                while let Some(&(ts, _, _)) = mono_deque.front() {
+                    if ts < cutoff_ts {
+                        mono_deque.pop_front();
+                    } else {
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn current_value(&self) -> Value {
+        match self {
+            SlidingAcc::Count { n, .. } => Value::from(*n),
+            SlidingAcc::Sum {
+                int_sum,
+                float_sum,
+                float_count,
+                valid_count,
+                ..
+            } => {
+                if *valid_count == 0 {
+                    Value::Null
+                } else if *float_count == 0 {
+                    Value::from(*int_sum)
+                } else {
+                    serde_json::json!(*float_sum)
+                }
+            }
+            SlidingAcc::Avg { sum, n, .. } => {
+                if *n == 0 {
+                    Value::Null
+                } else {
+                    serde_json::json!(*sum / (*n as f64))
+                }
+            }
+            SlidingAcc::Extreme { mono_deque, .. } => mono_deque
+                .front()
+                .map(|(_, _, val)| val.clone())
+                .unwrap_or(Value::Null),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct SlidingGroup {
+    group_values: Vec<Value>,
+    firsts: Vec<Value>,
+    accs: Vec<SlidingAcc>,
+}
+
+/// Row-free O(groups) incremental accumulator for sliding and hopping time windows.
+#[derive(Debug, Clone)]
+pub struct SlidingIncrementalWindow {
+    where_clause: Option<Expr>,
+    group_by: Vec<Expr>,
+    group_names: Vec<String>,
+    plans: Vec<Plan>,
+    order_stmt: SelectStmt,
+    index: HashMap<String, usize>,
+    groups: Vec<SlidingGroup>,
+    key: String,
+}
+
+impl SlidingIncrementalWindow {
+    pub fn try_new(stmt: &SelectStmt) -> Option<Self> {
+        let base = IncrementalWindow::try_new(stmt)?;
+        if base.plans.iter().any(|p| {
+            matches!(
+                p,
+                Plan::Agg {
+                    kind: AggKind::Stddev
+                        | AggKind::Stddevs
+                        | AggKind::Var
+                        | AggKind::Vars
+                        | AggKind::Median
+                        | AggKind::Percentile(_),
+                    ..
+                }
+            )
+        }) {
+            return None;
+        }
+        Some(Self {
+            where_clause: base.where_clause,
+            group_by: base.group_by,
+            group_names: base.group_names,
+            plans: base.plans,
+            order_stmt: base.order_stmt,
+            index: HashMap::new(),
+            groups: Vec::new(),
+            key: String::new(),
+        })
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.groups.is_empty()
+            || self.groups.iter().all(|g| {
+                g.accs.iter().all(|a| match a {
+                    SlidingAcc::Count { n, .. } => *n == 0,
+                    SlidingAcc::Sum { valid_count, .. } => *valid_count == 0,
+                    SlidingAcc::Avg { n, .. } => *n == 0,
+                    SlidingAcc::Extreme { mono_deque, .. } => mono_deque.is_empty(),
+                })
+            })
+    }
+
+    pub fn push(&mut self, ts: i64, row: &Row) -> bool {
+        if let Some(cond) = &self.where_clause {
+            if !Evaluator::eval_bool(cond, row) {
+                return false;
+            }
+        }
+        self.key.clear();
+        for expr in &self.group_by {
+            write_group_key(&mut self.key, &Evaluator::group_value(expr, row));
+        }
+        let gi = match self.index.get(self.key.as_str()) {
+            Some(&i) => i,
+            None => {
+                let group = SlidingGroup {
+                    group_values: self
+                        .group_by
+                        .iter()
+                        .map(|g| Evaluator::group_value(g, row).into_owned())
+                        .collect(),
+                    firsts: self
+                        .plans
+                        .iter()
+                        .map(|p| match p {
+                            Plan::First { expr, .. } => {
+                                Evaluator::group_value(expr, row).into_owned()
+                            }
+                            Plan::Agg { .. } => Value::Null,
+                        })
+                        .collect(),
+                    accs: self
+                        .plans
+                        .iter()
+                        .map(|p| match p {
+                            Plan::Agg { kind, .. } => SlidingAcc::new(*kind),
+                            Plan::First { .. } => SlidingAcc::new(AggKind::Count),
+                        })
+                        .collect(),
+                };
+                self.index.insert(self.key.clone(), self.groups.len());
+                self.groups.push(group);
+                self.groups.len() - 1
+            }
+        };
+        let group = &mut self.groups[gi];
+        for (plan, acc) in self.plans.iter().zip(group.accs.iter_mut()) {
+            if let Plan::Agg { kind, arg, .. } = plan {
+                match arg {
+                    None => acc.push(*kind, ts, None),
+                    Some(expr) => {
+                        let v = Evaluator::group_value(expr, row);
+                        acc.push(*kind, ts, Some(v.as_ref()));
+                    }
+                }
+            }
+        }
+        true
+    }
+
+    pub fn evict_before(&mut self, cutoff_ts: i64) {
+        for group in &mut self.groups {
+            for acc in &mut group.accs {
+                acc.evict_before(cutoff_ts);
+            }
+        }
+    }
+
+    pub fn snapshot(&self) -> Vec<Row> {
+        let mut out = Vec::with_capacity(self.groups.len());
+        for group in &self.groups {
+            let has_active = group.accs.iter().any(|a| match a {
+                SlidingAcc::Count { n, .. } => *n > 0,
+                SlidingAcc::Sum { valid_count, .. } => *valid_count > 0,
+                SlidingAcc::Avg { n, .. } => *n > 0,
+                SlidingAcc::Extreme { mono_deque, .. } => !mono_deque.is_empty(),
+            });
+            if !has_active && !group.accs.is_empty() {
+                continue;
+            }
+            let mut row: Row = HashMap::with_capacity(self.group_names.len() + self.plans.len());
+            for (name, value) in self.group_names.iter().zip(&group.group_values) {
+                row.insert(name.clone(), value.clone());
+            }
+            for ((plan, first), acc) in self.plans.iter().zip(&group.firsts).zip(&group.accs) {
+                match plan {
+                    Plan::First { name, .. } => {
+                        row.entry(name.clone()).or_insert_with(|| first.clone());
+                    }
+                    Plan::Agg { name, .. } => {
+                        row.insert(name.clone(), acc.current_value());
                     }
                 }
             }

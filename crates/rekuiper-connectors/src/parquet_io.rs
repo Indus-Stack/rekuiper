@@ -88,6 +88,9 @@ fn records_to_record_batch(records: &[StreamRecord]) -> Result<RecordBatch> {
     let mut field_types: BTreeMap<String, DataType> = BTreeMap::new();
     for r in records {
         for (k, v) in &r.data {
+            if k == "__meta__" || k.starts_with("__") {
+                continue;
+            }
             let candidate_type = match v {
                 Value::Bool(_) => DataType::Boolean,
                 Value::Number(n) if n.is_i64() || n.is_u64() => DataType::Int64,
@@ -338,6 +341,36 @@ mod tests {
         assert_eq!(read_back[0].data.get("device_id").unwrap(), "turbine-01");
         assert_eq!(read_back[0].data.get("active").unwrap(), &Value::Bool(true));
         assert_eq!(read_back[1].data.get("device_id").unwrap(), "turbine-02");
+
+        let _ = std::fs::remove_file(&test_file);
+    }
+
+    #[test]
+    fn test_parquet_filters_internal_meta_keys() {
+        let temp_dir = std::env::temp_dir();
+        let test_file = temp_dir.join(format!(
+            "test_parquet_meta_{}.parquet",
+            uuid::Uuid::new_v4()
+        ));
+
+        let mut rec = HashMap::new();
+        rec.insert("sensor_id".to_string(), Value::String("s-100".into()));
+        rec.insert("val".to_string(), serde_json::json!(42.0));
+        rec.insert("__meta__".to_string(), serde_json::json!({"topic": "demo"}));
+        rec.insert("__internal_batch__".to_string(), Value::Bool(true));
+
+        let records = vec![StreamRecord::new(rec)];
+        write_records_to_parquet(&records, &test_file).expect("write parquet failed");
+
+        let read_back = read_parquet_file(&test_file).expect("read parquet failed");
+        assert_eq!(read_back.len(), 1);
+        assert_eq!(read_back[0].data.get("sensor_id").unwrap(), "s-100");
+        assert_eq!(
+            read_back[0].data.get("val").unwrap(),
+            &serde_json::json!(42.0)
+        );
+        assert!(read_back[0].data.get("__meta__").is_none());
+        assert!(read_back[0].data.get("__internal_batch__").is_none());
 
         let _ = std::fs::remove_file(&test_file);
     }

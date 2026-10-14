@@ -14,7 +14,7 @@ docker run -d \
   -p 9081:9081 \
   -p 20498:20498 \
   -p 20499:20499 \
-  ankurkrp/rekuiper:0.509-beta
+  ankurkrp/rekuiper:1.0.0-rc1
 ```
 
 Verify that the engine operates and responds:

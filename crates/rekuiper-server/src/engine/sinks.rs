@@ -853,6 +853,7 @@ pub(crate) struct FileBatchWriter {
     path: std::path::PathBuf,
     file: Option<tokio::fs::File>,
     buf: Vec<u8>,
+    parquet_buf: Vec<StreamRecord>,
     pub(crate) pending: usize,
     has_header_written: bool,
 }
@@ -863,9 +864,18 @@ impl FileBatchWriter {
             path,
             file: None,
             buf: Vec::new(),
+            parquet_buf: Vec::new(),
             pending: 0,
             has_header_written: false,
         }
+    }
+
+    pub(crate) fn push_parquet_record(&mut self, data: HashMap<String, Value>, ts: i64) {
+        self.parquet_buf.push(StreamRecord {
+            timestamp: ts,
+            data: data.into(),
+        });
+        self.pending += 1;
     }
 
     async fn ensure_open(&mut self) -> std::io::Result<()> {
@@ -928,10 +938,19 @@ impl FileBatchWriter {
     }
 
     pub(crate) fn should_flush(&self) -> bool {
+        if !self.parquet_buf.is_empty() {
+            return self.parquet_buf.len() >= 1024;
+        }
         self.pending >= 100 || self.buf.len() >= 64 * 1024
     }
 
     pub(crate) async fn flush(&mut self) -> std::io::Result<()> {
+        if !self.parquet_buf.is_empty() {
+            let records = std::mem::take(&mut self.parquet_buf);
+            self.pending = 0;
+            return rekuiper_connectors::parquet_io::write_records_to_parquet(&records, &self.path)
+                .map_err(|e| std::io::Error::other(e.to_string()));
+        }
         if self.buf.is_empty() {
             return Ok(());
         }
@@ -1223,59 +1242,64 @@ pub(crate) async fn send_action(
             delimiter,
             opts,
         } => {
+            let writer = files
+                .entry(path.clone())
+                .or_insert_with(|| FileBatchWriter::new(path.clone()));
             if *parquet {
-                rekuiper_connectors::parquet_io::append_record_to_parquet(output, path)
-                    .map_err(|e| SendError::Permanent(format!("parquet append error: {}", e)))?;
-            } else {
-                let writer = files
-                    .entry(path.clone())
-                    .or_insert_with(|| FileBatchWriter::new(path.clone()));
                 if let Some(Value::Array(arr)) = output.data.get(BATCH_ROWS_KEY) {
-                    if *delimited {
-                        let text = format_record_delimited(
-                            &Value::Array(arr.clone()),
-                            delimiter,
-                            opts.fields.as_deref(),
-                        );
-                        writer.push_text(&text);
-                    } else if opts.send_single {
-                        for row in arr {
-                            if let Some(tpl) = template {
-                                writer.push_text(&render_sink_template_row(tpl, row));
-                            } else {
-                                let formatted = format_record_for_sink_val(row, opts);
-                                if let Ok(mut line) = serde_json::to_string(&formatted) {
-                                    line.push('\n');
-                                    writer.buf.extend_from_slice(line.as_bytes());
-                                    writer.pending += 1;
-                                }
-                            }
-                        }
-                    } else if let Some(tpl) = template {
-                        writer.push_text(&render_sink_template_batch(tpl, arr));
-                    } else {
-                        let formatted: Vec<Value> = arr
-                            .iter()
-                            .map(|r| format_record_for_sink_val(r, opts))
-                            .collect();
-                        if let Ok(mut line) = serde_json::to_string(&Value::Array(formatted)) {
-                            line.push('\n');
-                            writer.buf.extend_from_slice(line.as_bytes());
-                            writer.pending += 1;
+                    for row in arr {
+                        if let Value::Object(m) = format_record_for_sink_val(row, opts) {
+                            writer.push_parquet_record(m.into_iter().collect(), output.timestamp);
                         }
                     }
-                } else if *delimited {
-                    writer.push_delimited(&output.data, delimiter, *has_header, opts);
+                } else if let Value::Object(m) = format_record_for_sink(&output.data, opts) {
+                    writer.push_parquet_record(m.into_iter().collect(), output.timestamp);
+                }
+            } else if let Some(Value::Array(arr)) = output.data.get(BATCH_ROWS_KEY) {
+                if *delimited {
+                    let text = format_record_delimited(
+                        &Value::Array(arr.clone()),
+                        delimiter,
+                        opts.fields.as_deref(),
+                    );
+                    writer.push_text(&text);
+                } else if opts.send_single {
+                    for row in arr {
+                        if let Some(tpl) = template {
+                            writer.push_text(&render_sink_template_row(tpl, row));
+                        } else {
+                            let formatted = format_record_for_sink_val(row, opts);
+                            if let Ok(mut line) = serde_json::to_string(&formatted) {
+                                line.push('\n');
+                                writer.buf.extend_from_slice(line.as_bytes());
+                                writer.pending += 1;
+                            }
+                        }
+                    }
                 } else if let Some(tpl) = template {
-                    writer.push_text(&render_sink_template(tpl, &output.data, opts.send_single));
+                    writer.push_text(&render_sink_template_batch(tpl, arr));
                 } else {
-                    let formatted = format_record_for_sink(&output.data, opts);
-                    let payload = to_sink_payload(formatted, opts.send_single);
-                    if let Ok(mut line) = serde_json::to_string(&payload) {
+                    let formatted: Vec<Value> = arr
+                        .iter()
+                        .map(|r| format_record_for_sink_val(r, opts))
+                        .collect();
+                    if let Ok(mut line) = serde_json::to_string(&Value::Array(formatted)) {
                         line.push('\n');
                         writer.buf.extend_from_slice(line.as_bytes());
                         writer.pending += 1;
                     }
+                }
+            } else if *delimited {
+                writer.push_delimited(&output.data, delimiter, *has_header, opts);
+            } else if let Some(tpl) = template {
+                writer.push_text(&render_sink_template(tpl, &output.data, opts.send_single));
+            } else {
+                let formatted = format_record_for_sink(&output.data, opts);
+                let payload = to_sink_payload(formatted, opts.send_single);
+                if let Ok(mut line) = serde_json::to_string(&payload) {
+                    line.push('\n');
+                    writer.buf.extend_from_slice(line.as_bytes());
+                    writer.pending += 1;
                 }
             }
             Ok(())
@@ -1738,7 +1762,7 @@ pub(crate) async fn send_action(
                         clean_data.insert(k.clone(), clean_sink_value(v, *send_nil_field));
                     }
                     let mut clean_rec = output.clone();
-                    clean_rec.data = clean_data;
+                    clean_rec.data = clean_data.into();
                     let _ = ctx.stream_bus.try_publish(&final_topic, clean_rec);
                 }
                 Ok(())
@@ -1754,7 +1778,7 @@ pub(crate) async fn send_action(
                     clean_data.insert(k.clone(), clean_sink_value(v, *send_nil_field));
                 }
                 let mut clean_rec = output.clone();
-                clean_rec.data = clean_data;
+                clean_rec.data = clean_data.into();
                 match ctx.stream_bus.try_publish(&final_topic, clean_rec) {
                     Ok(_) => Ok(()),
                     // Produced data with nobody listening: not an error.
@@ -2365,43 +2389,44 @@ pub(crate) async fn deliver_record(
         }
 
         // Sink batching (batchSize / lingerInterval)
-        let batch_opts = rt.action.common_opts().cloned();
-        if let Some(opts) = batch_opts {
-            if opts.batch_size > 0 || opts.linger_interval > 0 {
-                let rows: Vec<Value> =
-                    if let Some(Value::Array(arr)) = output.data.get(BATCH_ROWS_KEY) {
-                        arr.iter()
-                            .map(|item| format_record_for_sink_val(item, &opts))
-                            .collect()
-                    } else {
-                        vec![format_record_for_sink(&output.data, &opts)]
-                    };
-                rt.batch_buffer.extend(rows);
-                if opts.batch_size > 0 && rt.batch_buffer.len() >= opts.batch_size {
-                    while rt.batch_buffer.len() >= opts.batch_size {
-                        let batch: Vec<Value> = rt.batch_buffer.drain(..opts.batch_size).collect();
-                        rt.last_batch_time = tokio::time::Instant::now();
-                        let mut batch_data = HashMap::new();
-                        batch_data.insert(BATCH_ROWS_KEY.to_string(), Value::Array(batch));
-                        let batch_record = StreamRecord::new(batch_data);
-                        if let Err(err) = send_action(rt, &batch_record, None, ctx, files).await {
-                            let cacheable =
-                                matches!(err, SendError::Retry(_)) && rt.cache.is_some();
-                            if let (true, Some(cache)) = (cacheable, rt.cache.as_mut()) {
-                                cache.push(batch_record);
-                            }
-                            report_send_error(rt, ctx, &err, cacheable);
-                            if cacheable {
-                                sync_cache_drops(rt, ctx);
-                                delivery = delivery.max(Delivery::Cached);
-                            } else {
-                                delivery = Delivery::Failed;
-                            }
+        if let Some(opts) = rt
+            .action
+            .common_opts()
+            .filter(|o| o.batch_size > 0 || o.linger_interval > 0)
+            .cloned()
+        {
+            let rows: Vec<Value> = if let Some(Value::Array(arr)) = output.data.get(BATCH_ROWS_KEY)
+            {
+                arr.iter()
+                    .map(|item| format_record_for_sink_val(item, &opts))
+                    .collect()
+            } else {
+                vec![format_record_for_sink(&output.data, &opts)]
+            };
+            rt.batch_buffer.extend(rows);
+            if opts.batch_size > 0 && rt.batch_buffer.len() >= opts.batch_size {
+                while rt.batch_buffer.len() >= opts.batch_size {
+                    let batch: Vec<Value> = rt.batch_buffer.drain(..opts.batch_size).collect();
+                    rt.last_batch_time = tokio::time::Instant::now();
+                    let mut batch_data = HashMap::new();
+                    batch_data.insert(BATCH_ROWS_KEY.to_string(), Value::Array(batch));
+                    let batch_record = StreamRecord::new(batch_data);
+                    if let Err(err) = send_action(rt, &batch_record, None, ctx, files).await {
+                        let cacheable = matches!(err, SendError::Retry(_)) && rt.cache.is_some();
+                        if let (true, Some(cache)) = (cacheable, rt.cache.as_mut()) {
+                            cache.push(batch_record);
+                        }
+                        report_send_error(rt, ctx, &err, cacheable);
+                        if cacheable {
+                            sync_cache_drops(rt, ctx);
+                            delivery = delivery.max(Delivery::Cached);
+                        } else {
+                            delivery = Delivery::Failed;
                         }
                     }
                 }
-                continue;
             }
+            continue;
         }
 
         if let Err(err) = send_action(rt, output, None, ctx, files).await {

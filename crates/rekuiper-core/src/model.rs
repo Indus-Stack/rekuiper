@@ -1,18 +1,139 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 use std::collections::HashMap;
+use std::ops::{Deref, DerefMut};
+use std::sync::Arc;
+
+/// Copy-on-write map wrapper backed by `Arc<HashMap<String, Value>>`.
+/// Cloning a `StreamRecord` across N subscribers in `StreamBus` is an O(1)
+/// atomic refcount increment; mutation via `DerefMut` triggers `Arc::make_mut`.
+#[derive(Debug, Clone, Default)]
+pub struct SharedMap(pub Arc<HashMap<String, Value>>);
+
+impl SharedMap {
+    #[inline]
+    pub fn new(map: HashMap<String, Value>) -> Self {
+        Self(Arc::new(map))
+    }
+
+    #[inline]
+    pub fn into_inner(self) -> HashMap<String, Value> {
+        Arc::try_unwrap(self.0).unwrap_or_else(|arc| (*arc).clone())
+    }
+}
+
+impl Deref for SharedMap {
+    type Target = HashMap<String, Value>;
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for SharedMap {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        Arc::make_mut(&mut self.0)
+    }
+}
+
+impl PartialEq for SharedMap {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0) || *self.0 == *other.0
+    }
+}
+
+impl PartialEq<HashMap<String, Value>> for SharedMap {
+    fn eq(&self, other: &HashMap<String, Value>) -> bool {
+        *self.0 == *other
+    }
+}
+
+impl PartialEq<SharedMap> for HashMap<String, Value> {
+    fn eq(&self, other: &SharedMap) -> bool {
+        *self == *other.0
+    }
+}
+
+impl<'a> IntoIterator for &'a SharedMap {
+    type Item = (&'a String, &'a Value);
+    type IntoIter = std::collections::hash_map::Iter<'a, String, Value>;
+
+    #[inline]
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter()
+    }
+}
+
+impl IntoIterator for SharedMap {
+    type Item = (String, Value);
+    type IntoIter = std::collections::hash_map::IntoIter<String, Value>;
+
+    #[inline]
+    fn into_iter(self) -> Self::IntoIter {
+        self.into_inner().into_iter()
+    }
+}
+
+impl FromIterator<(String, Value)> for SharedMap {
+    #[inline]
+    fn from_iter<T: IntoIterator<Item = (String, Value)>>(iter: T) -> Self {
+        Self::new(iter.into_iter().collect())
+    }
+}
+
+impl From<HashMap<String, Value>> for SharedMap {
+    #[inline]
+    fn from(map: HashMap<String, Value>) -> Self {
+        Self::new(map)
+    }
+}
+
+impl From<SharedMap> for HashMap<String, Value> {
+    #[inline]
+    fn from(shared: SharedMap) -> Self {
+        shared.into_inner()
+    }
+}
+
+impl Serialize for SharedMap {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.0.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for SharedMap {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        HashMap::<String, Value>::deserialize(deserializer).map(Self::new)
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StreamRecord {
     pub timestamp: i64,
-    pub data: HashMap<String, Value>,
+    pub data: SharedMap,
 }
 
 impl StreamRecord {
     pub fn new(data: HashMap<String, Value>) -> Self {
         Self {
             timestamp: chrono::Utc::now().timestamp_millis(),
+            data: SharedMap::new(data),
+        }
+    }
+
+    pub fn from_shared(data: SharedMap) -> Self {
+        Self {
+            timestamp: chrono::Utc::now().timestamp_millis(),
             data,
+        }
+    }
+
+    #[inline]
+    pub fn with_timestamp(data: HashMap<String, Value>, timestamp: i64) -> Self {
+        Self {
+            timestamp,
+            data: SharedMap::new(data),
         }
     }
 }

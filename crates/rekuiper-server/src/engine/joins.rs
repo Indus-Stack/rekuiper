@@ -242,6 +242,9 @@ pub(crate) async fn apply_lookup_joins(
         record,
     );
     for join in &select_stmt.joins {
+        if matches!(join.join_type, JoinType::Asof | JoinType::LeftAsof) {
+            continue;
+        }
         let mut matched: Option<HashMap<String, Value>> = None;
         for row in lookup_candidates(
             table_manager,
@@ -304,7 +307,169 @@ pub(crate) fn insert_namespaced(
 #[derive(Debug, Clone)]
 pub(crate) struct TaggedRow {
     pub(crate) source: String,
-    pub(crate) data: HashMap<String, Value>,
+    pub(crate) data: rekuiper_core::model::SharedMap,
+}
+
+/// Maximum distinct join keys retained per ASOF JOIN target stream to guarantee
+/// strict O(keys) bounded memory on constrained edge gateways.
+#[allow(dead_code)]
+pub(crate) const MAX_ASOF_KEYS: usize = 10_000;
+
+/// Latest-value state store for stream-to-stream `ASOF JOIN` and `LEFT ASOF JOIN`.
+/// Retains only the most recent right-hand record per join key (bounded by `MAX_ASOF_KEYS`).
+#[allow(dead_code)]
+#[derive(Debug, Default)]
+pub(crate) struct AsofJoinState {
+    /// Maps `(target_stream_name, join_key_value)` -> `(right_timestamp_ms, right_row)`.
+    latest_by_key: HashMap<(String, String), (i64, HashMap<String, Value>)>,
+}
+
+#[allow(dead_code)]
+impl AsofJoinState {
+    pub(crate) fn new() -> Self {
+        Self::default()
+    }
+
+    /// Ingest a new event from a joined right-hand stream, updating the latest
+    /// snapshot for its join key in O(1) time.
+    pub(crate) fn ingest_right_event(
+        &mut self,
+        select_stmt: &SelectStmt,
+        target_stream: &str,
+        right_ts: i64,
+        right_row: &HashMap<String, Value>,
+    ) {
+        for join in &select_stmt.joins {
+            if join.target != target_stream
+                || !matches!(join.join_type, JoinType::Asof | JoinType::LeftAsof)
+            {
+                continue;
+            }
+            let mut namespace_probe = right_row.clone();
+            insert_namespaced(
+                &mut namespace_probe,
+                &join.target,
+                join.alias.as_deref(),
+                right_row,
+            );
+            if let Some(key_val) = Self::extract_right_key(
+                join,
+                &select_stmt.from,
+                select_stmt.from_alias.as_deref(),
+                &namespace_probe,
+            ) {
+                let map_key = (target_stream.to_string(), key_val);
+                if !self.latest_by_key.contains_key(&map_key)
+                    && self.latest_by_key.len() >= MAX_ASOF_KEYS
+                {
+                    // Evict the oldest timestamped entry to strictly bound RAM
+                    if let Some(oldest_key) = self
+                        .latest_by_key
+                        .iter()
+                        .min_by_key(|(_, (ts, _))| *ts)
+                        .map(|(k, _)| k.clone())
+                    {
+                        self.latest_by_key.remove(&oldest_key);
+                    }
+                }
+                let entry = self
+                    .latest_by_key
+                    .entry(map_key)
+                    .or_insert_with(|| (right_ts, right_row.clone()));
+                if right_ts >= entry.0 {
+                    *entry = (right_ts, right_row.clone());
+                }
+            }
+        }
+    }
+
+    /// Probe the ASOF state table for a left-hand stream event at `left_ts`.
+    /// Matches when `right_ts <= left_ts` and the equality key matches.
+    pub(crate) fn probe_left_event(
+        &self,
+        select_stmt: &SelectStmt,
+        left_ts: i64,
+        left_row: &HashMap<String, Value>,
+    ) -> Option<HashMap<String, Value>> {
+        let mut combined = left_row.clone();
+        insert_namespaced(
+            &mut combined,
+            &select_stmt.from,
+            select_stmt.from_alias.as_deref(),
+            left_row,
+        );
+
+        for join in &select_stmt.joins {
+            if !matches!(join.join_type, JoinType::Asof | JoinType::LeftAsof) {
+                continue;
+            }
+            let matched_row = join_key_parts(
+                join,
+                &select_stmt.from,
+                select_stmt.from_alias.as_deref(),
+                &combined,
+            )
+            .and_then(|(_, key_val)| {
+                self.latest_by_key
+                    .get(&(join.target.clone(), key_val))
+                    .filter(|(right_ts, _)| *right_ts <= left_ts)
+                    .map(|(_, row)| row)
+            });
+
+            match matched_row {
+                Some(right_row) => {
+                    for (k, v) in right_row {
+                        combined.entry(k.clone()).or_insert_with(|| v.clone());
+                    }
+                    insert_namespaced(
+                        &mut combined,
+                        &join.target,
+                        join.alias.as_deref(),
+                        right_row,
+                    );
+                }
+                None if join.join_type == JoinType::LeftAsof => {}
+                None => return None,
+            }
+        }
+        Some(combined)
+    }
+
+    fn extract_right_key(
+        join: &JoinClause,
+        from: &str,
+        from_alias: Option<&str>,
+        right_probe: &HashMap<String, Value>,
+    ) -> Option<String> {
+        let (col, _) = join_key_parts(join, from, from_alias, right_probe).or_else(|| {
+            // Fallback: evaluate the right-side column directly from `right_probe`
+            let Expr::BinaryOp {
+                left,
+                op: rekuiper_sql::BinaryOperator::Eq,
+                right,
+            } = join.on.as_ref()?
+            else {
+                return None;
+            };
+            for side_expr in [left.as_ref(), right.as_ref()] {
+                if let Expr::FieldAccess { parent, field } = side_expr {
+                    if let Expr::Identifier(p) = parent.as_ref() {
+                        if p == &join.target || join.alias.as_ref().is_some_and(|a| p == a) {
+                            return Some((field.clone(), String::new()));
+                        }
+                    }
+                }
+            }
+            None
+        })?;
+        match right_probe.get(&col)? {
+            Value::Null => None,
+            Value::String(s) => Some(s.clone()),
+            Value::Number(n) => Some(n.to_string()),
+            Value::Bool(b) => Some(b.to_string()),
+            _ => None,
+        }
+    }
 }
 
 /// Upper bound on join fan-out per window trigger: windows are bounded
@@ -337,7 +502,7 @@ pub(crate) async fn eval_window_join_batch(
     let from_rows: Vec<&HashMap<String, Value>> = batch
         .iter()
         .filter(|r| r.source == select_stmt.from)
-        .map(|r| &r.data)
+        .map(|r| &*r.data)
         .collect();
     let mut combined_rows: Vec<HashMap<String, Value>> = Vec::new();
     for row in from_rows {
@@ -415,39 +580,78 @@ pub(crate) async fn eval_window_join_batch(
             let right_rows: Vec<&HashMap<String, Value>> = batch
                 .iter()
                 .filter(|r| r.source == join.target)
-                .map(|r| &r.data)
+                .map(|r| &*r.data)
                 .collect();
             // Index of matched right rows (for RIGHT/FULL preservation).
             let mut right_matched = vec![false; right_rows.len()];
             for left in &combined_rows {
-                let mut any = false;
-                for (ri, right) in right_rows.iter().enumerate() {
-                    let mut probe = (*left).clone();
-                    for (k, v) in right.iter() {
-                        probe.entry(k.clone()).or_insert(v.clone());
+                if matches!(join.join_type, JoinType::Asof | JoinType::LeftAsof) {
+                    let left_ts = left
+                        .get("timestamp")
+                        .or_else(|| left.get("ts"))
+                        .and_then(|v| v.as_i64().or_else(|| v.as_f64().map(|f| f as i64)))
+                        .unwrap_or(i64::MAX);
+
+                    let mut best: Option<(i64, HashMap<String, Value>)> = None;
+                    for right in &right_rows {
+                        let right_ts = right
+                            .get("timestamp")
+                            .or_else(|| right.get("ts"))
+                            .and_then(|v| v.as_i64().or_else(|| v.as_f64().map(|f| f as i64)))
+                            .unwrap_or(0);
+                        if right_ts > left_ts {
+                            continue;
+                        }
+                        let mut probe = (*left).clone();
+                        for (k, v) in right.iter() {
+                            probe.entry(k.clone()).or_insert(v.clone());
+                        }
+                        insert_namespaced(&mut probe, &join.target, join.alias.as_deref(), right);
+                        let cond_ok = match &join.on {
+                            Some(cond) => Evaluator::eval_bool(cond, &probe),
+                            None => true,
+                        };
+                        if cond_ok && best.as_ref().is_none_or(|(b_ts, _)| right_ts >= *b_ts) {
+                            best = Some((right_ts, probe));
+                        }
                     }
-                    insert_namespaced(&mut probe, &join.target, join.alias.as_deref(), right);
-                    let cond_ok = match &join.on {
-                        Some(cond) => Evaluator::eval_bool(cond, &probe),
-                        // No ON: cross product of the window.
-                        None => true,
-                    };
-                    if !cond_ok {
-                        continue;
+                    if let Some((_, probe)) = best {
+                        if next.len() < MAX_JOIN_FANOUT {
+                            next.push(probe);
+                        }
+                    } else if join.join_type == JoinType::LeftAsof && next.len() < MAX_JOIN_FANOUT {
+                        next.push((*left).clone());
                     }
-                    any = true;
-                    right_matched[ri] = true;
-                    if next.len() < MAX_JOIN_FANOUT {
-                        next.push(probe);
+                } else {
+                    let mut any = false;
+                    for (ri, right) in right_rows.iter().enumerate() {
+                        let mut probe = (*left).clone();
+                        for (k, v) in right.iter() {
+                            probe.entry(k.clone()).or_insert(v.clone());
+                        }
+                        insert_namespaced(&mut probe, &join.target, join.alias.as_deref(), right);
+                        let cond_ok = match &join.on {
+                            Some(cond) => Evaluator::eval_bool(cond, &probe),
+                            // No ON: cross product of the window.
+                            None => true,
+                        };
+                        if !cond_ok {
+                            continue;
+                        }
+                        any = true;
+                        right_matched[ri] = true;
+                        if next.len() < MAX_JOIN_FANOUT {
+                            next.push(probe);
+                        }
+                        if next.len() >= MAX_JOIN_FANOUT {
+                            break;
+                        }
                     }
-                    if next.len() >= MAX_JOIN_FANOUT {
-                        break;
-                    }
-                }
-                if !any {
-                    match join.join_type {
-                        JoinType::Left | JoinType::Full => next.push((*left).clone()),
-                        _ => {}
+                    if !any {
+                        match join.join_type {
+                            JoinType::Left | JoinType::Full => next.push((*left).clone()),
+                            _ => {}
+                        }
                     }
                 }
                 if next.len() >= MAX_JOIN_FANOUT {
@@ -482,4 +686,105 @@ pub(crate) async fn eval_window_join_batch(
     }
     // WHERE over the joined rows, then GROUP BY / HAVING / ORDER BY / LIMIT.
     Evaluator::eval_window_stateful(select_stmt, combined_rows, rule_state)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rekuiper_sql::Parser;
+
+    #[test]
+    fn test_asof_join_state_basic() {
+        let mut state = AsofJoinState::new();
+        let stmt = Parser::new("SELECT a.*, b.* FROM a ASOF JOIN b ON a.id = b.id")
+            .parse_select()
+            .unwrap();
+
+        let mut right1 = HashMap::new();
+        right1.insert("id".to_string(), Value::Number(1.into()));
+        right1.insert("temp".to_string(), Value::Number(20.into()));
+        state.ingest_right_event(&stmt, "b", 100, &right1);
+
+        // Probe before right1 timestamp (left_ts = 50) -> None (ASOF requires right_ts <= left_ts)
+        let mut left0 = HashMap::new();
+        left0.insert("id".to_string(), Value::Number(1.into()));
+        left0.insert("vib".to_string(), Value::Number(100.into()));
+        assert!(state.probe_left_event(&stmt, 50, &left0).is_none());
+
+        // Probe after right1 (left_ts = 150) -> matches right1 (temp = 20)
+        let matched1 = state.probe_left_event(&stmt, 150, &left0).unwrap();
+        assert_eq!(matched1.get("temp"), Some(&Value::Number(20.into())));
+
+        // Ingest next right event at ts 200
+        let mut right2 = HashMap::new();
+        right2.insert("id".to_string(), Value::Number(1.into()));
+        right2.insert("temp".to_string(), Value::Number(25.into()));
+        state.ingest_right_event(&stmt, "b", 200, &right2);
+
+        // Probe after right2 (left_ts = 250) -> matches right2 (temp = 25)
+        let matched2 = state.probe_left_event(&stmt, 250, &left0).unwrap();
+        assert_eq!(matched2.get("temp"), Some(&Value::Number(25.into())));
+    }
+
+    #[test]
+    fn test_left_asof_join_state() {
+        let state = AsofJoinState::new();
+        let stmt = Parser::new("SELECT a.*, b.* FROM a LEFT ASOF JOIN b ON a.id = b.id")
+            .parse_select()
+            .unwrap();
+
+        let mut left0 = HashMap::new();
+        left0.insert("id".to_string(), Value::Number(99.into()));
+        left0.insert("vib".to_string(), Value::Number(100.into()));
+        // Left ASOF preserves left row even if no prior right row exists
+        let res = state.probe_left_event(&stmt, 50, &left0);
+        assert!(res.is_some());
+        assert_eq!(res.unwrap().get("vib"), Some(&Value::Number(100.into())));
+    }
+
+    #[tokio::test]
+    async fn test_eval_window_join_batch_asof() {
+        let table_manager = TableManager::new();
+        let source_configs = Arc::new(RwLock::new(HashMap::new()));
+        let stmt = Parser::new("SELECT a.id, a.ts, b.val FROM a ASOF JOIN b ON a.id = b.id")
+            .parse_select()
+            .unwrap();
+
+        let mut b1 = HashMap::new();
+        b1.insert("id".to_string(), Value::Number(1.into()));
+        b1.insert("val".to_string(), Value::String("first".to_string()));
+        b1.insert("ts".to_string(), Value::Number(100.into()));
+
+        let mut b2 = HashMap::new();
+        b2.insert("id".to_string(), Value::Number(1.into()));
+        b2.insert("val".to_string(), Value::String("second".to_string()));
+        b2.insert("ts".to_string(), Value::Number(200.into()));
+
+        let mut a1 = HashMap::new();
+        a1.insert("id".to_string(), Value::Number(1.into()));
+        a1.insert("ts".to_string(), Value::Number(150.into()));
+
+        let batch = vec![
+            TaggedRow {
+                source: "b".to_string(),
+                data: b1.into(),
+            },
+            TaggedRow {
+                source: "b".to_string(),
+                data: b2.into(),
+            },
+            TaggedRow {
+                source: "a".to_string(),
+                data: a1.into(),
+            },
+        ];
+
+        let result =
+            eval_window_join_batch(&table_manager, &source_configs, &stmt, &batch, None).await;
+        assert_eq!(result.len(), 1);
+        assert_eq!(
+            result[0].get("val"),
+            Some(&Value::String("first".to_string()))
+        );
+    }
 }

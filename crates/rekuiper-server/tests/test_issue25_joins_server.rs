@@ -372,3 +372,80 @@ async fn test_defect2_event_time_window_stream_join_pairing() {
     matched_ids.sort();
     assert_eq!(matched_ids, vec![1, 2, 2, 4]);
 }
+
+#[tokio::test]
+async fn test_stream_to_stream_asof_join_stateless() {
+    let (base_url, _handle, state) = spawn_test_server_with_state().await;
+    let client = reqwest::Client::new();
+
+    // Create fast stream s and slow stream r
+    client
+        .post(format!("{}/streams", base_url))
+        .json(&json!({
+            "sql": "CREATE STREAM s () WITH (TYPE=\"memory\", FORMAT=\"json\", TIMESTAMP=\"ts\")"
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    client
+        .post(format!("{}/streams", base_url))
+        .json(&json!({
+            "sql": "CREATE STREAM r () WITH (TYPE=\"memory\", FORMAT=\"json\", TIMESTAMP=\"ts\")"
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    let mut sink_rx = state.stream_bus.subscribe("sink_asof_out");
+
+    // Stateless ASOF JOIN without window
+    let resp = client
+        .post(format!("{}/rules", base_url))
+        .json(&json!({
+            "id": "rule_asof_stateless",
+            "sql": "SELECT s.id AS id, s.val AS s_val, r.price AS r_price FROM s ASOF JOIN r ON s.id = r.id",
+            "actions": [{"memory": {"topic": "sink_asof_out"}}],
+            "options": {"isEventTime": true}
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), reqwest::StatusCode::CREATED);
+
+    // Ingest right stream events: id 1 at ts 100 with price 50, and at ts 200 with price 60
+    client
+        .post(format!("{}/streams/r/data", base_url))
+        .json(&json!({"id": 1, "price": 50, "ts": 100}))
+        .send()
+        .await
+        .unwrap();
+
+    client
+        .post(format!("{}/streams/r/data", base_url))
+        .json(&json!({"id": 1, "price": 60, "ts": 200}))
+        .send()
+        .await
+        .unwrap();
+
+    // Small delay to ensure right stream forwarder processes the snapshot
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    // Ingest left stream event: id 1 at ts 250 with val 10
+    // Should match latest right event <= 250 (which is ts 200, price 60)
+    client
+        .post(format!("{}/streams/s/data", base_url))
+        .json(&json!({"id": 1, "val": 10, "ts": 250}))
+        .send()
+        .await
+        .unwrap();
+
+    let rec = tokio::time::timeout(std::time::Duration::from_secs(3), sink_rx.recv())
+        .await
+        .expect("timed out waiting for asof output")
+        .expect("sink closed");
+
+    assert_eq!(rec.data.get("id"), Some(&json!(1)));
+    assert_eq!(rec.data.get("s_val"), Some(&json!(10)));
+    assert_eq!(rec.data.get("r_price"), Some(&json!(60)));
+}

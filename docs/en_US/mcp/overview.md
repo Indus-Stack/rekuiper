@@ -77,7 +77,7 @@ When the rekuiper daemon runs inside WSL2 or Docker:
 
 ## Tool Capabilities
 
-`rekuiper-mcp` exposes 46 tools across seven operational categories:
+`rekuiper-mcp` exposes 48 tools across seven operational categories:
 
 ### 1. SQL Intelligence and Offline Simulation
 
@@ -88,6 +88,7 @@ These tools use the embedded `rekuiper-sql` parser and evaluation engine in memo
 | `validate_sql` | Parses SQL abstract syntax trees, checks keywords, and validates streaming DDL syntax (including `BUFFER_FULL_POLICY`) offline. |
 | `test_sql_expression` | Executes queries against mock JSON event payloads in memory, supporting vector search (`cosine_similarity`), array operations (`array_positions`), and stateful analytics (`acc_distinct_collect`, `lead`). |
 | `explain_sql` | Deconstructs a SQL query into sources, projections, joins, window clauses, and filters. |
+| `explain_pipeline_profile` | Analyzes SQL queries offline. Reports execution tiers, memory boundaries, and execution bottlenecks. |
 
 #### Example: Offline Simulation
 
@@ -107,6 +108,7 @@ The assistant invokes `test_sql_expression` and evaluates the output in memory w
 | `delete_stream` | Drops an existing stream definition from the catalog. |
 | `push_stream_data` | Ingests test events directly into a stream endpoint. |
 | `list_tables` | Lists all dimension and lookup tables. |
+| `get_table` | Inspects schema and storage options for a lookup table. |
 | `create_table` | Registers an external lookup table (File, SQLite, Redis, or Memory). |
 | `delete_table` | Drops a dimension table from the catalog. |
 | `push_table_data` | Inserts or updates records in a lookup table. |
@@ -119,11 +121,13 @@ The assistant invokes `test_sql_expression` and evaluates the output in memory w
 | `get_rule` | Retrieves complete rule JSON (query, sinks, QoS, and checkpoint settings). |
 | `create_rule` | Deploys a new streaming rule topology. |
 | `update_rule` | Modifies SQL logic or action sinks for an active rule. |
+| `delete_rule` | Deletes a rule topology from the catalog. |
 | `start_stop_rule` | Starts, pauses, or restarts a rule. |
 | `bulk_start_stop_rules` | Starts or stops multiple rules simultaneously in batch. |
 | `get_rule_status` | Retrieves real-time throughput metrics, latency, and error counters. |
 | `get_rule_topo` | Retrieves the DAG execution graph of source, operator, and sink nodes. |
 | `reset_rule_state` | Clears checkpointed offsets and state stores for clean rule restarts. |
+| `explain_rule` | Explains execution plan and stream dependencies for a rule. |
 
 ### 4. Distributed Tracing and Diagnostics
 
@@ -145,6 +149,7 @@ The assistant invokes `test_sql_expression` and evaluates the output in memory w
 | `list_javascript_udfs` | Lists registered JavaScript User-Defined Functions. |
 | `create_javascript_udf` | Registers a custom scalar JavaScript function for streaming SQL queries. |
 | `delete_javascript_udf` | Deletes a JavaScript UDF. |
+| `list_services` | Lists external microservices and RPC configurations. |
 
 ### 6. WebAssembly (WASM) and Dynamic Secrets Management
 
@@ -159,6 +164,8 @@ The assistant invokes `test_sql_expression` and evaluates the output in memory w
 
 | Tool | Purpose |
 | :--- | :--- |
+| `get_configs` | Retrieves global server configuration parameters. |
+| `update_configs` | Updates global server configuration parameters. |
 | `get_engine_metrics` | Retrieves engine uptime, memory usage, CPU load, and message throughput. |
 | `ping_engine` | Tests daemon connectivity and measures ping roundtrip latency. |
 | `export_data` | Exports a full or filtered JSON backup of the catalog. |

@@ -749,6 +749,20 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
                 "required": ["text"]
             }),
         },
+        ToolDefinition {
+            name: "explain_pipeline_profile".to_string(),
+            description: "AI-native static performance profiler and optimization advisor for rekuiper streaming SQL queries. Analyzes whether a query qualifies for zero-allocation stateless fast-path execution, Rete-Lite O(1) StreamBus predicate indexing, row-free O(groups) IncrementalWindow accumulation, or bounded O(keys) ASOF JOIN state, and outputs concrete SQL rewrite recommendations.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sql": {
+                        "type": "string",
+                        "description": "The rekuiper streaming SQL SELECT statement to profile."
+                    }
+                },
+                "required": ["sql"]
+            }),
+        },
     ]
 }
 
@@ -930,6 +944,105 @@ pub async fn execute_tool(
                 }
                 Err(e) => CallToolResult::err(format!("Failed to parse query: {}", e)),
             }
+        }
+
+        "explain_pipeline_profile" => {
+            let Some(sql) = args.get("sql").and_then(|v| v.as_str()) else {
+                return CallToolResult::err("Missing required string parameter: 'sql'");
+            };
+            let mut parser = Parser::new(sql);
+            let stmt = match parser.parse_select() {
+                Ok(s) => s,
+                Err(e) => return CallToolResult::err(format!("Failed to parse query: {}", e)),
+            };
+
+            let has_analytics = Evaluator::stmt_has_analytic(&stmt);
+            let incremental_window = stmt
+                .window
+                .as_ref()
+                .is_some_and(|_| rekuiper_sql::IncrementalWindow::try_new(&stmt).is_some());
+            let has_asof_join = stmt.joins.iter().any(|j| {
+                matches!(
+                    j.join_type,
+                    rekuiper_sql::JoinType::Asof | rekuiper_sql::JoinType::LeftAsof
+                )
+            });
+
+            let mut indexable_predicates = Vec::new();
+            let mut residual_predicates = Vec::new();
+            fn classify_where(
+                expr: &rekuiper_sql::Expr,
+                indexed: &mut Vec<String>,
+                residual: &mut Vec<String>,
+            ) {
+                use rekuiper_sql::{BinaryOperator, Expr};
+                match expr {
+                    Expr::BinaryOp {
+                        left,
+                        op: BinaryOperator::And,
+                        right,
+                    } => {
+                        classify_where(left, indexed, residual);
+                        classify_where(right, indexed, residual);
+                    }
+                    Expr::BinaryOp { left, op, right }
+                        if matches!(
+                            op,
+                            BinaryOperator::Eq
+                                | BinaryOperator::Neq
+                                | BinaryOperator::Gt
+                                | BinaryOperator::Gte
+                                | BinaryOperator::Lt
+                                | BinaryOperator::Lte
+                        ) && matches!(left.as_ref(), Expr::Identifier(_))
+                            && matches!(right.as_ref(), Expr::Literal(_)) =>
+                    {
+                        indexed.push(expr.to_ekuiper_string());
+                    }
+                    other => residual.push(other.to_ekuiper_string()),
+                }
+            }
+            if let Some(ref w) = stmt.where_clause {
+                classify_where(w, &mut indexable_predicates, &mut residual_predicates);
+            }
+
+            let memory_complexity = match (&stmt.window, has_asof_join, incremental_window) {
+                (None, false, _) => "O(1) — Zero-copy SharedMap stateless execution",
+                (None, true, _) => "O(keys) — Bounded ASOF JOIN state table (max 10,000 keys)",
+                (Some(_), _, true) => "O(groups) — Row-free IncrementalWindow accumulators",
+                (Some(_), _, false) => "O(window_rows) — Buffered window rows (SharedMap CoW)",
+            };
+
+            let mut recommendations = Vec::new();
+            if stmt.where_clause.is_some() && indexable_predicates.is_empty() {
+                recommendations.push(
+                    "Place simple column comparisons (e.g., `device_id = 'x' AND ...`) at the top level of WHERE to enable O(1) StreamBus Rete-Lite pre-filtering.",
+                );
+            }
+            if stmt.window.is_some() && !incremental_window && stmt.joins.is_empty() {
+                recommendations.push(
+                    "Project only group columns and direct count/sum/avg/min/max(col) without HAVING to unlock row-free IncrementalWindow O(groups) memory.",
+                );
+            }
+            if !stmt.joins.is_empty() && !has_asof_join && stmt.window.is_some() {
+                recommendations.push(
+                    "For multi-rate sensor alignment (fast stream + slow stream), consider `ASOF JOIN` or `LEFT ASOF JOIN` to avoid buffering full window cross-products.",
+                );
+            }
+
+            let profile = json!({
+                "valid": true,
+                "execution_tier": if stmt.window.is_none() { "Stateless Hot-Path" } else { "Windowed Stateful" },
+                "zero_alloc_where_fast_path": !has_analytics,
+                "has_stateful_analytic_calls": has_analytics,
+                "streambus_rete_indexable_predicates": indexable_predicates,
+                "residual_ast_predicates": residual_predicates,
+                "row_free_incremental_window_eligible": incremental_window,
+                "uses_bounded_asof_join": has_asof_join,
+                "estimated_memory_complexity": memory_complexity,
+                "optimization_recommendations": recommendations,
+            });
+            CallToolResult::ok(serde_json::to_string_pretty(&profile).unwrap_or_default())
         }
 
         // --- 2. Stream Management ---

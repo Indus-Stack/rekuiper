@@ -87,7 +87,7 @@ def run_tests():
         tools_resp = send_rpc(proc, "tools/list", req_id=3)
         tools = tools_resp.get("result", {}).get("tools", [])
         tool_names = [t["name"] for t in tools]
-        assert_test("Total 42 tools registered", len(tools) == 42, f"Found {len(tools)} tools")
+        assert_test("Total 43 tools registered", len(tools) == 43, f"Found {len(tools)} tools")
         assert_test("Contains validate_sql", "validate_sql" in tool_names)
         assert_test("Contains test_sql_expression", "test_sql_expression" in tool_names)
         assert_test("Contains explain_sql", "explain_sql" in tool_names)

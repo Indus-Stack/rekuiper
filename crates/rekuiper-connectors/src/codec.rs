@@ -1311,4 +1311,125 @@ mod tests {
         assert_eq!(event.source_name, "rule1");
         assert_eq!(event.readings.len(), 2);
     }
+
+    #[test]
+    fn test_json_field_mask_slicer() {
+        let mut fields = HashSet::new();
+        fields.insert("id".to_string());
+        fields.insert("temp".to_string());
+        let mask = JsonFieldMask::new(fields);
+
+        let json = br#"{"id": 101, "temp": 23.5, "unneeded1": "skip_me", "nested": {"a": [1,2,3]}, "error": "none"}"#;
+        let decoded = mask.decode_object(json).unwrap();
+        assert_eq!(decoded.get("id"), Some(&Value::from(101)));
+        assert_eq!(decoded.get("temp"), Some(&Value::from(23.5)));
+        assert_eq!(decoded.get("error"), Some(&Value::from("none")));
+        assert!(!decoded.contains_key("unneeded1"));
+        assert!(!decoded.contains_key("nested"));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Schema-Guided Zero-Allocation JSON Field Slicer (Pillar 1)
+// ---------------------------------------------------------------------------
+
+use serde::de::{DeserializeSeed, Deserializer, IgnoredAny, MapAccess, Visitor};
+use std::collections::HashSet;
+use std::sync::Arc;
+
+/// Selective JSON deserializer that materializes ONLY the top-level fields
+/// in `projected_fields` and skips all other keys/values using `serde::de::IgnoredAny`
+/// (zero String/Vec/Map heap allocations for unused payload fields).
+#[derive(Debug, Clone, PartialEq)]
+pub struct JsonFieldMask {
+    pub fields: Arc<HashSet<String>>,
+}
+
+impl JsonFieldMask {
+    pub fn new(fields: HashSet<String>) -> Self {
+        Self {
+            fields: Arc::new(fields),
+        }
+    }
+
+    /// Decode a single JSON object slice, extracting only keys present in `self.fields`
+    /// (plus `"error"` / `"__error"` for error-routing parity).
+    pub fn decode_object(
+        &self,
+        payload: &[u8],
+    ) -> Result<HashMap<String, Value>, serde_json::Error> {
+        let mut de = serde_json::Deserializer::from_slice(payload);
+        let seed = ProjectedObjectSeed {
+            fields: &self.fields,
+        };
+        seed.deserialize(&mut de)
+    }
+}
+
+struct ProjectedObjectSeed<'a> {
+    fields: &'a HashSet<String>,
+}
+
+impl<'de, 'a> DeserializeSeed<'de> for ProjectedObjectSeed<'a> {
+    type Value = HashMap<String, Value>;
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct MapVisitor<'b> {
+            fields: &'b HashSet<String>,
+        }
+
+        impl<'de, 'b> Visitor<'de> for MapVisitor<'b> {
+            type Value = HashMap<String, Value>;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("a JSON object")
+            }
+
+            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+            where
+                A: MapAccess<'de>,
+            {
+                let mut out = HashMap::with_capacity(self.fields.len().min(16));
+                while let Some(key) = map.next_key::<std::borrow::Cow<'de, str>>()? {
+                    let k_str = key.as_ref();
+                    if self.fields.contains(k_str) || k_str == "error" || k_str == "__error" {
+                        let val: Value = map.next_value()?;
+                        out.insert(key.into_owned(), val);
+                    } else {
+                        // Skip value (including nested objects/arrays/strings) with 0 allocations!
+                        let _: IgnoredAny = map.next_value()?;
+                    }
+                }
+                Ok(out)
+            }
+        }
+
+        deserializer.deserialize_map(MapVisitor {
+            fields: self.fields,
+        })
+    }
+}
+
+/// Extracts all top-level column names referenced by a `SelectStmt`.
+/// Returns `None` if the query uses `*` (`Wildcard` or `WildcardModified`)
+/// or whole-row functions where every field must be preserved.
+pub fn extract_required_fields_from_expr_names(
+    has_wildcard: bool,
+    identifiers: &[String],
+    timestamp_field: Option<&str>,
+) -> Option<JsonFieldMask> {
+    if has_wildcard || identifiers.is_empty() {
+        return None;
+    }
+    let mut set: HashSet<String> = identifiers.iter().cloned().collect();
+    if let Some(ts) = timestamp_field {
+        set.insert(ts.to_string());
+    }
+    for default_ts in ["timestamp", "ts", "event_time", "time"] {
+        set.insert(default_ts.to_string());
+    }
+    Some(JsonFieldMask::new(set))
 }
