@@ -5,8 +5,6 @@
 targets = []
 
 [advisories]
-vulnerability = "deny"
 unmaintained = "all"
 yanked = "warn"
-notice = "warn"
 ignore = []
