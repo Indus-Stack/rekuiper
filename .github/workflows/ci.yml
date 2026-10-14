@@ -9,6 +9,18 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  advisories:
+    name: Security Advisories
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check RustSec Advisories
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check advisories
+
   test:
     name: Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

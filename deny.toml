@@ -1,0 +1,12 @@
+# Configuration for cargo-deny
+# https://embarkstudios.github.io/cargo-deny/
+
+[graph]
+targets = []
+
+[advisories]
+vulnerability = "deny"
+unmaintained = "deny"
+yanked = "warn"
+notice = "warn"
+ignore = []
