@@ -1,9 +1,9 @@
 # Reliability Qualification, Scope, and Verification Status
 
-> **Release Version**: `0.501.0-beta`  
-> **Status**: **Beta-Exit Qualification In Progress** (Not Declared GA)
+> **Release Version**: `1.0.0-rc1`  
+> **Status**: **Release Candidate 1** (Pre-GA)
 
-This document defines verified capabilities, failure recovery semantics, operational procedures, and the qualification harness for **rekuiper** (`0.501.0-beta`).
+This document defines verified capabilities, failure recovery semantics, operational procedures, and the qualification harness for **rekuiper** (`1.0.0-rc1`).
 
 ## 1. Implemented Capabilities and Verification Status
 

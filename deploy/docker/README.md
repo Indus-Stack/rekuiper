@@ -1,7 +1,7 @@
 # ankurkrp/rekuiper
 
 [![Docker Pulls](https://img.shields.io/docker/pulls/ankurkrp/rekuiper?color=blue&logo=docker)](https://hub.docker.com/r/ankurkrp/rekuiper)
-[![Release](https://img.shields.io/badge/release-v0.509--beta-blue.svg)](https://github.com/ankur-paan/rekuiper/releases)
+[![Release](https://img.shields.io/badge/release-v1.0.0--rc1-blue.svg)](https://github.com/ankur-paan/rekuiper/releases)
 [![License: MIT or Apache-2.0](https://img.shields.io/badge/license-MIT%20%2F%20Apache--2.0-yellow.svg)](https://github.com/ankur-paan/rekuiper/blob/main/LICENSE)
 
 `rekuiper` is a lightweight streaming SQL engine written in Rust for edge computing, IIoT gateways, connected vehicles, and robotics. It is a drop-in replacement for LF Edge eKuiper. It processes 150k–200k messages per second per CPU core with a low memory footprint.

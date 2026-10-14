@@ -4,11 +4,9 @@
 
 | Version | Supported |
 | :--- | :--- |
-| v0.423.x-beta (Latest) | :white_check_mark: |
-| v0.422.x-beta | :white_check_mark: |
-| v0.421.x-beta | :white_check_mark: |
-| v0.420.x-beta | :white_check_mark: |
-| < v0.420.0-beta | :x: |
+| v1.0.0-rc1 (Latest) | :white_check_mark: |
+| v0.509-beta | :white_check_mark: |
+| < v0.509-beta | :x: |
 
 ## Reporting a Vulnerability
 
