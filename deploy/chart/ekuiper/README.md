@@ -16,7 +16,7 @@ helm install rekuiper deploy/chart/ekuiper
 ```bash
 helm install rekuiper deploy/chart/ekuiper \
   --set image.repository=ankurkrp/rekuiper \
-  --set image.tag=1.0.0-rc1
+  --set image.tag=1.0.0-rc2
 ```
 
 ## Uninstall Chart
