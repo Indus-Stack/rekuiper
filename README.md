@@ -4,7 +4,7 @@
 
 rekuiper is a small SQL engine that sits between your devices and your cloud. It filters, aggregates, and routes live data on the gateway itself, so you send upstream only what matters.
 
-[![Release](https://img.shields.io/badge/release-v1.0.0--rc1-blue.svg)](https://github.com/ankur-paan/rekuiper/releases)
+[![Release](https://img.shields.io/badge/release-v1.0.0--rc2-blue.svg)](https://github.com/ankur-paan/rekuiper/releases)
 [![Rust CI](https://img.shields.io/badge/Rust%20CI-passing-brightgreen.svg)](https://github.com/ankur-paan/rekuiper/actions/workflows/ci.yml)
 [![License: MIT or Apache-2.0](https://img.shields.io/badge/license-MIT%20%2F%20Apache--2.0-yellow.svg)](LICENSE)
 [![Docker Pulls](https://img.shields.io/docker/pulls/ankurkrp/rekuiper?color=blue&logo=docker)](https://hub.docker.com/r/ankurkrp/rekuiper)
