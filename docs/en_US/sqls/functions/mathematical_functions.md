@@ -1,9 +1,9 @@
 # Mathematical Functions
 
 > [!NOTE]
-> **Verification Status**: Tested and verified against the `rekuiper` runtime with streaming telemetry data on **2026-10-01 16:28:52 UTC**.  
-> **Scorecard**: **33 / 33 Mathematical Functions Fully Verified with Live Data (100% Parity)**:  
-> `abs`, `acos`, `asin`, `atan`, `atan2`, `bitand`, `bitor`, `bitxor`, `bitnot`, `ceil`, `ceiling`, `conv`, `cos`, `cosh`, `cot`, `degrees`, `exp`, `floor`, `ln`, `log`, `mod`, `pi`, `pow`, `power`, `radians`, `rand`, `round`, `sign`, `sin`, `sinh`, `sqrt`, `tan`, `tanh`.  
+> **Verification Status**: Tested and verified against the `rekuiper` runtime with streaming telemetry data on **2026-10-14 20:45:00 UTC**.  
+> **Scorecard**: **35 / 35 Mathematical Functions Fully Verified with Live Data (100% Parity)**:  
+> `abs`, `acos`, `asin`, `atan`, `atan2`, `bitand`, `bitor`, `bitxor`, `bitnot`, `ceil`, `ceiling`, `conv`, `cos`, `cosh`, `cot`, `degrees`, `exp`, `floor`, `ln`, `log`, `log2`, `log10`, `mod`, `pi`, `pow`, `power`, `radians`, `rand`, `round`, `sign`, `sin`, `sinh`, `sqrt`, `tan`, `tanh`.  
 > All functions tested with live telemetry data and validated with exact mathematical assertions.
 
 Mathematical functions perform numerical operations. They accept numeric inputs and return numeric values.
@@ -281,3 +281,50 @@ SELECT conv('6E', 18, 8);
 SELECT conv(-17, 10, -18);
 -- Output: '-H'
 ```
+
+## LOG2
+
+```text
+log2(col)
+```
+
+Calculates the base-2 logarithm of a numeric value ($\log_2(x)$).
+
+**Parameters:**
+- `col`: A numeric column or literal expression ($x > 0$). Can be integer or floating-point.
+
+**Return Type:**
+- `float` representing $\log_2(x)$. Returns `NULL` if `col` is `NULL` or non-positive ($x \le 0$).
+
+**Verified Examples:**
+```sql
+SELECT log2(8) AS v FROM telemetry;
+-- Output: 3.0
+
+SELECT log2(1024) AS v FROM telemetry;
+-- Output: 10.0
+```
+
+## LOG10
+
+```text
+log10(col)
+```
+
+Calculates the common base-10 logarithm of a numeric value ($\log_{10}(x)$).
+
+**Parameters:**
+- `col`: A numeric column or literal expression ($x > 0$). Can be integer or floating-point.
+
+**Return Type:**
+- `float` representing $\log_{10}(x)$. Returns `NULL` if `col` is `NULL` or non-positive ($x \le 0$).
+
+**Verified Examples:**
+```sql
+SELECT log10(100) AS v FROM telemetry;
+-- Output: 2.0
+
+SELECT log10(1000000) AS v FROM telemetry;
+-- Output: 6.0
+```
+

@@ -55,3 +55,12 @@ crc32(col)
 ```
 
 Returns the CRC32 checksum of the argument as an integer.
+
+## Related Cryptographic and Encoding Functions
+
+For payload encoding, decoding, and compression transformations, refer to:
+- [`encode` & `base64_encode`](./transform_functions.md#encode)
+- [`decode` & `base64_decode`](./transform_functions.md#decode)
+- [`compress` & `decompress`](./transform_functions.md#compress)
+- [`hex2dec` & `dec2hex`](./transform_functions.md#hex2dec)
+

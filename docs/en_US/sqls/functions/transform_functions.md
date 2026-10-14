@@ -1,9 +1,9 @@
 # Transform Functions
 
 > [!NOTE]
-> **Verification Status**: Tested and Verified against `rekuiper` engine with live telemetry stream load on **2026-10-01 17:54:40 UTC**.  
-> **Scorecard**: **11 Verified, 0 Unsupported, 0 Broken**:  
-> - **Verified (11)**: `cast`, `convert_tz`, `to_seconds`, `encode` (base64), `decode` (base64), `compress` (zlib/gzip/flate/zstd), `decompress` (zlib/gzip/flate/zstd), `trunc`, `chr`, `hex2dec`, `dec2hex`.
+> **Verification Status**: Tested and Verified against `rekuiper` engine with live telemetry stream load on **2026-10-14 20:50:00 UTC**.  
+> **Scorecard**: **13 Verified, 0 Unsupported, 0 Broken**:  
+> - **Verified (13)**: `cast`, `convert_tz`, `to_seconds`, `encode` (base64), `base64_encode`, `decode` (base64), `base64_decode`, `compress` (zlib/gzip/flate/zstd), `decompress` (zlib/gzip/flate/zstd), `trunc`, `chr`, `hex2dec`, `dec2hex`.
 
 Transform functions convert data types, encode payloads, and apply compression algorithms.
 
@@ -47,17 +47,52 @@ Converts `col` to a datetime value and returns Unix epoch time as the number of 
 
 ```text
 encode(col, encodeType)
+base64_encode(col)
 ```
 
 Encodes binary or string payload data into a string representation using the specified encoding scheme. Currently, the engine supports `"base64"`.
+
+`base64_encode(col)` is a convenient single-argument function equivalent to `encode(col, "base64")`.
+
+### Example
+
+```sql
+SELECT base64_encode(payload) AS b64, encode(payload, "base64") AS b64_alt FROM demo;
+```
+
+Given input `{"payload": "Hello, Rekuiper!"}`:
+
+```json
+{
+  "b64": "SGVsbG8sIFJla3VpcGVyIQ==",
+  "b64_alt": "SGVsbG8sIFJla3VpcGVyIQ=="
+}
+```
 
 ## DECODE
 
 ```text
 decode(col, encodeType)
+base64_decode(col)
 ```
 
 Decodes an encoded string into its original representation using the specified decoding scheme. Currently, the engine supports `"base64"`.
+
+`base64_decode(col)` is a convenient single-argument function equivalent to `decode(col, "base64")`.
+
+### Example
+
+```sql
+SELECT base64_decode(b64) AS original_text FROM demo;
+```
+
+Given input `{"b64": "SGVsbG8sIFJla3VpcGVyIQ=="}`:
+
+```json
+{
+  "original_text": "Hello, Rekuiper!"
+}
+```
 
 > [!NOTE]
 > **Compatibility & Safety Note: Non-Crashing Null Safety in DECODE**

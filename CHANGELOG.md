@@ -10,6 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > See `BENCHMARK-AUDIT.md` and `test/BENCHMARKS.md` for the audited methodology.
 > No latency-histogram p99 is claimed.
 
+## [1.0.0-rc2] - 2026-10-14
+
+### Added
+- **Complete SQL Function Documentation Coverage**: Documented all 221 built-in SQL functions and aliases across category reference pages with live-verified inputs, outputs, and edge cases (100.0% catalog parity).
+- **Public Benchmark Documentation**: Published audited v1.0.0-rc1 in-process streaming engine benchmarks exceeding 1,248,000 EPS (pure engine) and 741,000 EPS (end-to-end JSON).
+- **Complex Event Processing Prompts**: Added `generate_cep_rule` prompt template to `rekuiper-mcp` for sequence match rule synthesis.
+- **WASM Plugin Execution**: Documented `wasm_run` and `wasm` UDF execution syntax for compiled WebAssembly modules.
+
+### Changed
+- **Zero-Vulnerability Dependency Stack**: Upgraded `sqlx` to 0.8.6 and replaced unmaintained `serde_yaml` with `serde_norway` 0.9.
+- **Automated Advisory CI Gate**: Integrated `cargo-deny` security scanning in continuous integration workflow.
+- **Expanded MCP Intelligence**: Extended `validate_sql` and `test_sql_expression` tool schemas with CEP sequence matching, ASOF joins, and stream DEFAULT field syntax.
+
 ## [1.0.0-rc1] - 2026-10-14
 
 ### Added

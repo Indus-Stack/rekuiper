@@ -129,9 +129,23 @@ Replaces all substrings in `col` matching regular expression `regex` with `repla
 
 ```text
 regexp_substring(col, regex)
+regexp_substr(col, regex)
 ```
 
-Returns the first substring in `col` that matches regular expression `regex`.
+Returns the first substring in `col` that matches regular expression `regex`. `regexp_substr(col, regex)` is an exact drop-in synonym.
+
+### Example
+
+```sql
+SELECT regexp_substr(log, 'DEV_[0-9]+') AS device_id FROM demo;
+```
+
+Given input `{"log": "device_id: DEV_4892 status: ok"}`:
+
+```json
+{"device_id": "DEV_4892"}
+```
+
 
 ## REPLACE
 

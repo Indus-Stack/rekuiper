@@ -51,6 +51,7 @@ Different benchmark suites evaluate specific capabilities across versions:
 
 | Suite Name | Evaluated Version | Workload Type | Key Result | Link |
 | :--- | :---: | :--- | :--- | :--- |
+| **In-Process Engine Throughput** | **rekuiper 1.0.0-rc1** | Stream execution of 500k events on 1 core | Exceeds **1,248,000 events/s** (pure engine) and **741,000 events/s** (JSON E2E) with zero GC pauses. | [View Benchmark](#rekuiper-1-0-0-rc1-in-process-engine-throughput-milestone-1-000-000-eps) |
 | **Concurrent Parallel Rules** | **rekuiper 0.505-beta** | Stream fan-out to $N$ parallel SQL rules | Sustains **1,000 parallel rules** (500,000 evals/s) on 1 core; eKuiper ceiling is 100 rules. | [View Benchmark](./parallel_rules.md) |
 | **Single-Rule MQTT Throughput** | **rekuiper 0.500-beta** | Ingestion of 5 industrial MQTT shapes | Sustains **150,000 to 200,000 msg/s** loss-free on 1 core; 6.3x to 10x higher than competitors. | [View Benchmark](./throughput.md) |
 | **120-Second Bounded Sustained** | **rekuiper 0.426-beta** | Long-duration MQTT ingest (12M events) | Sustains **100,000 msg/s for 120s** across all five workloads with 0.00% loss. | [View Benchmark](./throughput.md#version-0-426-bounded-sustained-ladder) |
@@ -59,6 +60,17 @@ Different benchmark suites evaluate specific capabilities across versions:
 ---
 
 ## 5. Summary of Release Benchmarks
+
+### rekuiper 1.0.0-rc1: In-Process Engine Throughput Milestone (1,000,000+ EPS)
+- Evaluated single-core in-process SQL streaming engine with `cargo test --release --test perf_throughput`.
+- Processed 500,000 records through a continuous filter and arithmetic projection rule (`SELECT id, temp * 1.8 + 32 AS temp_f FROM perf_stream WHERE temp > 20.0`).
+- **Pure Engine Dispatch**: **1,248,977.92 events/sec** (400.33 ms total runtime, pre-constructed `SharedMap` ring buffer, zero GC pauses).
+- **End-to-End Pipeline**: **741,294.10 events/sec** (674.50 ms total runtime, live JSON serialization and parsing).
+- Key enabling optimizations:
+  1. **Zero-Clone Borrowed WHERE Fast-Path**: Compares `Identifier <op> Literal` directly with borrowed references, eliminating 1,000,000 heap clones per 500k events.
+  2. **Register-Level Numeric Arithmetic**: Computes expressions (`temp * 1.8 + 32`) directly in CPU registers without intermediate heap allocation.
+  3. **Single-Subscriber `try_reserve()` Fast-Path**: Delivers events directly into bounded Tokio channel slots without per-event allocations.
+  4. **Lock-Free Atomic Counters**: Rule status loops increment atomic integers without touching global synchronization locks.
 
 ### rekuiper 0.505-beta: Parallel Rule Concurrency
 - Evaluated maximum rule fan-out from a single stream.

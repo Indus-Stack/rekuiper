@@ -1,3 +1,19 @@
+# Release Notes - rekuiper v1.0.0-rc2
+
+`rekuiper` v1.0.0-rc2 delivers full SQL catalog parity across documentation, published in-process engine performance benchmarks exceeding 1,248,000 EPS, zero-vulnerability control plane dependencies, and expanded Model Context Protocol (MCP) server intelligence.
+
+Key highlights:
+- **100% SQL Catalog Documentation Parity**: All 221 built-in SQL functions and aliases now have complete documentation across category guides with verified parameters, return types, and examples.
+- **Published In-Process Engine Benchmark**: Published audited v1.0.0-rc1 benchmark results demonstrating 1,248,977 events/sec pure engine throughput and 741,294 events/sec end-to-end JSON pipeline throughput on a single CPU core with zero garbage collection pauses.
+- **Zero-Vulnerability Dependency Stack**: Resolved Issue #38 by replacing unmaintained `serde_yaml` with `serde_norway 0.9` and upgrading `sqlx` to 0.8.6. Enforced automated CI security checks via `cargo-deny`.
+- **Complex Event Processing Prompts & Tools**: Added the `generate_cep_rule` prompt template and expanded `validate_sql` and `test_sql_expression` tools for `sequence_match`, `sequence_count`, and `ASOF JOIN`.
+- **WebAssembly Runtime Syntax**: Documented `wasm_run` and `wasm` execution syntax for compiling custom algorithms into WebAssembly modules.
+
+- Docker image: `ankurkrp/rekuiper:1.0.0-rc2` (plus `latest`)
+- Helm chart: `deploy/chart/ekuiper` (`AppVersion: 1.0.0-rc2`)
+
+---
+
 # Release Notes - rekuiper v1.0.0-rc1 (RC1v1)
 
 `rekuiper` v1.0.0-rc1 provides high-throughput streaming SQL processing. It includes temporal ASOF joins, complex event processing, 221 built-in SQL functions, and 48 Model Context Protocol (MCP) tools.

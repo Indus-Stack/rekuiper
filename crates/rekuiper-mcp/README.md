@@ -44,9 +44,9 @@ An enterprise-grade, native Rust **Model Context Protocol (MCP)** server providi
 - **Universal REST API Proxy (`execute_rekuiper_api`)**:
   - Allows executing arbitrary HTTP methods (`GET`, `POST`, `PUT`, `DELETE`, `PATCH`) against any present or future `rekuiper` REST endpoint, ensuring 100% API coverage.
 
-- **15 First-Class Resources & 8 Interactive Prompts**:
+- **15 First-Class Resources & 10 Interactive Prompts**:
   - Live queryable resources via `rekuiper://` URIs, including connector action schemas (`rabbitmq`, `parquet`, `edgex`) and Wasm plugins.
-  - Expert troubleshooting, query optimization, vector similarity search, and RabbitMQ pipeline generation prompts.
+  - Expert troubleshooting, query optimization, vector similarity search, CEP sequence matching, security audit, and RabbitMQ pipeline generation prompts.
 
 ---
 
@@ -75,8 +75,8 @@ An enterprise-grade, native Rust **Model Context Protocol (MCP)** server providi
 ### 1. SQL Intelligence & Simulation
 | Tool | Description |
 | :--- | :--- |
-| `validate_sql` | Offline AST syntax parser and static validator for SQL, window functions, and DDL statements (including `BUFFER_FULL_POLICY`). |
-| `test_sql_expression` | In-memory streaming query evaluator against mock JSON telemetry payloads, supporting vector search (`cosine_similarity`), array operations (`array_positions`), and stateful analytics (`acc_distinct_collect`, `lead`). |
+| `validate_sql` | Offline AST syntax parser and static validator for SQL, window functions, CEP pattern matchers (`sequence_match`, `sequence_count`), `ASOF JOIN` syntax, and DDL statements (including `DEFAULT` column values and `BUFFER_FULL_POLICY`). |
+| `test_sql_expression` | In-memory streaming query evaluator against mock JSON telemetry payloads, supporting vector search (`cosine_similarity`), CEP sequence patterns (`sequence_match`), array/object transforms (`json_map`, `object_erase`), and stateful analytics (`acc_distinct_collect`, `lead`). |
 | `explain_sql` | Deconstructs streaming SQL into projections, sources, joins, and window clauses. |
 
 ### 2. Streams Management & Ingress
@@ -199,6 +199,8 @@ An enterprise-grade, native Rust **Model Context Protocol (MCP)** server providi
 | `generate_vector_search_rule` | Constructs an edge vector similarity search and anomaly detection rule using `cosine_similarity`. |
 | `configure_rabbitmq_pipeline` | Constructs an enterprise pipeline routing stream records to RabbitMQ AMQP 0-9-1. |
 | `create_wasm_plugin_rule` | Guides registration and stream query generation for compiled WebAssembly UDF modules. |
+| `audit_security_posture` | Audits daemon runtime security configuration, network bindings, and authentication. |
+| `generate_cep_rule` | Constructs a Complex Event Processing (CEP) sequence matching rule with `sequence_match` or `sequence_count`. |
 
 ---
 
