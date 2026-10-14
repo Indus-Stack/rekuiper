@@ -5,7 +5,7 @@ targets = []
 version = 2
 yanked = "deny"
 ignore = [
-    # Transitive via rumqttc (0.24 / 0.25.1 both pin rustls-webpki ^0.102.8 and rustls-pemfile ^2.2.0).
+    # Transitive via rumqttc 0.25.1 (pins rustls-webpki ^0.102.8 and rustls-pemfile ^2.2.0).
     # Rekuiper does not use CRLs or URI/wildcard X.509 name constraints in MQTT TLS.
     # Remove once upstream rumqttc updates direct dependency to rustls-webpki >= 0.103.13 and drops rustls-pemfile.
     { id = "RUSTSEC-2026-0049", reason = "Transitive via rumqttc -> rustls-webpki 0.102.8; CRL distribution points not used" },
@@ -13,4 +13,8 @@ ignore = [
     { id = "RUSTSEC-2026-0099", reason = "Transitive via rumqttc -> rustls-webpki 0.102.8; wildcard name constraints not used" },
     { id = "RUSTSEC-2026-0104", reason = "Transitive via rumqttc -> rustls-webpki 0.102.8; CRL parsing not used" },
     { id = "RUSTSEC-2025-0134", reason = "Transitive via rumqttc -> rustls-pemfile 2.2.0 (unmaintained notice); awaiting upstream migration to rustls-pki-types" },
+
+    # Transitive unmaintained notices (non-vulnerability):
+    { id = "RUSTSEC-2024-0384", reason = "Transitive via lapin -> async-io -> fastrand -> instant 0.1.13 (wasm32-only target dependency, never compiled on native targets)" },
+    { id = "RUSTSEC-2024-0436", reason = "Transitive proc-macro paste 1.0.15 via parquet/wasmi/boa_engine; compile-time only, awaiting upstream migration to pastey" },
 ]
