@@ -45,7 +45,9 @@ sysinfo = "0.30"
 regex = "1.10"
 parking_lot = "0.12"
 futures = "0.3"
-rumqttc = "0.24"
+rumqttc = { version = "0.25", default-features = false, features = ["use-rustls-no-provider"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "logging", "tls12"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "logging", "std", "tls12"] }
 tokio-tungstenite = "0.23"
 redis = { version = "0.27", default-features = false, features = ["tokio-comp", "aio"] }
 rskafka = "0.6"

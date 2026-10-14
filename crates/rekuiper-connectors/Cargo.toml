@@ -39,4 +39,4 @@ zeromq = { version = "0.6", default-features = false, features = ["tokio-runtime
 bytes = "1"
 
 [dev-dependencies]
-tokio-rustls = "0.25"
+tokio-rustls = { workspace = true }
