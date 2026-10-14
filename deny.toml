@@ -1,19 +1,16 @@
-# Configuration for cargo-deny
-# https://embarkstudios.github.io/cargo-deny/
-
 [graph]
 targets = []
 
 [advisories]
-unmaintained = "all"
-yanked = "warn"
+version = 2
+yanked = "deny"
 ignore = [
-    # RUSTSEC-2026-0049: CRL distribution point matching in rustls-webpki (transitive via rumqttc 0.24; rekuiper does not use CRLs)
-    "RUSTSEC-2026-0049",
-    # RUSTSEC-2026-0098: URI name constraints in rustls-webpki (transitive via rumqttc 0.24; rekuiper does not use URI name constraints)
-    "RUSTSEC-2026-0098",
-    # RUSTSEC-2026-0099: Wildcard certificate name constraints in rustls-webpki (transitive via rumqttc 0.24)
-    "RUSTSEC-2026-0099",
-    # RUSTSEC-2026-0104: CRL parsing panic in rustls-webpki (transitive via rumqttc 0.24; rekuiper does not use CRLs)
-    "RUSTSEC-2026-0104",
+    # Transitive via rumqttc (0.24 / 0.25.1 both pin rustls-webpki ^0.102.8 and rustls-pemfile ^2.2.0).
+    # Rekuiper does not use CRLs or URI/wildcard X.509 name constraints in MQTT TLS.
+    # Remove once upstream rumqttc updates direct dependency to rustls-webpki >= 0.103.13 and drops rustls-pemfile.
+    { id = "RUSTSEC-2026-0049", reason = "Transitive via rumqttc -> rustls-webpki 0.102.8; CRL distribution points not used" },
+    { id = "RUSTSEC-2026-0098", reason = "Transitive via rumqttc -> rustls-webpki 0.102.8; URI name constraints not used" },
+    { id = "RUSTSEC-2026-0099", reason = "Transitive via rumqttc -> rustls-webpki 0.102.8; wildcard name constraints not used" },
+    { id = "RUSTSEC-2026-0104", reason = "Transitive via rumqttc -> rustls-webpki 0.102.8; CRL parsing not used" },
+    { id = "RUSTSEC-2025-0134", reason = "Transitive via rumqttc -> rustls-pemfile 2.2.0 (unmaintained notice); awaiting upstream migration to rustls-pki-types" },
 ]
