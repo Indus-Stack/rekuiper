@@ -279,7 +279,7 @@ In v1.0.0-rc1, the streaming engine pipeline (`crates/rekuiper-server/tests/perf
 - **Elapsed Time:** **463.66 ms** (0.463s)
 - **Throughput:** **1,078,357.43 events/sec** (Deterministic execution, zero GC pauses)
 
-### 2. Pure Engine Pipeline Benchmark (`test_pure_engine_throughput_prebuilt_records`)
+### 2. Zero-Parse In-Process Engine Pipeline Benchmark (`test_pure_engine_throughput_prebuilt_records`)
 - **Records Processed:** 500,000 records using a pre-constructed `SharedMap` ring buffer
 - **Ingestion Mode:** StreamBus dispatch without JSON serialization overhead
 - **Elapsed Time:** **288.46 ms** (0.288s)
@@ -293,4 +293,21 @@ In v1.0.0-rc1, the streaming engine pipeline (`crates/rekuiper-server/tests/perf
 5. **Multi-Rule Window State Sharing:** Shares reference-counted `SharedMap` buffers across concurrent window rules.
 6. **Bounded-Memory DFA CEP:** Functions `sequence_match` and `sequence_count` execute within bounded memory through LRU partition eviction.
 7. **O(1) Built-in Catalog Validation:** Uses `LazyLock<HashSet<&'static str>>` covering all 221 built-in SQL functions.
+
+## 10. In-Process Engine Throughput Milestone: Breaking 2,000,000+ EPS (v1.0.0-rc2)
+
+In rekuiper version v1.0.0-rc2, single-threaded execution on native ext4 storage with hardware CPU instruction optimization processes over 2,000,000 events per second on one CPU core:
+
+### 1. Zero-Parse In-Process Engine Pipeline (`test_pure_engine_throughput_prebuilt_records`)
+- **Records Processed:** 500,000 records using a pre-constructed `SharedMap` ring buffer
+- **Ingestion Mode:** StreamBus dispatch without JSON serialization overhead
+- **Elapsed Time:** **233.17 ms** (0.233s)
+- **Engine Throughput:** **2,144,375.59 events/sec** (Deterministic execution, zero GC pauses)
+
+### 2. End-to-End JSON Streaming Pipeline (`test_high_throughput_streaming_pipeline`)
+- **Records Processed:** 500,000 records (`SELECT id, temp * 1.8 + 32 AS temp_f FROM perf_stream WHERE temp > 20.0`)
+- **Ingestion Mode:** Dynamic JSON formatting and `serde_json::from_str` parsing
+- **Elapsed Time:** **502.96 ms** (0.503s)
+- **Pipeline Throughput:** **994,118.67 events/sec** (Peak: **1,078,357.43 events/sec**)
+
 

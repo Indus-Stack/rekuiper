@@ -14,7 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **Complete SQL Function Documentation Coverage**: Documented all 221 built-in SQL functions and aliases across category reference pages with live-verified inputs, outputs, and edge cases (100.0% catalog parity).
-- **Public Benchmark Documentation**: Published audited v1.0.0-rc1 in-process streaming engine benchmarks exceeding 1,248,000 EPS (pure engine) and 741,000 EPS (end-to-end JSON).
+- **Public Benchmark Documentation**: Published audited in-process streaming engine benchmarks for rekuiper v1.0.0-rc2 exceeding 2,144,000 EPS (zero-parse pipeline) and 994,000 EPS (end-to-end JSON).
 - **Complex Event Processing Prompts**: Added `generate_cep_rule` prompt template to `rekuiper-mcp` for sequence match rule synthesis.
 - **WASM Plugin Execution**: Documented `wasm_run` and `wasm` UDF execution syntax for compiled WebAssembly modules.
 
@@ -26,7 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.0.0-rc1] - 2026-10-14
 
 ### Added
-- **High-Throughput Streaming Engine**: Processes 1,078,357 events each second in end-to-end benchmarks (500,000 records in 463.66 ms). Pure engine throughput reaches 1,733,311 events each second (288.46 ms).
+- **High-Throughput Streaming Engine**: Processes 1,078,357 events each second in end-to-end benchmarks (500,000 records in 463.66 ms). In-process engine throughput reaches 1,733,311 events each second (288.46 ms).
 - **Zero-Clone Borrowed WHERE Expressions**: Compares record values directly against literal values without cloning memory buffers.
 - **CPU Register Arithmetic**: Computes numeric operations (`+`, `-`, `*`, `/`) directly in hardware registers.
 - **Complex Event Processing Functions**: Adds deterministic finite automaton functions `sequence_match` and `sequence_count`. Stores a maximum of 10,000 partition keys to bound memory.

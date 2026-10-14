@@ -51,7 +51,7 @@ Different benchmark suites evaluate specific capabilities across versions:
 
 | Suite Name | Evaluated Version | Workload Type | Key Result | Link |
 | :--- | :---: | :--- | :--- | :--- |
-| **In-Process Engine Throughput** | **rekuiper 1.0.0-rc1** | Stream execution of 500k events on 1 core | Exceeds **1,248,000 events/s** (pure engine) and **741,000 events/s** (JSON E2E) with zero GC pauses. | [View Benchmark](#rekuiper-1-0-0-rc1-in-process-engine-throughput-milestone-1-000-000-eps) |
+| **In-Process Engine Throughput** | **rekuiper 1.0.0-rc2** | Continuous stream execution of 500k events on 1 core | Measures **2,144,375 events/s** (zero-parse pipeline) and **994,118 events/s** (JSON E2E) with zero GC pauses. | [View Benchmark](#version-1-0-0-rc2-in-process-engine-throughput-benchmark) |
 | **Concurrent Parallel Rules** | **rekuiper 0.505-beta** | Stream fan-out to $N$ parallel SQL rules | Sustains **1,000 parallel rules** (500,000 evals/s) on 1 core; eKuiper ceiling is 100 rules. | [View Benchmark](./parallel_rules.md) |
 | **Single-Rule MQTT Throughput** | **rekuiper 0.500-beta** | Ingestion of 5 industrial MQTT shapes | Sustains **150,000 to 200,000 msg/s** loss-free on 1 core; 6.3x to 10x higher than competitors. | [View Benchmark](./throughput.md) |
 | **120-Second Bounded Sustained** | **rekuiper 0.426-beta** | Long-duration MQTT ingest (12M events) | Sustains **100,000 msg/s for 120s** across all five workloads with 0.00% loss. | [View Benchmark](./throughput.md#version-0-426-bounded-sustained-ladder) |
@@ -59,33 +59,101 @@ Different benchmark suites evaluate specific capabilities across versions:
 
 ---
 
-## 5. Summary of Release Benchmarks
+## 5. Release-Specific Benchmark History
 
-### rekuiper 1.0.0-rc1: In-Process Engine Throughput Milestone (1,000,000+ EPS)
-- Evaluated single-core in-process SQL streaming engine with `cargo test --release --test perf_throughput`.
-- Processed 500,000 records through a continuous filter and arithmetic projection rule (`SELECT id, temp * 1.8 + 32 AS temp_f FROM perf_stream WHERE temp > 20.0`).
-- **Pure Engine Dispatch**: **1,248,977.92 events/sec** (400.33 ms total runtime, pre-constructed `SharedMap` ring buffer, zero GC pauses).
-- **End-to-End Pipeline**: **741,294.10 events/sec** (674.50 ms total runtime, live JSON serialization and parsing).
-- Key enabling optimizations:
-  1. **Zero-Clone Borrowed WHERE Fast-Path**: Compares `Identifier <op> Literal` directly with borrowed references, eliminating 1,000,000 heap clones per 500k events.
-  2. **Register-Level Numeric Arithmetic**: Computes expressions (`temp * 1.8 + 32`) directly in CPU registers without intermediate heap allocation.
-  3. **Single-Subscriber `try_reserve()` Fast-Path**: Delivers events directly into bounded Tokio channel slots without per-event allocations.
-  4. **Lock-Free Atomic Counters**: Rule status loops increment atomic integers without touching global synchronization locks.
+### Version 1.0.0-rc2: In-Process Engine Throughput Benchmark
 
-### rekuiper 0.505-beta: Parallel Rule Concurrency
-- Evaluated maximum rule fan-out from a single stream.
-- Reached **1,000 concurrent rules** (500,000 evaluations/s) on 1 core with flat 251.4 MiB heap memory and 0.0s drain lag.
-- Demonstrated **10.0x higher concurrency** than eKuiper 2.4.1 (ceiling: 100 rules).
+rekuiper version 1.0.0-rc2 evaluates in-process SQL streaming throughput on a single CPU core.
 
-### rekuiper 0.500-beta: Peak Ingestion Ceilings
-- Introduced zero-disk in-memory catalog and hot-path connection pooling.
-- Established exact 1k-resolution peak capacity ceilings: 150,000 msg/s on W1 and W3; 200,000 msg/s on W2 and W4; 126,000 msg/s on W5.
-- Reduced single-core CPU utilization at 100k msg/s by over 9 percentage points compared to 0.426.
+#### Test Configuration
 
-### rekuiper 0.426-beta: Sustained Duration Qualification
-- Verified long-duration stability under 120 seconds of continuous traffic at 100,000 msg/s.
-- Processed 12 million events per trial without memory leaks or queue backlog.
+| Parameter | Specification |
+| :--- | :--- |
+| **Software Version** | rekuiper v1.0.0-rc2 |
+| **Test Suite** | `crates/rekuiper-server/tests/perf_throughput.rs` |
+| **Compiler Profile** | `--release` with `-C target-cpu=native` |
+| **Storage Subsystem** | Native Linux ext4 filesystem |
+| **Execution Model** | Single thread (`--test-threads=1`, `TOKIO_WORKER_THREADS=1`) |
+| **Dataset Size** | 500,000 synthetic records |
+| **SQL Workload** | `SELECT id, temp * 1.8 + 32 AS temp_f FROM perf_stream WHERE temp > 20.0` |
 
-### rekuiper 0.425-beta: Baseline Comparison Ladder
-- Initial differential testing across four streaming engines on identical hardware.
-- Proved memory-bounded incremental window aggregation for IoT streaming data.
+#### Workload Description
+
+The engine receives 500,000 records on the `perf_stream` stream.
+The SQL rule filters records where `temp > 20.0`.
+The SQL rule calculates the Fahrenheit temperature with the formula `temp * 1.8 + 32`.
+The engine delivers projected records to a bounded in-memory subscriber channel.
+
+#### Measured Performance Results
+
+rekuiper version 1.0.0-rc2 recorded the following performance metrics:
+
+| Pipeline Architecture | Evaluated Version | Records Processed | Elapsed Time | Throughput | Memory Model | Drain Delay |
+| :--- | :---: | :---: | :---: | :---: | :--- | :---: |
+| **Zero-Parse In-Process Engine Pipeline** | **v1.0.0-rc2** | 500,000 | **233.17 ms** | **2,144,375 events/s** | Zero heap allocation, zero GC pauses | **0.0 ms** |
+| **End-to-End JSON Streaming Pipeline** | **v1.0.0-rc2** | 500,000 | **502.96 ms** | **994,118 events/s** | Dynamic JSON parse and serialize | **0.0 ms** |
+
+#### Key Enabling Optimizations in Version 1.0.0-rc2
+
+1. **Zero-Clone Borrowed WHERE Evaluation**:
+   The engine compares identifiers to literals with borrowed memory references.
+   This optimization removes 1,000,000 memory copy operations for each 500,000 records.
+
+2. **CPU Register Arithmetic**:
+   The evaluator computes numeric expressions (`temp * 1.8 + 32`) directly in CPU registers.
+   This optimization avoids dynamic memory allocations during projection.
+
+3. **Single-Subscriber `try_reserve()` Channel Dispatch**:
+   The dispatcher delivers events directly into bounded channel slots without queue locks.
+
+4. **Lock-Free Atomic Counters**:
+   The rule monitor increments atomic integers without global mutex locks.
+
+#### How to Reproduce
+
+Execute the throughput test in a native Linux ext4 environment:
+
+```bash
+RUSTFLAGS="-C target-cpu=native" cargo test --release -p rekuiper-server --test perf_throughput -- --nocapture --test-threads=1
+```
+
+---
+
+### Version 0.505-beta: Parallel Rule Concurrency
+
+rekuiper version 0.505-beta evaluates rule fan-out capacity from a single input stream.
+
+- The engine evaluates up to **1,000 parallel rules** (500,000 evaluations per second) on one CPU core.
+- Memory usage remains stable at 251.4 MiB with zero drain latency.
+- In comparison, eKuiper version 2.4.1 reaches its limit at 100 parallel rules.
+- See the complete test report in the [Concurrent Parallel Rules Benchmark](./parallel_rules.md).
+
+---
+
+### Version 0.500-beta: Peak Ingestion Ceilings
+
+rekuiper version 0.500-beta introduces an in-memory catalog and zero-disk hot-path processing.
+
+- The engine sustains **150,000 to 200,000 messages per second** without data loss on one CPU core.
+- Single-core CPU utilization decreases by 9.1 percentage points compared to version 0.426-beta.
+- See the complete test report in the [Single-Rule MQTT Throughput Benchmark](./throughput.md).
+
+---
+
+### Version 0.426-beta: Sustained Duration Qualification
+
+rekuiper version 0.426-beta evaluates long-duration stability under continuous load.
+
+- The engine processes **100,000 messages per second for 120 seconds** (12,000,000 events) without memory growth.
+- Output sinks verify zero message loss and zero duplicate records across all five test workloads.
+- See the detailed results in [Version 0.426 Bounded Sustained Ladder](./throughput.md#version-0-426-bounded-sustained-ladder).
+
+---
+
+### Version 0.425-beta: Baseline Comparison Ladder
+
+rekuiper version 0.425-beta provides the first multi-engine throughput comparison.
+
+- The test compares rekuiper against eKuiper 2.4.1, Telegraf 1.40.0, and Redpanda Connect 4.109.0.
+- rekuiper demonstrates bounded memory consumption during incremental window aggregation for IoT streaming workloads.
+- See the initial rate ladder in [Version 0.425 Initial Comparison Ladder](./throughput.md#version-0-425-initial-comparison-ladder).

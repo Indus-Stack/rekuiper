@@ -726,6 +726,25 @@
           "path": "sqls/windows"
         }
       ]
+    },
+    {
+      "title": "Benchmarks",
+      "path": "benchmarks/overview",
+      "collapsed": false,
+      "children": [
+        {
+          "title": "Benchmark Overview",
+          "path": "benchmarks/overview"
+        },
+        {
+          "title": "Single-Rule MQTT Throughput",
+          "path": "benchmarks/throughput"
+        },
+        {
+          "title": "Concurrent Parallel Rules",
+          "path": "benchmarks/parallel_rules"
+        }
+      ]
     }
   ]
 }
