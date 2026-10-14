@@ -639,24 +639,34 @@ impl Evaluator {
         }
     }
 
-    /// Shared sum-of-squared-deviations helper; returns `(ssd, count)`.
+    /// Single-pass Welford's online algorithm for sum-of-squared-deviations;
+    /// returns `(ssd, count)` with zero heap allocations and zero sorting.
     pub(crate) fn agg_ssd(
         args: &[Expr],
         records: &[HashMap<String, Value>],
     ) -> Option<(f64, usize)> {
-        if args.len() != 1 {
+        if args.len() != 1 || matches!(args[0], Expr::Wildcard) {
             return None;
         }
-        if matches!(args[0], Expr::Wildcard) {
-            return None;
+        let mut count = 0usize;
+        let mut mean = 0.0f64;
+        let mut m2 = 0.0f64;
+
+        for rec in records {
+            let v = Self::eval_val(&args[0], rec);
+            if let Some(x) = v.as_f64() {
+                count += 1;
+                let delta = x - mean;
+                mean += delta / (count as f64);
+                let delta2 = x - mean;
+                m2 += delta * delta2;
+            }
         }
-        let vals = Self::agg_sorted_numbers(&args[0], records);
-        if vals.is_empty() {
-            return None;
+        if count == 0 {
+            None
+        } else {
+            Some((m2, count))
         }
-        let mean = vals.iter().sum::<f64>() / vals.len() as f64;
-        let ssd: f64 = vals.iter().map(|v| (v - mean).powi(2)).sum();
-        Some((ssd, vals.len()))
     }
 
     pub(crate) fn agg_stddev(args: &[Expr], records: &[HashMap<String, Value>]) -> Value {

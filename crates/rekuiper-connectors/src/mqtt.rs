@@ -85,6 +85,9 @@ pub struct MqttConfig {
     /// rule calls `meta()`/`mqtt()`, so other rules skip the allocation.
     #[serde(skip)]
     pub attach_meta: bool,
+    /// Schema-guided field mask to drop unreferenced JSON fields at deserialize time.
+    #[serde(skip)]
+    pub field_mask: Option<crate::codec::JsonFieldMask>,
 }
 
 impl std::fmt::Debug for MqttConfig {
@@ -117,6 +120,7 @@ impl std::fmt::Debug for MqttConfig {
             .field("insecure_skip_verify", &self.insecure_skip_verify)
             .field("format", &self.format)
             .field("attach_meta", &self.attach_meta)
+            .field("field_mask", &self.field_mask)
             .finish()
     }
 }
@@ -142,6 +146,7 @@ impl Default for MqttConfig {
             insecure_skip_verify: false,
             format: PayloadFormat::Json,
             attach_meta: false,
+            field_mask: None,
         }
     }
 }
@@ -683,32 +688,80 @@ pub fn decode_payload_into(
     meta: Option<Value>,
     out: &mut Vec<StreamRecord>,
 ) -> Result<()> {
+    decode_payload_into_with_mask(format, None, payload, meta, out)
+}
+
+/// Decode one payload with optional schema-guided `field_mask` into rows appended to `out`.
+pub fn decode_payload_into_with_mask(
+    format: &PayloadFormat,
+    field_mask: Option<&crate::codec::JsonFieldMask>,
+    payload: &[u8],
+    meta: Option<Value>,
+    out: &mut Vec<StreamRecord>,
+) -> Result<()> {
     let first = out.len();
     match format {
-        PayloadFormat::Json => match serde_json::from_slice::<HashMap<String, Value>>(payload) {
-            Ok(data) => out.push(StreamRecord::new(data)),
-            Err(_) => {
-                let value: Value =
-                    serde_json::from_slice(payload).context("MQTT payload is not valid JSON")?;
-                match value {
-                    Value::Object(map) => out.push(StreamRecord::new(map.into_iter().collect())),
-                    Value::Array(items) => {
-                        for item in items {
-                            match item {
-                                Value::Object(map) => {
-                                    out.push(StreamRecord::new(map.into_iter().collect()))
-                                }
-                                _ => {
-                                    out.truncate(first);
-                                    bail!("MQTT JSON array payload must contain only objects");
+        PayloadFormat::Json => {
+            if let Some(mask) = field_mask {
+                match mask.decode_object(payload) {
+                    Ok(data) => out.push(StreamRecord::new(data)),
+                    Err(_) => {
+                        let value: Value = serde_json::from_slice(payload)
+                            .context("MQTT payload is not valid JSON")?;
+                        match value {
+                            Value::Object(map) => {
+                                out.push(StreamRecord::new(map.into_iter().collect()))
+                            }
+                            Value::Array(items) => {
+                                for item in items {
+                                    match item {
+                                        Value::Object(map) => {
+                                            out.push(StreamRecord::new(map.into_iter().collect()))
+                                        }
+                                        _ => {
+                                            out.truncate(first);
+                                            bail!(
+                                                "MQTT JSON array payload must contain only objects"
+                                            );
+                                        }
+                                    }
                                 }
                             }
+                            _ => bail!("MQTT payload must be a JSON object or an array of objects"),
                         }
                     }
-                    _ => bail!("MQTT payload must be a JSON object or an array of objects"),
+                }
+            } else {
+                match serde_json::from_slice::<HashMap<String, Value>>(payload) {
+                    Ok(data) => out.push(StreamRecord::new(data)),
+                    Err(_) => {
+                        let value: Value = serde_json::from_slice(payload)
+                            .context("MQTT payload is not valid JSON")?;
+                        match value {
+                            Value::Object(map) => {
+                                out.push(StreamRecord::new(map.into_iter().collect()))
+                            }
+                            Value::Array(items) => {
+                                for item in items {
+                                    match item {
+                                        Value::Object(map) => {
+                                            out.push(StreamRecord::new(map.into_iter().collect()))
+                                        }
+                                        _ => {
+                                            out.truncate(first);
+                                            bail!(
+                                                "MQTT JSON array payload must contain only objects"
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                            _ => bail!("MQTT payload must be a JSON object or an array of objects"),
+                        }
+                    }
                 }
             }
-        },
+        }
         PayloadFormat::Binary => {
             let value = match std::str::from_utf8(payload) {
                 Ok(text) => Value::String(text.to_string()),
@@ -764,15 +817,71 @@ fn push_decoded(
     counters: Option<&RuleCounters>,
     meta_flag: Option<&std::sync::atomic::AtomicBool>,
 ) {
+    let mut cache = None;
+    push_decoded_with_cache(config, batch, publish, counters, meta_flag, &mut cache);
+}
+
+fn push_decoded_with_cache_and_mask(
+    config: &MqttConfig,
+    field_mask: Option<&crate::codec::JsonFieldMask>,
+    batch: &mut Vec<StreamRecord>,
+    publish: rumqttc::Publish,
+    counters: Option<&RuleCounters>,
+    meta_flag: Option<&std::sync::atomic::AtomicBool>,
+    meta_cache: &mut Option<(String, u8, Value)>,
+) {
     let attach = config.attach_meta
         || meta_flag.is_some_and(|f| f.load(std::sync::atomic::Ordering::Relaxed));
-    let meta = attach.then(|| mqtt_meta(publish.topic, publish.qos, publish.pkid));
-    if let Err(e) = decode_payload_into(&config.format, &publish.payload, meta, batch) {
+    let meta = if attach {
+        if publish.pkid == 0 {
+            let qos_u8 = publish.qos as u8;
+            if let Some((cached_topic, cached_qos, cached_val)) = meta_cache {
+                if *cached_topic == publish.topic && *cached_qos == qos_u8 {
+                    Some(cached_val.clone())
+                } else {
+                    let new_meta = mqtt_meta(publish.topic.clone(), publish.qos, 0);
+                    *meta_cache = Some((publish.topic, qos_u8, new_meta.clone()));
+                    Some(new_meta)
+                }
+            } else {
+                let new_meta = mqtt_meta(publish.topic.clone(), publish.qos, 0);
+                *meta_cache = Some((publish.topic, qos_u8, new_meta.clone()));
+                Some(new_meta)
+            }
+        } else {
+            Some(mqtt_meta(publish.topic, publish.qos, publish.pkid))
+        }
+    } else {
+        None
+    };
+
+    if let Err(e) =
+        decode_payload_into_with_mask(&config.format, field_mask, &publish.payload, meta, batch)
+    {
         tracing::warn!("Skipping invalid MQTT payload: {}", e);
         if let Some(counters) = counters {
             counters.inc_exceptions(1);
         }
     }
+}
+
+fn push_decoded_with_cache(
+    config: &MqttConfig,
+    batch: &mut Vec<StreamRecord>,
+    publish: rumqttc::Publish,
+    counters: Option<&RuleCounters>,
+    meta_flag: Option<&std::sync::atomic::AtomicBool>,
+    meta_cache: &mut Option<(String, u8, Value)>,
+) {
+    push_decoded_with_cache_and_mask(
+        config,
+        config.field_mask.as_ref(),
+        batch,
+        publish,
+        counters,
+        meta_flag,
+        meta_cache,
+    );
 }
 
 /// Moves publishes that rumqttc has already read from the network and queued
@@ -782,6 +891,7 @@ fn push_decoded(
 /// never waits for more data. Stops at the first non-publish event (left for
 /// `poll()`, e.g. ConnAck resubscribe handling) or once `max` records are
 /// collected. Acks for these packets were already flushed at read time.
+#[allow(dead_code)]
 pub(crate) fn drain_buffered_publishes(
     config: &MqttConfig,
     events: &mut std::collections::VecDeque<rumqttc::Event>,
@@ -789,6 +899,29 @@ pub(crate) fn drain_buffered_publishes(
     max: usize,
     counters: Option<&RuleCounters>,
     meta_flag: Option<&std::sync::atomic::AtomicBool>,
+) {
+    let mut meta_cache = None;
+    drain_buffered_publishes_with_cache(
+        config,
+        events,
+        batch,
+        max,
+        counters,
+        meta_flag,
+        &mut meta_cache,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn drain_buffered_publishes_with_cache_and_mask(
+    config: &MqttConfig,
+    field_mask: Option<&crate::codec::JsonFieldMask>,
+    events: &mut std::collections::VecDeque<rumqttc::Event>,
+    batch: &mut Vec<StreamRecord>,
+    max: usize,
+    counters: Option<&RuleCounters>,
+    meta_flag: Option<&std::sync::atomic::AtomicBool>,
+    meta_cache: &mut Option<(String, u8, Value)>,
 ) {
     while batch.len() < max {
         if !matches!(
@@ -798,9 +931,32 @@ pub(crate) fn drain_buffered_publishes(
             break;
         }
         if let Some(rumqttc::Event::Incoming(rumqttc::Packet::Publish(p))) = events.pop_front() {
-            push_decoded(config, batch, p, counters, meta_flag);
+            push_decoded_with_cache_and_mask(
+                config, field_mask, batch, p, counters, meta_flag, meta_cache,
+            );
         }
     }
+}
+
+pub(crate) fn drain_buffered_publishes_with_cache(
+    config: &MqttConfig,
+    events: &mut std::collections::VecDeque<rumqttc::Event>,
+    batch: &mut Vec<StreamRecord>,
+    max: usize,
+    counters: Option<&RuleCounters>,
+    meta_flag: Option<&std::sync::atomic::AtomicBool>,
+    meta_cache: &mut Option<(String, u8, Value)>,
+) {
+    drain_buffered_publishes_with_cache_and_mask(
+        config,
+        config.field_mask.as_ref(),
+        events,
+        batch,
+        max,
+        counters,
+        meta_flag,
+        meta_cache,
+    );
 }
 
 /// Subscribe to every configured topic in one SUBSCRIBE packet.
@@ -826,6 +982,7 @@ pub struct MqttSource {
     pub tx: StreamSender,
     rule_counters: Option<Arc<RuleCounters>>,
     attach_meta_flag: Option<Arc<std::sync::atomic::AtomicBool>>,
+    field_mask_flag: Option<Arc<parking_lot::RwLock<Option<crate::codec::JsonFieldMask>>>>,
 }
 
 impl MqttSource {
@@ -835,6 +992,7 @@ impl MqttSource {
             tx,
             rule_counters: None,
             attach_meta_flag: None,
+            field_mask_flag: None,
         }
     }
 
@@ -845,6 +1003,14 @@ impl MqttSource {
 
     pub fn with_meta_flag(mut self, flag: Option<Arc<std::sync::atomic::AtomicBool>>) -> Self {
         self.attach_meta_flag = flag;
+        self
+    }
+
+    pub fn with_field_mask_flag(
+        mut self,
+        flag: Option<Arc<parking_lot::RwLock<Option<crate::codec::JsonFieldMask>>>>,
+    ) -> Self {
+        self.field_mask_flag = flag;
         self
     }
 
@@ -881,6 +1047,7 @@ impl MqttSource {
                 }
                 return;
             }
+            let mut meta_cache: Option<(String, u8, Value)> = None;
             loop {
                 tokio::select! {
                     event = eventloop.poll() => {
@@ -893,14 +1060,30 @@ impl MqttSource {
                                 // source: send_batch awaits subscriber capacity
                                 // instead of overwriting buffered records.
                                 let mut batch = Vec::with_capacity(16);
-                                push_decoded(&self.config, &mut batch, p, self.rule_counters.as_deref(), self.attach_meta_flag.as_deref());
-                                drain_buffered_publishes(
+                                let active_mask_owned = if let Some(ref flag) = self.field_mask_flag {
+                                    flag.read().clone()
+                                } else {
+                                    self.config.field_mask.clone()
+                                };
+                                let active_mask = active_mask_owned.as_ref();
+                                push_decoded_with_cache_and_mask(
                                     &self.config,
+                                    active_mask,
+                                    &mut batch,
+                                    p,
+                                    self.rule_counters.as_deref(),
+                                    self.attach_meta_flag.as_deref(),
+                                    &mut meta_cache,
+                                );
+                                drain_buffered_publishes_with_cache_and_mask(
+                                    &self.config,
+                                    active_mask,
                                     &mut eventloop.state.events,
                                     &mut batch,
                                     MQTT_SOURCE_MAX_BATCH,
                                     self.rule_counters.as_deref(),
                                     self.attach_meta_flag.as_deref(),
+                                    &mut meta_cache,
                                 );
                                 if !batch.is_empty() {
                                     let _ = self.tx.send_batch(batch).await;

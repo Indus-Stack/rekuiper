@@ -414,18 +414,35 @@ pub struct ActiveRule {
 /// Per-rule atomic counters. Rule tasks hold an `Arc<RuleCounters>` cloned at
 /// spawn time, so the hot path never takes the global rules-map lock: counts
 /// are bumped lock-free and mirrored into the status snapshot.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct RuleCounters {
-    pub source_in: std::sync::atomic::AtomicU64,
+    pub source_in: Arc<std::sync::atomic::AtomicU64>,
     pub sink_out: std::sync::atomic::AtomicU64,
     pub exceptions: std::sync::atomic::AtomicU64,
-    pub filtered: std::sync::atomic::AtomicU64,
+    pub filtered: Arc<std::sync::atomic::AtomicU64>,
     pub enqueued: std::sync::atomic::AtomicU64,
     pub sink_failed: std::sync::atomic::AtomicU64,
     pub dropped: std::sync::atomic::AtomicU64,
     pub high_water: std::sync::atomic::AtomicU64,
     pub blocked_micros: std::sync::atomic::AtomicU64,
     pub last_exception: parking_lot::RwLock<String>,
+}
+
+impl Default for RuleCounters {
+    fn default() -> Self {
+        Self {
+            source_in: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            sink_out: std::sync::atomic::AtomicU64::new(0),
+            exceptions: std::sync::atomic::AtomicU64::new(0),
+            filtered: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            enqueued: std::sync::atomic::AtomicU64::new(0),
+            sink_failed: std::sync::atomic::AtomicU64::new(0),
+            dropped: std::sync::atomic::AtomicU64::new(0),
+            high_water: std::sync::atomic::AtomicU64::new(0),
+            blocked_micros: std::sync::atomic::AtomicU64::new(0),
+            last_exception: parking_lot::RwLock::new(String::new()),
+        }
+    }
 }
 
 impl RuleCounters {
@@ -534,6 +551,28 @@ impl RuleManager {
         if let Some(kv) = &self.kv {
             let envelope = serde_json::json!({ "def": def, "status": status }).to_string();
             kv.set("rules", id, &envelope).await?;
+        }
+        Ok(())
+    }
+
+    pub async fn save_rule_checkpoint(&self, rule_id: &str, state_json: &str) -> Result<()> {
+        if let Some(kv) = &self.kv {
+            kv.set("rule_checkpoints", rule_id, state_json).await?;
+        }
+        Ok(())
+    }
+
+    pub async fn load_rule_checkpoint(&self, rule_id: &str) -> Option<String> {
+        if let Some(kv) = &self.kv {
+            kv.get("rule_checkpoints", rule_id).await.ok().flatten()
+        } else {
+            None
+        }
+    }
+
+    pub async fn delete_rule_checkpoint(&self, rule_id: &str) -> Result<()> {
+        if let Some(kv) = &self.kv {
+            kv.delete("rule_checkpoints", rule_id).await?;
         }
         Ok(())
     }
@@ -811,6 +850,7 @@ impl RuleManager {
             }
         }
         self.unpersist_rule(id).await?;
+        let _ = self.delete_rule_checkpoint(id).await;
         {
             let mut map = self.rules.write();
             if let Some(rule_arc) = map.remove(id) {

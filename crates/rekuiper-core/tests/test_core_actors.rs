@@ -199,7 +199,7 @@ async fn test_stream_bus_broadcast() {
             "events",
             StreamRecord {
                 timestamp: i as i64,
-                data,
+                data: data.into(),
             },
         )
         .expect("publish");

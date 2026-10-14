@@ -147,8 +147,10 @@ Parquet provides high compression ratios and fast analytical scan performance on
 #### Capabilities
 
 - **Columnar Storage**: Data is organized into row groups and columns.
+- **Batched Row Groups**: The writer collects 1,024 records before writing row groups to disk for high write throughput.
 - **Snappy Compression**: `rekuiper` compresses Parquet files with Snappy by default.
 - **Automatic Schema Inference**: The engine creates the Arrow schema automatically from your stream data. You do not need to register a schema file.
+- **Metadata Sanitization**: Removes internal runtime metadata keys automatically from the Parquet schema.
 
 #### File Sink Example
 

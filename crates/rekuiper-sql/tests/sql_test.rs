@@ -1,4 +1,4 @@
-use rekuiper_sql::{Evaluator, Parser, StreamColumn};
+use rekuiper_sql::{Evaluator, Parser, RuleState, StreamColumn};
 use serde_json::json;
 use std::collections::HashMap;
 
@@ -1542,4 +1542,61 @@ fn test_parse_create_stream_reject_garbage() {
         err.to_string(),
         "found \"this\", expected lparen after table name."
     );
+}
+
+#[test]
+fn test_like_match_unicode_and_ascii() {
+    let empty: HashMap<String, serde_json::Value> = HashMap::new();
+    let eval_bool = |sql: &str| -> bool {
+        let mut p = Parser::new(sql);
+        let stmt = p.parse_select().expect("parse sql");
+        Evaluator::eval_select(&stmt, &empty).is_some()
+    };
+
+    // ASCII fast path
+    assert!(eval_bool(
+        "SELECT 1 FROM demo WHERE 'temperature' LIKE 'temp%'"
+    ));
+    assert!(eval_bool(
+        "SELECT 1 FROM demo WHERE 'dev_123' LIKE 'dev____'"
+    ));
+    assert!(!eval_bool(
+        "SELECT 1 FROM demo WHERE 'dev_123' LIKE 'dev___'"
+    ));
+    assert!(eval_bool("SELECT 1 FROM demo WHERE 'sensor_a' LIKE '%a'"));
+
+    // Unicode multi-byte chars (e.g. ℃ is 3 bytes, ä is 2 bytes, 🚀 is 4 bytes)
+    assert!(eval_bool("SELECT 1 FROM demo WHERE '25℃' LIKE '25_'"));
+    assert!(eval_bool("SELECT 1 FROM demo WHERE '25℃' LIKE '25%'"));
+    assert!(!eval_bool("SELECT 1 FROM demo WHERE '25℃' LIKE '25__'"));
+    assert!(eval_bool(
+        "SELECT 1 FROM demo WHERE 'München' LIKE 'M_nchen'"
+    ));
+    assert!(eval_bool(
+        "SELECT 1 FROM demo WHERE 'sensor🚀test' LIKE '%🚀%'"
+    ));
+}
+
+#[test]
+fn test_rule_context_state_fallback() {
+    let empty: HashMap<String, serde_json::Value> = HashMap::new();
+    let mut p = Parser::new("SELECT rule_id() AS rid, rule_start() AS rstart FROM demo");
+    let stmt = p.parse_select().expect("parse sql");
+
+    let rule_state = RuleState::default();
+    rule_state
+        .state
+        .write()
+        .insert("__rule_id__".to_string(), json!("rule_alert_42"));
+    rule_state
+        .state
+        .write()
+        .insert("__rule_start__".to_string(), json!(1700000000000i64));
+
+    let res = Evaluator::eval_select_filtered_stateful_fallible(&stmt, &empty, &rule_state)
+        .expect("eval select")
+        .expect("should produce row");
+
+    assert_eq!(res.get("rid"), Some(&json!("rule_alert_42")));
+    assert_eq!(res.get("rstart"), Some(&json!(1700000000000i64)));
 }

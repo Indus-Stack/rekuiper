@@ -8,11 +8,26 @@ The `CREATE STREAM` statement registers a new stream connected to an external so
 
 ```sql
 CREATE STREAM stream_name
-    ( column_name <data_type> [ ,...n ] )
+    ( column_name <data_type> [ DEFAULT <constant_value> ] [ ,...n ] )
     WITH ( property_name = expression [, ...] );
 ```
 
 For detailed property definitions and stream options, refer to the [Stream Overview Guide](../guide/streams/overview.md).
+
+### Default Column Values
+
+Define default values for columns in stream schemas. If an incoming event omits the field or contains `null`, `rekuiper` assigns the declared default value:
+
+```sql
+CREATE STREAM sensor_stream (
+    device_id string,
+    temperature float DEFAULT 25.0,
+    status string DEFAULT "normal"
+) WITH (
+    DATASOURCE = "sensor/telemetry",
+    FORMAT = "json"
+);
+```
 
 ### Example
 

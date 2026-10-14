@@ -10,25 +10,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > See `BENCHMARK-AUDIT.md` and `test/BENCHMARKS.md` for the audited methodology.
 > No latency-histogram p99 is claimed.
 
-## [0.509.0-beta] - 2026-10-11
+## [1.0.0-rc1] - 2026-10-14
 
 ### Added
-- **Video Source Connector**: Built-in video source that ingests RTSP and HTTP streams through FFmpeg pipes with interval sampling, custom input arguments, and image record streaming.
-- **ZeroMQ Sink & Source**: Built-in ZeroMQ connector (`zmq`) supporting PUB/SUB sockets with bind or connect modes and dynamic topics.
-- **Image Sink Retention Pruning**: Automated age-based (`maxAge`) and count-based (`maxCount`) directory pruning.
-- **Upstream eKuiper Parities**:
-  - `DEFAULT` column values in stream DDL (#PR-4025 parity).
-  - Joined stream `BUFFER_FULL_POLICY` validation and enforcement (#PR-4133 parity).
-  - Disabled sink action option (`disable: true`) (#PR-4100 parity).
-  - Dynamic SQL sink dynamic identifier validation (#PR-4080 parity).
-  - Kafka `offsetReset` configuration options (#PR-4190 parity).
-  - Localhost default binding (`127.0.0.1`) for network listeners (#PR-4089 parity).
+- **High-Throughput Streaming Engine**: Processes 1,078,357 events each second in end-to-end benchmarks (500,000 records in 463.66 ms). Pure engine throughput reaches 1,733,311 events each second (288.46 ms).
+- **Zero-Clone Borrowed WHERE Expressions**: Compares record values directly against literal values without cloning memory buffers.
+- **CPU Register Arithmetic**: Computes numeric operations (`+`, `-`, `*`, `/`) directly in hardware registers.
+- **Complex Event Processing Functions**: Adds deterministic finite automaton functions `sequence_match` and `sequence_count`. Stores a maximum of 10,000 partition keys to bound memory.
+- **Full SQL Catalog Lookups**: All 221 built-in SQL functions use constant-time catalog lookups with `LazyLock`.
+- **Temporal ASOF JOIN**: Joins rapid sensor streams with slower reference streams on timestamp values.
+- **Columnar Parquet Batch Writer**: Batches writes into 1,024-record row groups. Removes internal metadata keys from schema.
+- **MCP Profiler Tool**: Adds `explain_pipeline_profile` tool to analyze SQL topology offline.
+- **Video Source Connector**: Ingests RTSP and HTTP video streams through FFmpeg pipes.
+- **ZeroMQ Sink and Source**: Connects PUB/SUB sockets with dynamic topics.
+- **Image Sink Retention Pruning**: Removes old files by age and file count.
+- **Upstream eKuiper Parity**:
+  - Sets default column values in stream DDL (#PR-4025 parity).
+  - Validates `BUFFER_FULL_POLICY` on joined streams (#PR-4133 parity).
+  - Adds disabled sink action option (`disable: true`) (#PR-4100 parity).
+  - Validates dynamic SQL identifiers in SQL sinks (#PR-4080 parity).
+  - Adds Kafka `offsetReset` configuration options (#PR-4190 parity).
+  - Binds network listeners to `127.0.0.1` by default (#PR-4089 parity).
 
 ### Changed
-- Resolved clippy warnings across `video` and `sinks` under `-D warnings`.
+- Removed clippy warnings across `video` and `sinks` under `-D warnings`.
 - Unified simulator duration string and numeric interval parsing with `CONF_KEY` resolution.
 - Applied workspace-wide rustfmt formatting.
-- Updated Docker image tags to `0.509-beta` and Helm chart AppVersion to `0.509-beta`.
+- Updated Docker image tags to `1.0.0-rc1` and Helm chart AppVersion to `1.0.0-rc1`.
 
 ## [0.508.0-beta] - 2026-10-08
 

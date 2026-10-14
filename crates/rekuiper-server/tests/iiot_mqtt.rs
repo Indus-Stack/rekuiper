@@ -330,7 +330,7 @@ async fn collect(
     let deadline = tokio::time::Instant::now() + within;
     while got.len() < want {
         match tokio::time::timeout_at(deadline, rx.recv()).await {
-            Ok(Some(record)) => got.push(record.data),
+            Ok(Some(record)) => got.push(record.data.into_inner()),
             _ => break,
         }
     }

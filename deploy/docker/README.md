@@ -21,7 +21,7 @@ docker run -d --name rekuiper \
   -p 9081:9081 -p 59720:59720 -p 20499:20499 \
   -e KUIPER__BASIC__CONSOLELOG=true \
   -e KUIPER__BASIC__PROMETHEUS=true \
-  ankurkrp/rekuiper:0.509-beta
+  ankurkrp/rekuiper:1.0.0-rc1
 ```
 
 Check engine status:
@@ -143,7 +143,7 @@ docker run -d --name rekuiper \
   -p 9081:9081 -p 59720:59720 -p 20499:20499 \
   -v rekuiper-data:/kuiper/data \
   -v rekuiper-etc:/kuiper/etc \
-  ankurkrp/rekuiper:0.509-beta
+  ankurkrp/rekuiper:1.0.0-rc1
 ```
 
 ---

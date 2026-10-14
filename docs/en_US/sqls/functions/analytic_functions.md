@@ -1,9 +1,9 @@
 # Analytic Functions
 
 > [!NOTE]
-> **Verification Status**: Tested and Verified against `rekuiper` engine with live telemetry stream load on **2026-10-01 17:58:30 UTC**.  
-> **Scorecard**: **16 Verified, 0 Unsupported, 0 Broken**:  
-> - **Verified (16)**: `lag`, `lead`, `latest`, `changed_col`, `had_changed`, `changed_cols`, `acc_sum`, `acc_max`, `acc_min`, `acc_count`, `acc_avg`, `acc_collect`, `acc_distinct_collect`, `acc_max_by`, `acc_min_by`, `acc_map_agg`.
+> **Verification Status**: Tested and Verified against `rekuiper` engine with live telemetry stream load on **2026-10-14 15:00:00 UTC**.  
+> **Scorecard**: **18 Verified, 0 Unsupported, 0 Broken**:  
+> - **Verified (18)**: `lag`, `lead`, `latest`, `changed_col`, `had_changed`, `changed_cols`, `acc_sum`, `acc_max`, `acc_min`, `acc_count`, `acc_avg`, `acc_collect`, `acc_distinct_collect`, `acc_max_by`, `acc_min_by`, `acc_map_agg`, `sequence_match`, `sequence_count`.
 
 Analytic functions use internal state to perform continuous data analysis. In stream processing, the system evaluates analytic functions before `WHERE` clause predicates. Therefore, `WHERE` filter conditions do not affect analytic function state.
 
@@ -536,3 +536,60 @@ The function outputs:
 4
 0
 ```
+
+## SEQUENCE_MATCH
+
+```text
+sequence_match(max_span_ms, cond1, cond2, ...) [OVER (PARTITION BY <key>)]
+```
+
+Evaluates a multi-step event sequence using a deterministic finite automaton (DFA). It returns `true` when all condition expressions succeed in exact order within `max_span_ms` milliseconds.
+
+**Parameters:**
+
+- `max_span_ms`: Maximum duration in milliseconds between the first matching condition and the final condition. Set to `0` for unbounded time.
+- `cond1, cond2, ...`: Two or more boolean condition expressions representing sequential stages.
+
+**Behavior:**
+
+- When condition 1 is satisfied, the automaton begins tracking the sequence at current event time.
+- If subsequent conditions are satisfied within `max_span_ms`, the automaton transitions to the next stage.
+- If `max_span_ms` expires before the final condition succeeds, the automaton resets to stage 0.
+- State memory is bounded to a maximum of 10,000 distinct partition keys with automatic eviction.
+
+Example: detect high temperature followed by high pressure within 30 seconds:
+
+```sql
+SELECT sequence_match(30000, temp > 80.0, pressure > 120.0) AS matched FROM telemetry;
+```
+
+Example with partition key:
+
+```sql
+SELECT sequence_match(60000, status = "warn", status = "fail") OVER (PARTITION BY device_id) AS alarm FROM sensors;
+```
+
+## SEQUENCE_COUNT
+
+```text
+sequence_count(max_span_ms, cond1, cond2, ...) [OVER (PARTITION BY <key>)]
+```
+
+Counts the total number of non-overlapping sequence occurrences that complete within `max_span_ms` milliseconds.
+
+**Parameters:**
+
+- `max_span_ms`: Maximum duration in milliseconds allowed for each sequence completion.
+- `cond1, cond2, ...`: Sequential boolean conditions.
+
+**Behavior:**
+
+- Returns the cumulative count of completed sequence patterns.
+- After a sequence completes, the automaton resets to count subsequent occurrences.
+
+Example: count repeated fault cycles:
+
+```sql
+SELECT sequence_count(15000, error_code = 1, error_code = 2) AS fault_cycles FROM logs;
+```
+

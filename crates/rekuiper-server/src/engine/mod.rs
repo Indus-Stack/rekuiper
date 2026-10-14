@@ -8,15 +8,16 @@ pub(crate) use runtime::*;
 pub(crate) use sinks::*;
 pub(crate) use windows::*;
 
-use crate::handlers::stmt_called_functions;
+use crate::handlers::{stmt_called_functions, stmt_referenced_fields};
 use crate::sink_cache::{self, SinkCache};
 use crate::state::{maybe_trace_record, AppState, HttpPushEndpoint, TraceManager};
 use parking_lot::RwLock;
 use rekuiper_conf::KuiperConfig;
+use rekuiper_connectors::codec::extract_required_fields_from_expr_names;
 use rekuiper_connectors::{
-    FileSource, FileSourceConfig, HttpPullConfig, HttpPullSource, KafkaConfig, KafkaSource,
-    MqttConfig, MqttSource, PayloadFormat, RabbitMqConfig, RabbitMqSource, RedisSubSource,
-    SimulatorConfig, SimulatorSource, SqlConnectorConfig, SqlSource, VideoSource,
+    FileSource, FileSourceConfig, HttpPullConfig, HttpPullSource, JsonFieldMask, KafkaConfig,
+    KafkaSource, MqttConfig, MqttSource, PayloadFormat, RabbitMqConfig, RabbitMqSource,
+    RedisSubSource, SimulatorConfig, SimulatorSource, SqlConnectorConfig, SqlSource, VideoSource,
     VideoSourceConfig, WebSocketConfig, WebSocketSource, ZmqSource, ZmqSourceConfig,
 };
 use rekuiper_core::model::{RuleStatus, StreamField, StreamRecord};
@@ -392,6 +393,7 @@ pub(crate) fn cancel_stream_sources(state: &AppState, stream_name: &str) {
     }
     state.stream_active_rules.write().remove(stream_name);
     state.stream_attach_meta.write().remove(stream_name);
+    state.stream_field_masks.write().remove(stream_name);
     state
         .http_push_endpoints
         .write()
@@ -556,7 +558,7 @@ pub(crate) fn bootstrap_table_source(state: &AppState, table_name: &str) {
             tokio::select! {
                 record = bus_rx.recv() => {
                     match record {
-                        Some(rec) => table_mgr_bus.insert_table_row(&t_name_bus, rec.data),
+                        Some(rec) => table_mgr_bus.insert_table_row(&t_name_bus, rec.data.into_inner()),
                         None => break,
                     }
                 }
@@ -568,7 +570,7 @@ pub(crate) fn bootstrap_table_source(state: &AppState, table_name: &str) {
                     }
                 } => {
                     match record {
-                        Some(rec) => table_mgr_bus.insert_table_row(&t_name_bus, rec.data),
+                        Some(rec) => table_mgr_bus.insert_table_row(&t_name_bus, rec.data.into_inner()),
                         None => break,
                     }
                 }
@@ -601,7 +603,7 @@ pub(crate) fn bootstrap_table_source(state: &AppState, table_name: &str) {
                     tokio::select! {
                         record = mqtt_rx.recv() => {
                             match record {
-                                Some(rec) => table_mgr_mqtt.insert_table_row(&t_name_mqtt, rec.data),
+                                Some(rec) => table_mgr_mqtt.insert_table_row(&t_name_mqtt, rec.data.into_inner()),
                                 None => break,
                             }
                         }
@@ -719,6 +721,7 @@ pub(crate) fn bootstrap_stream_sources(
     rule_id: &str,
     stream_name: &str,
     needs_meta: bool,
+    field_mask: Option<JsonFieldMask>,
 ) {
     // If this rule is already registered for this stream, avoid duplicate registration.
     if let Some(rules) = state.stream_active_rules.read().get(stream_name) {
@@ -751,6 +754,10 @@ pub(crate) fn bootstrap_stream_sources(
             if let Some(flag) = state.stream_attach_meta.read().get(stream_name) {
                 flag.store(true, std::sync::atomic::Ordering::Relaxed);
             }
+        }
+        // Second rule attached to shared stream: clear field mask so all fields are decoded for both rules.
+        if let Some(flag) = state.stream_field_masks.read().get(stream_name) {
+            *flag.write() = None;
         }
         let (rule_cancel_tx, _rule_cancel_rx) = tokio::sync::watch::channel(false);
         state
@@ -799,10 +806,16 @@ pub(crate) fn bootstrap_stream_sources(
     ) {
         let meta_flag = Arc::new(std::sync::atomic::AtomicBool::new(needs_meta));
         config.attach_meta = needs_meta;
+        config.field_mask = field_mask.clone();
+        let mask_flag = Arc::new(parking_lot::RwLock::new(field_mask));
         state
             .stream_attach_meta
             .write()
             .insert(stream_name.to_string(), meta_flag.clone());
+        state
+            .stream_field_masks
+            .write()
+            .insert(stream_name.to_string(), mask_flag.clone());
 
         let stream_tx = state.stream_bus.get_or_create(stream_name);
         let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
@@ -810,6 +823,7 @@ pub(crate) fn bootstrap_stream_sources(
         MqttSource::new(config, stream_tx)
             .with_rule_counters(state.rule_manager.rule_counters(rule_id))
             .with_meta_flag(Some(meta_flag))
+            .with_field_mask_flag(Some(mask_flag))
             .spawn(cancel_rx);
         return;
     }
@@ -1032,16 +1046,24 @@ pub(crate) fn bootstrap_rule_sources(state: &AppState, rule_id: &str, select_stm
     let needs_meta = stmt_called_functions(select_stmt)
         .iter()
         .any(|f| f.eq_ignore_ascii_case("meta") || f.eq_ignore_ascii_case("mqtt"));
+    let (has_wildcard, idents) = stmt_referenced_fields(select_stmt);
+    let field_mask = extract_required_fields_from_expr_names(has_wildcard, &idents, None);
     if state.table_manager.get_table(&select_stmt.from).is_some() {
         bootstrap_table_source(state, &select_stmt.from);
     } else {
-        bootstrap_stream_sources(state, rule_id, &select_stmt.from, needs_meta);
+        bootstrap_stream_sources(
+            state,
+            rule_id,
+            &select_stmt.from,
+            needs_meta,
+            field_mask.clone(),
+        );
     }
     for join in &select_stmt.joins {
         if state.table_manager.get_table(&join.target).is_some() {
             bootstrap_table_source(state, &join.target);
         } else if join.target != select_stmt.from {
-            bootstrap_stream_sources(state, rule_id, &join.target, needs_meta);
+            bootstrap_stream_sources(state, rule_id, &join.target, needs_meta, field_mask.clone());
         }
     }
 }
@@ -1456,6 +1478,7 @@ pub(crate) fn cancel_rule_source(state: &AppState, rule_id: &str) {
                 if rules.is_empty() {
                     active_rules.remove(&stream);
                     attach_meta.remove(&stream);
+                    state.stream_field_masks.write().remove(&stream);
                     if let Some(cancels) = source_cancels.remove(&stream) {
                         for tx in cancels {
                             let _ = tx.send(true);
@@ -1489,6 +1512,75 @@ pub(crate) fn resolve_source_topic(stream_manager: &StreamManager, stream_name: 
         }
     }
     stream_name.to_string()
+}
+
+/// Extract an atomic StreamBus pre-filter from a SQL WHERE expression.
+/// For `A AND B`, even if `B` is a complex function call, extracting `A`
+/// still filters out non-matching events at the StreamBus before waking the rule!
+pub(crate) fn extract_bus_predicate(
+    expr: &rekuiper_sql::Expr,
+) -> Option<rekuiper_core::BusPredicate> {
+    use rekuiper_core::BusPredicate;
+    use rekuiper_sql::{BinaryOperator, Expr};
+
+    match expr {
+        Expr::BinaryOp {
+            left,
+            op: BinaryOperator::And,
+            right,
+        } => match (extract_bus_predicate(left), extract_bus_predicate(right)) {
+            (Some(l), Some(r)) => Some(BusPredicate::And(vec![l, r])),
+            (Some(single), None) | (None, Some(single)) => Some(single),
+            (None, None) => None,
+        },
+        Expr::BinaryOp { left, op, right } => {
+            // Check `meta(topic) = '...'` or `mqtt(topic) = '...'`
+            if *op == BinaryOperator::Eq {
+                if let (Expr::Call { name, args }, Expr::Literal(Value::String(expected))) =
+                    (left.as_ref(), right.as_ref())
+                {
+                    if (name.eq_ignore_ascii_case("meta") || name.eq_ignore_ascii_case("mqtt"))
+                        && args.len() == 1
+                        && matches!(&args[0], Expr::Identifier(id) if id.eq_ignore_ascii_case("topic"))
+                    {
+                        return Some(BusPredicate::TopicEq(expected.clone()));
+                    }
+                }
+            }
+            let (Expr::Identifier(field), Expr::Literal(lit)) = (left.as_ref(), right.as_ref())
+            else {
+                return None;
+            };
+            match op {
+                BinaryOperator::Eq => Some(BusPredicate::FieldEq {
+                    field: field.clone(),
+                    value: lit.clone(),
+                }),
+                BinaryOperator::Neq => Some(BusPredicate::FieldNeq {
+                    field: field.clone(),
+                    value: lit.clone(),
+                }),
+                BinaryOperator::Gt => lit.as_f64().map(|threshold| BusPredicate::FieldGt {
+                    field: field.clone(),
+                    threshold,
+                }),
+                BinaryOperator::Gte => lit.as_f64().map(|threshold| BusPredicate::FieldGte {
+                    field: field.clone(),
+                    threshold,
+                }),
+                BinaryOperator::Lt => lit.as_f64().map(|threshold| BusPredicate::FieldLt {
+                    field: field.clone(),
+                    threshold,
+                }),
+                BinaryOperator::Lte => lit.as_f64().map(|threshold| BusPredicate::FieldLte {
+                    field: field.clone(),
+                    threshold,
+                }),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
 }
 
 /// Subscribe to the rule's source stream and spawn its window-aware
@@ -1527,7 +1619,50 @@ pub(crate) fn spawn_rule_task(
     let from_stream_def = stream_manager.get_stream(&from_topic);
     let from_fields = from_stream_def.map(|s| s.stream_fields).unwrap_or_default();
 
-    let rx = stream_bus.subscribe_with_capacity(&from_topic, buffer_len);
+    // Hot-path handles cloned once: rule loops bump lock-free atomics and
+    // read the running flag without touching the global rules map per event.
+    let loop_counters = rule_manager
+        .rule_counters(&rule_id)
+        .unwrap_or_else(|| Arc::new(RuleCounters::default()));
+    let loop_running = rule_manager
+        .rule_status_handle(&rule_id)
+        .unwrap_or_else(|| Arc::new(RwLock::new(RuleStatus::default())));
+
+    let is_event_time = rule_options
+        .as_ref()
+        .and_then(|o| o.get("isEventTime"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    let send_error = rule_options
+        .as_ref()
+        .and_then(|o| o.get("sendError"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    let bus_pred = if !rekuiper_sql::Evaluator::stmt_has_analytic(&select_stmt)
+        && !is_event_time
+        && !send_error
+    {
+        select_stmt
+            .where_clause
+            .as_ref()
+            .and_then(extract_bus_predicate)
+    } else {
+        None
+    };
+
+    let rx = match bus_pred {
+        Some(pred) => {
+            let filter = rekuiper_core::SubscriberFilter {
+                predicate: pred,
+                source_in_counter: loop_counters.source_in.clone(),
+                filtered_counter: loop_counters.filtered.clone(),
+            };
+            stream_bus.subscribe_filtered_with_capacity(&from_topic, filter, buffer_len)
+        }
+        None => stream_bus.subscribe_with_capacity(&from_topic, buffer_len),
+    };
     let rx = if !from_fields.is_empty() {
         let (tx, coerced_rx) = tokio::sync::mpsc::channel(buffer_len);
         let fields = from_fields;
@@ -1585,11 +1720,6 @@ pub(crate) fn spawn_rule_task(
     // Bounded decoupled sink queue: the streaming evaluation loop never blocks
     // on sink network/disk I/O. Dropping `sink_tx` (rule end/cancel) lets the
     // worker flush remaining outputs and exit cleanly.
-    let send_error = rule_options
-        .as_ref()
-        .and_then(|o| o.get("sendError"))
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
     let (sink_tx, mut sink_rx) = tokio::sync::mpsc::channel::<StreamRecord>(buffer_len);
     let prepared = prepare_actions(&actions, &rule_id, source_configs, rule_options.as_ref());
     let cache_configs = action_cache_configs(&actions);
@@ -1626,6 +1756,9 @@ pub(crate) fn spawn_rule_task(
         let file_actions = runtimes
             .iter()
             .any(|rt| matches!(&rt.action, PreparedAction::File { .. }));
+        let all_nop = runtimes
+            .iter()
+            .all(|rt| matches!(&rt.action, PreparedAction::Nop) && rt.cache.is_none());
         let mut pending_file_records: u64 = 0;
         let mut last_live = tokio::time::Instant::now();
         loop {
@@ -1684,13 +1817,8 @@ pub(crate) fn spawn_rule_task(
                         break;
                     };
                     last_live = tokio::time::Instant::now();
-                    maybe_trace_record(
-                        &sink_trace_mgr,
-                        &sink_rule_id,
-                        &output_record.data,
-                        Some(&output_record.data),
-                    );
                     let enable_private_net = sink_config.read().basic.enable_private_net;
+                    let tracing_active = sink_trace_mgr.is_tracing(&sink_rule_id);
                     let ctx = SinkContext {
                         rule_id: &sink_rule_id,
                         rule_mgr: &sink_rule_mgr,
@@ -1698,22 +1826,50 @@ pub(crate) fn spawn_rule_task(
                         http_client: &sink_http_client,
                         enable_private_net,
                     };
-                    let num_records = if let Some(Value::Array(a)) = output_record.data.get(BATCH_ROWS_KEY) {
-                        a.len() as u64
-                    } else {
-                        1
-                    };
-                    match deliver_record(&mut runtimes, &output_record, &ctx, &mut files).await {
-                        Delivery::Delivered => {
-                            if file_actions {
-                                pending_file_records += num_records;
-                            } else {
-                                sink_counters.sink_out.fetch_add(num_records, Relaxed);
+
+                    let mut cur_output = output_record;
+                    let mut drained = 0;
+                    loop {
+                        if tracing_active {
+                            maybe_trace_record(
+                                &sink_trace_mgr,
+                                &sink_rule_id,
+                                &cur_output.data,
+                                Some(&cur_output.data),
+                            );
+                        }
+                        let num_records = if let Some(Value::Array(a)) =
+                            cur_output.data.get(BATCH_ROWS_KEY)
+                        {
+                            a.len() as u64
+                        } else {
+                            1
+                        };
+                        if all_nop {
+                            sink_counters.sink_out.fetch_add(num_records, Relaxed);
+                        } else {
+                            match deliver_record(&mut runtimes, &cur_output, &ctx, &mut files).await {
+                                Delivery::Delivered => {
+                                    if file_actions {
+                                        pending_file_records += num_records;
+                                    } else {
+                                        sink_counters.sink_out.fetch_add(num_records, Relaxed);
+                                    }
+                                }
+                                Delivery::Cached => {}
+                                Delivery::Failed => {
+                                    sink_rule_mgr.inc_sink_failed(&sink_rule_id, num_records)
+                                }
                             }
                         }
-                        // Counted as delivered when the resend succeeds.
-                        Delivery::Cached => {}
-                        Delivery::Failed => sink_rule_mgr.inc_sink_failed(&sink_rule_id, num_records),
+                        drained += 1;
+                        if drained >= 64 {
+                            break;
+                        }
+                        match sink_rx.try_recv() {
+                            Ok(next) => cur_output = next,
+                            Err(_) => break,
+                        }
                     }
                     let need_flush = files.values().any(|w| w.should_flush());
                     if need_flush {
@@ -1834,15 +1990,11 @@ pub(crate) fn spawn_rule_task(
         timestamp_field: source_ts_fields.get(&select_stmt.from).cloned(),
         source_timestamp_fields: source_ts_fields,
     };
-
-    // Hot-path handles cloned once: rule loops bump lock-free atomics and
-    // read the running flag without touching the global rules map per event.
-    let loop_counters = rule_manager
-        .rule_counters(&rule_id)
-        .unwrap_or_else(|| Arc::new(RuleCounters::default()));
-    let loop_running = rule_manager
-        .rule_status_handle(&rule_id)
-        .unwrap_or_else(|| Arc::new(RwLock::new(RuleStatus::default())));
+    let checkpoint_interval_ms = rule_options
+        .as_ref()
+        .and_then(|o| o.get("checkpointInterval"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
 
     let handle = match window {
         None => tokio::spawn(run_stateless_rule(
@@ -1855,6 +2007,10 @@ pub(crate) fn spawn_rule_task(
             confs,
             sink_tx,
             send_error,
+            join_rxs,
+            event_time,
+            rule_manager.clone(),
+            checkpoint_interval_ms,
         )),
         Some(WindowDef::Count { size, interval }) => tokio::spawn(run_count_window_rule(
             loop_counters,

@@ -315,6 +315,11 @@ pub enum JoinType {
     Right,
     Full,
     Cross,
+    /// `ASOF JOIN`: pairs each left event with the most recent right event
+    /// for the same equality key whose timestamp <= left timestamp.
+    Asof,
+    /// `LEFT ASOF JOIN`: preserves the left event even if no prior right event exists.
+    LeftAsof,
 }
 
 #[derive(Debug, Clone, PartialEq)]

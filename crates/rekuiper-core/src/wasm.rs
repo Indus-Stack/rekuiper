@@ -1,41 +1,60 @@
 use anyhow::{bail, Context, Result};
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
-use wasmi::{Engine, Linker, Module, Store, Val};
+use wasmi::{Engine, Instance, Linker, Module, Store, Val};
+
+struct WasmRuntimeInstance {
+    store: Store<()>,
+    instance: Instance,
+    params_buf: Vec<Val>,
+}
 
 /// Compiled WebAssembly module ready for isolated, sandboxed execution.
 #[derive(Clone)]
 pub struct WasmModule {
-    engine: Engine,
     module: Module,
+    runtime: Arc<Mutex<WasmRuntimeInstance>>,
 }
 
 impl WasmModule {
-    /// Compiles a WebAssembly module from raw binary bytecode.
+    /// Compiles and pre-instantiates a WebAssembly module from raw binary bytecode.
     pub fn from_bytes(wasm_bytes: &[u8]) -> Result<Self> {
         let engine = Engine::default();
         let module = Module::new(&engine, wasm_bytes)
             .context("Failed to parse and validate WebAssembly module")?;
-        Ok(Self { engine, module })
-    }
-
-    /// Invokes an exported scalar function by name with dynamic arguments.
-    pub fn call_function(&self, func_name: &str, args: &[Value]) -> Result<Value> {
-        let mut store = Store::new(&self.engine, ());
-        let linker = Linker::new(&self.engine);
+        let mut store = Store::new(&engine, ());
+        let linker = Linker::new(&engine);
         let instance = linker
-            .instantiate(&mut store, &self.module)
+            .instantiate(&mut store, &module)
             .context("Failed to instantiate WASM module")?
             .start(&mut store)
             .context("Failed to start WASM instance")?;
+        Ok(Self {
+            module,
+            runtime: Arc::new(Mutex::new(WasmRuntimeInstance {
+                store,
+                instance,
+                params_buf: Vec::with_capacity(8),
+            })),
+        })
+    }
 
-        let func = instance.get_func(&store, func_name).ok_or_else(|| {
+    /// Invokes an exported scalar function by name reusing the pre-instantiated instance.
+    pub fn call_function(&self, func_name: &str, args: &[Value]) -> Result<Value> {
+        let mut rt = self.runtime.lock();
+        let WasmRuntimeInstance {
+            store,
+            instance,
+            params_buf,
+        } = &mut *rt;
+
+        let func = instance.get_func(&*store, func_name).ok_or_else(|| {
             anyhow::anyhow!("Exported function '{}' not found in WASM module", func_name)
         })?;
 
-        let func_type = func.ty(&store);
+        let func_type = func.ty(&*store);
         let param_types = func_type.params();
 
         if args.len() != param_types.len() {
@@ -47,7 +66,7 @@ impl WasmModule {
             );
         }
 
-        let mut wasm_params = Vec::with_capacity(args.len());
+        params_buf.clear();
         for (idx, (arg, p_type)) in args.iter().zip(param_types).enumerate() {
             match p_type {
                 wasmi::core::ValType::I32 => {
@@ -55,29 +74,29 @@ impl WasmModule {
                         .as_i64()
                         .or_else(|| arg.as_f64().map(|f| f as i64))
                         .unwrap_or(0) as i32;
-                    wasm_params.push(Val::I32(i));
+                    params_buf.push(Val::I32(i));
                 }
                 wasmi::core::ValType::I64 => {
                     let i = arg
                         .as_i64()
                         .or_else(|| arg.as_f64().map(|f| f as i64))
                         .unwrap_or(0);
-                    wasm_params.push(Val::I64(i));
+                    params_buf.push(Val::I64(i));
                 }
                 wasmi::core::ValType::F32 => {
                     let f = arg.as_f64().unwrap_or(0.0) as f32;
-                    wasm_params.push(Val::F32(f.into()));
+                    params_buf.push(Val::F32(f.into()));
                 }
                 wasmi::core::ValType::F64 => {
                     let f = arg.as_f64().unwrap_or(0.0);
-                    wasm_params.push(Val::F64(f.into()));
+                    params_buf.push(Val::F64(f.into()));
                 }
                 _ => bail!("Unsupported WASM parameter type for argument {}", idx),
             }
         }
 
         let mut results = vec![Val::I32(0); func_type.results().len()];
-        func.call(&mut store, &wasm_params, &mut results)
+        func.call(store, params_buf, &mut results)
             .context("WASM execution trapped or encountered runtime error")?;
 
         if results.is_empty() {
@@ -187,14 +206,18 @@ impl WasmPluginRegistry {
         wasm_bytes: &[u8],
     ) -> Result<Vec<String>> {
         let funcs = self.register_module(module_name, wasm_bytes)?;
+        let module = self
+            .modules
+            .read()
+            .get(module_name)
+            .cloned()
+            .expect("just registered");
         let udf_reg = crate::plugin::get_global_udf_registry();
         for func in &funcs {
-            let mod_name = module_name.to_string();
+            let mod_ref = module.clone();
             let fn_name = func.clone();
             let handler = Arc::new(move |args: &[Value]| {
-                get_global_wasm_registry()
-                    .call_module_func(&mod_name, &fn_name, args)
-                    .unwrap_or(Value::Null)
+                mod_ref.call_function(&fn_name, args).unwrap_or(Value::Null)
             });
             udf_reg.register_udf(func, handler.clone());
             udf_reg.register_udf(&format!("{}:{}", module_name, func), handler);

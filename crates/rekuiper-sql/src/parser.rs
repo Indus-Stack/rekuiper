@@ -521,6 +521,7 @@ impl<'a> Parser<'a> {
                     | Some("INNER")
                     | Some("JOIN")
                     | Some("OUTER")
+                    | Some("ASOF")
             );
             if !is_join {
                 break;
@@ -529,7 +530,8 @@ impl<'a> Parser<'a> {
             // stream merely named e.g. `left` does not break parsing.
             let saved = self.pos;
             let prefix = match self.peek_word().map(|w| w.to_ascii_uppercase()).as_deref() {
-                Some("LEFT") | Some("RIGHT") | Some("FULL") | Some("CROSS") | Some("INNER") => {
+                Some("LEFT") | Some("RIGHT") | Some("FULL") | Some("CROSS") | Some("INNER")
+                | Some("ASOF") => {
                     let word = self.peek_word().unwrap_or_default();
                     self.skip_whitespace();
                     self.pos += word.len();
@@ -537,6 +539,11 @@ impl<'a> Parser<'a> {
                 }
                 _ => None,
             };
+            let mut is_asof = prefix.as_deref() == Some("ASOF");
+            if prefix.as_deref() == Some("LEFT") && self.peek_word_is("ASOF") {
+                self.match_keyword("ASOF");
+                is_asof = true;
+            }
             if self.peek_word_is("OUTER") {
                 self.match_keyword("OUTER");
             }
@@ -545,17 +552,19 @@ impl<'a> Parser<'a> {
                 break;
             }
             let join_type = match prefix.as_deref() {
+                Some("LEFT") if is_asof => JoinType::LeftAsof,
                 Some("LEFT") => JoinType::Left,
                 Some("RIGHT") => JoinType::Right,
                 Some("FULL") => JoinType::Full,
                 Some("CROSS") => JoinType::Cross,
+                Some("ASOF") => JoinType::Asof,
                 _ => JoinType::Inner,
             };
             let target = match self.peek_word() {
                 Some(t) => {
                     if matches!(
                         t.to_ascii_uppercase().as_str(),
-                        "WHERE" | "GROUP" | "ORDER" | "LIMIT" | "HAVING" | "JOIN" | "ON"
+                        "WHERE" | "GROUP" | "ORDER" | "LIMIT" | "HAVING" | "JOIN" | "ON" | "ASOF"
                     ) {
                         bail!("Expected join target after JOIN, found '{}'", t);
                     }
@@ -1692,6 +1701,7 @@ impl<'a> Parser<'a> {
             "FULL",
             "CROSS",
             "OUTER",
+            "ASOF",
             "ON",
             "UNION",
             "ALL",

@@ -1,23 +1,32 @@
-# Release Notes - rekuiper v0.509-beta
+# Release Notes - rekuiper v1.0.0-rc1 (RC1v1)
 
-`rekuiper` v0.509-beta delivers video source ingestion, ZeroMQ streaming connectors, upstream eKuiper bugfix parities, dynamic identifier validation, and CI hardening.
+`rekuiper` v1.0.0-rc1 provides high-throughput streaming SQL processing. It includes temporal ASOF joins, complex event processing, 221 built-in SQL functions, and 48 Model Context Protocol (MCP) tools.
 
 Key highlights:
-- **Video Source Connector**: Added a built-in `video` source. It ingests live RTSP and HTTP camera streams through FFmpeg pipes with interval sampling (`interval`) and custom input arguments.
-- **ZeroMQ Sink and Source**: Added a built-in ZeroMQ streaming connector (`zmq`). It supports PUB/SUB sockets with bind or connect modes, dynamic topics, and payload decoding.
-- **Image Sink Retention Pruning**: Implemented retention directory pruning by age (`maxAge`) and count (`maxCount`) with dynamic configuration updates and idle task cleanup.
-- **Simulator & Random Source Parity**: Supported millisecond duration strings (`50ms`, `1s`) and numeric interval parsing with `CONF_KEY` resolution and stream DDL inline overrides.
-- **Upstream eKuiper Parity Features**:
-  - `DEFAULT` column values in stream DDL (`CREATE STREAM s (id BIGINT DEFAULT 100)`) with automatic ingress default filling (#PR-4025 parity).
-  - Joined stream `BUFFER_FULL_POLICY` validation and enforcement (#PR-4133 parity).
-  - Disabled sink action option (`disable: true`) skipping action execution without rule disruption (#PR-4100 parity).
-  - Dynamic SQL sink identifier validation and sanitization (#PR-4080 parity).
-  - Kafka `offsetReset` configuration options (#PR-4190 parity).
-  - Default loopback binding (`127.0.0.1`) for network listeners (#PR-4089 security parity).
-- **Hardened CI & Linter Compliance**: Resolved clippy warnings across `video` and `sinks`, resolved duration assertions, and formatted the workspace.
+- **High Throughput Streaming SQL Engine**: The engine processes 1,078,357 events each second in end-to-end benchmarks (500,000 records in 463.66 ms). The pure engine loop processes 1,733,311 events each second (288.46 ms).
+- **Zero-Clone Borrowed WHERE Filter**: The filter compares `column <op> literal` directly with borrowed references. This removes 1,000,000 value copy operations during 500,000 evaluations.
+- **Fast CPU Register Arithmetic**: The evaluator computes math expressions (`+`, `-`, `*`, `/`) directly in CPU floating-point registers. This avoids intermediate JSON memory allocations.
+- **Bounded-Memory Complex Event Processing**: The functions `sequence_match` and `sequence_count` track multi-step event sequences. The state machine stores a maximum of 10,000 partition keys to limit memory usage.
+- **221 Built-In SQL Functions**: The catalog contains 221 functions. The engine validates function names in O(1) time with a static hash set. New functions include `sequence_match`, `sequence_count`, percentiles, and variance.
+- **Temporal ASOF JOIN**: The engine joins high-rate sensor streams with slower reference streams on timestamp values without full window cross-products.
+- **Shared Window Memory**: Concurrent rules that subscribe to the same stream share buffered event memory through reference-counted pointers.
+- **Parquet Batch Writer**: The Parquet sink collects 1,024 rows before it writes to disk. It removes internal metadata keys from the Parquet schema.
+- **Model Context Protocol (MCP) Profiler**: Added the `explain_pipeline_profile` tool. It analyzes SQL statements offline and reports execution tiers and memory requirements.
+- **Video Source Connector**: Added a built-in `video` source. It reads RTSP and HTTP camera streams through FFmpeg pipes.
+- **ZeroMQ Connector**: Added a ZeroMQ connector for PUB/SUB streaming data.
+- **Image Sink File Removal**: Added automatic file removal for image sinks based on file age and count limits.
+- **Simulator Time Parsing**: The simulator source accepts time values with units (for example, `50ms` and `1s`).
+- **eKuiper Compatibility**:
+  - Sets default column values from stream DDL definitions.
+  - Enforces `BUFFER_FULL_POLICY` settings on joined streams.
+  - Adds the `disable: true` option for sinks.
+  - Validates SQL table names in database sinks.
+  - Adds Kafka `offsetReset` options.
+  - Binds network listeners to `127.0.0.1` by default.
+- **Code Quality**: Corrected all compiler and linter warnings.
 
-- Docker image: `ankurkrp/rekuiper:0.509-beta` (plus `latest`)
-- Helm chart: `deploy/chart/ekuiper` (`AppVersion: 0.509-beta`)
+- Docker image: `ankurkrp/rekuiper:1.0.0-rc1` (plus `latest`)
+- Helm chart: `deploy/chart/ekuiper` (`AppVersion: 1.0.0-rc1`)
 
 ---
 

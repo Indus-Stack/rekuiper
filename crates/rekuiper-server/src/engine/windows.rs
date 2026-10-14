@@ -35,7 +35,8 @@ pub(crate) async fn emit_window_batch(
         }
     }
     let outputs = if select_stmt.joins.is_empty() {
-        let rows: Vec<HashMap<String, Value>> = batch.into_iter().map(|r| r.data).collect();
+        let rows: Vec<HashMap<String, Value>> =
+            batch.into_iter().map(|r| r.data.into_inner()).collect();
         if prefiltered {
             Evaluator::eval_window_filtered_stateful(select_stmt, rows, rule_state)
         } else {
@@ -299,7 +300,7 @@ pub(crate) async fn run_count_window_rule(
                             continue;
                         }
                         counters.inc_source(1);
-                        let probe = StreamRecord::new(tagged.data.clone());
+                        let probe = StreamRecord::from_shared(tagged.data.clone());
                         if handle_error_record(&counters, &rule_id, send_error, &sink, &probe).await {
                             continue;
                         }
@@ -521,7 +522,7 @@ pub(crate) async fn run_tumbling_window_rule(
                             continue;
                         }
                         counters.inc_source(1);
-                        let probe = StreamRecord::new(tagged.data.clone());
+                        let probe = StreamRecord::from_shared(tagged.data.clone());
                         if handle_error_record(&counters, &rule_id, send_error, &sink, &probe).await {
                             continue;
                         }
@@ -747,7 +748,7 @@ pub(crate) async fn run_session_window_rule(
                             continue;
                         }
                         counters.inc_source(1);
-                        let probe = StreamRecord::new(tagged.data.clone());
+                        let probe = StreamRecord::from_shared(tagged.data.clone());
                         if handle_error_record(&counters, &rule_id, send_error, &sink, &probe).await {
                             continue;
                         }
@@ -958,7 +959,7 @@ pub(crate) async fn run_hopping_window_rule(
                             continue;
                         }
                         counters.inc_source(1);
-                        let probe = StreamRecord::new(tagged.data.clone());
+                        let probe = StreamRecord::from_shared(tagged.data.clone());
                         if handle_error_record(&counters, &rule_id, send_error, &sink, &probe).await {
                             continue;
                         }
@@ -1020,6 +1021,10 @@ pub(crate) async fn run_sliding_window_rule(
         .write()
         .insert("__rule_start__".to_string(), Value::from(start_time_ms));
     let mut buffer: Vec<(std::time::Instant, TaggedRow)> = Vec::new();
+    let mut sliding_inc =
+        (!event_time.enabled && select_stmt.window_trigger_condition.is_none() && delay.is_none())
+            .then(|| rekuiper_sql::SlidingIncrementalWindow::try_new(&select_stmt))
+            .flatten();
     // Event-time state: event-timestamped rows plus the watermark.
     let mut et_buffer: Vec<(i64, TaggedRow)> = Vec::new();
     let mut pending_triggers: Vec<(i64, i64)> = Vec::new();
@@ -1147,6 +1152,15 @@ pub(crate) async fn run_sliding_window_rule(
                     let retain_ts = min_pending.min(event_ts).saturating_sub(window_millis);
                     et_buffer.retain(|(ts, _)| *ts >= retain_ts);
                 }
+            } else if let Some(ref mut inc) = sliding_inc {
+                let now_ms = chrono::Utc::now().timestamp_millis();
+                let cutoff_ms = now_ms.saturating_sub(window_millis);
+                inc.evict_before(cutoff_ms);
+                let _ = inc.push(now_ms, &tagged.data);
+                let outputs = inc.snapshot();
+                if !outputs.is_empty() {
+                    emit_window_outputs(&counters, &sink, outputs).await;
+                }
             } else {
                 let now = std::time::Instant::now();
                 buffer.push((now, tagged.clone()));
@@ -1207,7 +1221,7 @@ pub(crate) async fn run_sliding_window_rule(
                             continue;
                         }
                         counters.inc_source(1);
-                        let probe = StreamRecord::new(tagged.data.clone());
+                        let probe = StreamRecord::from_shared(tagged.data.clone());
                         if handle_error_record(&counters, &rule_id, send_error, &sink, &probe).await {
                             continue;
                         }
@@ -1393,7 +1407,7 @@ pub(crate) async fn run_state_window_rule(
                             continue;
                         }
                         counters.inc_source(1);
-                        let probe = StreamRecord::new(tagged.data.clone());
+                        let probe = StreamRecord::from_shared(tagged.data.clone());
                         if handle_error_record(&counters, &rule_id, send_error, &sink, &probe).await {
                             continue;
                         }

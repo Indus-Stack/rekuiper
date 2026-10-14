@@ -65,6 +65,7 @@ pub async fn start_server(config: KuiperConfig, version: String) -> Result<()> {
         stream_source_cancels: Arc::new(RwLock::new(HashMap::new())),
         rule_streams: Arc::new(RwLock::new(HashMap::new())),
         stream_attach_meta: Arc::new(RwLock::new(HashMap::new())),
+        stream_field_masks: Arc::new(RwLock::new(HashMap::new())),
         http_push_endpoints: Arc::new(RwLock::new(HashMap::new())),
         http_client: reqwest::Client::builder()
             .tcp_nodelay(true)
