@@ -239,6 +239,37 @@ pub async fn get_all_rule_status(State(state): State<AppState>) -> impl IntoResp
     Json(all)
 }
 
+pub async fn get_rule_errors(State(state): State<AppState>, Path(name): Path<String>) -> Response {
+    if let Err(resp) = check_valid_name(&name) {
+        return resp;
+    }
+    if let Some(stats) = state.rule_manager.get_rule_dlq_stats(&name) {
+        Json(stats).into_response()
+    } else {
+        (StatusCode::NOT_FOUND, format!("Rule {} not found", name)).into_response()
+    }
+}
+
+pub async fn clear_rule_errors(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> Response {
+    if let Err(resp) = check_valid_name(&name) {
+        return resp;
+    }
+    match state.rule_manager.clear_rule_dlq(&name) {
+        Ok(cleared) => (
+            StatusCode::OK,
+            Json(json!({
+                "message": format!("Rule {} DLQ errors cleared", name),
+                "cleared": cleared,
+            })),
+        )
+            .into_response(),
+        Err(e) => (StatusCode::NOT_FOUND, format!("{}", e)).into_response(),
+    }
+}
+
 /// Collect every called function name in an expression (including CASE
 /// branches and analytic OVER calls).
 pub fn collect_called_functions(expr: &Expr, out: &mut Vec<String>) {

@@ -5,7 +5,7 @@
 > **Scorecard**: **Plugin-Dependent Extensions**:  
 > Custom functions (`echo`, `countPlusOne`, `accumulateWordCount`, image, geohash, and TensorFlow plugins) require compiling and registering external plugin dynamic libraries (`/plugins/functions`) or JavaScript UDF functions (`/udf/javascript`). Without the plugin loaded, the engine validates functions strictly and returns `function not found`.
 
-rekuiper supports custom user-defined functions. For details on how to develop, compile, and install native function plugins, refer to [Native Function Extensions](../../extension/native/develop/function.md).
+rekuiper supports custom user-defined functions. For details on how to configure and install native functions and extensions, refer to [Native Function Extensions](../../extension/native/overview.md) and [WebAssembly Extensions](../../extension/wasm/overview.md).
 
 ## echo Plugin
 

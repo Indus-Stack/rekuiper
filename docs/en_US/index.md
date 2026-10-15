@@ -50,7 +50,7 @@ This demo needs only Docker. A built-in simulator makes the data.
 **1. Start the engine.**
 
 ```shell
-docker run -d --name rekuiper -p 9081:9081 ankurkrp/rekuiper:1.0.0-rc2
+docker run -d --name rekuiper -p 9081:9081 ankurkrp/rekuiper:1.0.0-rc3
 ```
 
 **2. Register simulated sensor readings, ten per second.**
@@ -175,7 +175,7 @@ Read more: [Lookup tables](./guide/tables/lookup.md)
 
 | Use rekuiper when | Look elsewhere when |
 | :--- | :--- |
-| Your data arrives as messages: MQTT, HTTP, WebSocket, Kafka, AMQP. | You need native Modbus, OPC UA, or BACnet drivers. Put a protocol gateway in front and publish to MQTT. |
+| Your data arrives via industrial protocols (Modbus TCP/RTU, OPC-UA) or messages (MQTT, HTTP, WebSocket, Kafka, AMQP). | You need proprietary closed-source fieldbus protocols (e.g., Profinet IRT or EtherCAT master stacks) without an Ethernet gateway. |
 | You want the logic in SQL, and you want to change it at runtime. | You need a visual flow builder for people who do not write SQL. |
 | The machine has one or two CPU cores and limited memory. | You need a distributed cluster that scales across many nodes. rekuiper runs on one node. |
 | You need time windows, joins, and rules that keep state. | You only need to collect metrics and forward them without processing. |
@@ -210,7 +210,8 @@ Method and full results: [Benchmark Overview](./benchmarks/overview.md) · [Thro
 | **HTTP** | HTTP pull, HTTP push | REST |
 | **Databases** | PostgreSQL, SQLite | PostgreSQL, SQLite, InfluxDB v1 and v2, TDengine, IoTDB |
 | **Files and media** | CSV, JSON Lines, Parquet, video (FFmpeg) | CSV, JSON Lines, Parquet, image |
-| **Industrial** | EdgeX Foundry, Neuron | EdgeX Foundry, Neuron |
+| **Industrial** | Modbus TCP/RTU, OPC-UA, EdgeX Foundry, Neuron | Modbus TCP/RTU, OPC-UA, EdgeX Foundry, Neuron |
+| **Telemetry** | OpenTelemetry (OTLP/HTTP metrics, logs, traces) | OpenTelemetry (OTLP/HTTP) |
 | **Test** | Simulator, Memory | Log, Memory, Nop |
 
 Details: [Sources](./guide/sources/overview.md) · [Sinks](./guide/sinks/overview.md)
@@ -225,4 +226,5 @@ Details: [Sources](./guide/sources/overview.md) · [Sinks](./guide/sinks/overvie
 | Understand how the engine works | [Architecture](./concepts/rekuiper.md) |
 | Move from eKuiper | [Migration guide](./operation/migration.md) |
 | Automate with the REST API or CLI | [REST API](./api/restapi/overview.md) · [CLI](./api/cli/overview.md) |
+| Inspect pipelines with zero companion containers | [Embedded UI & rekuiper top](./operation/observability_ui_top.md) |
 | Use an AI coding assistant with rekuiper | [Model Context Protocol](./mcp/overview.md) |

@@ -6,6 +6,9 @@ In rekuiper, core sink connectors are compiled directly into the binary to provi
 
 rekuiper includes the following built-in sink connectors:
 
+- [Modbus sink](./builtin/modbus.md): Writes coils and holding registers to Modbus TCP and RTU devices.
+- [OPC-UA sink](./builtin/opcua.md): Writes variable values to OPC-UA binary servers.
+- [OpenTelemetry (OTLP) sink](./builtin/otlp.md): Exports records to OpenTelemetry Collectors and OTLP/HTTP endpoints.
 - [MQTT sink](./builtin/mqtt.md): Publishes messages to an external MQTT broker.
 - [RabbitMQ sink](./builtin/rabbitmq.md): Publishes messages to RabbitMQ exchanges using AMQP 0-9-1.
 - [EdgeX sink](./builtin/edgex.md): Publishes events to the EdgeX Foundry message bus.

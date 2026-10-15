@@ -9,6 +9,14 @@ use axum::{
 
 pub fn create_router(state: AppState) -> Router {
     Router::new()
+        .route("/ui", get(ui_handler))
+        .route("/ui/", get(ui_handler))
+        .route("/v1/metrics", post(push_otlp_data))
+        .route("/v1/logs", post(push_otlp_data))
+        .route("/v1/traces", post(push_otlp_data))
+        .route("/otlp/v1/metrics", post(push_otlp_data))
+        .route("/otlp/v1/logs", post(push_otlp_data))
+        .route("/otlp/v1/traces", post(push_otlp_data))
         .route("/ping", get(ping_handler))
         .route("/", get(root_handler).post(root_handler))
         .route("/streams", get(list_streams).post(create_stream))
@@ -35,6 +43,14 @@ pub fn create_router(state: AppState) -> Router {
             get(get_rule).put(update_rule).delete(delete_rule),
         )
         .route("/rules/:name/status", get(get_rule_status))
+        .route(
+            "/rules/:name/errors",
+            get(get_rule_errors).delete(clear_rule_errors),
+        )
+        .route(
+            "/rules/:name/dlq",
+            get(get_rule_errors).delete(clear_rule_errors),
+        )
         .route("/rules/:name/topo", get(get_rule_topo))
         .route("/rules/:name/explain", get(get_rule_explain))
         .route("/rules/:name/start", post(start_rule))
@@ -234,10 +250,131 @@ pub fn create_router(state: AppState) -> Router {
         .route("/metrics/dump", get(metrics_dump))
         .route("/metrics/dump/check", get(metrics_dump_check))
         .route("/metrics", get(prometheus_metrics_handler))
+        .route("/declarative/reload", post(declarative_reload_handler))
         .fallback(create_router_fallback)
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            declarative_mutation_guard,
+        ))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             auth_guard,
         ))
         .with_state(state)
+}
+
+pub async fn declarative_mutation_guard(
+    axum::extract::State(state): axum::extract::State<AppState>,
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    if state.declarative_mode {
+        let method = req.method();
+        let path = req.uri().path();
+
+        // Allow: All GET, HEAD, OPTIONS
+        if method == axum::http::Method::GET
+            || method == axum::http::Method::HEAD
+            || method == axum::http::Method::OPTIONS
+        {
+            return next.run(req).await;
+        }
+
+        // Allow: POST /declarative/reload
+        if path == "/declarative/reload" || path == "/declarative/reload/" {
+            return next.run(req).await;
+        }
+
+        // Allow: POST /data/* and PUT /data/* (httppush data plane)
+        if (method == axum::http::Method::POST || method == axum::http::Method::PUT)
+            && path.starts_with("/data/")
+        {
+            return next.run(req).await;
+        }
+
+        // Allow: POST /v1/* and POST /otlp/v1/* (OTLP data ingestion)
+        if method == axum::http::Method::POST
+            && (path.starts_with("/v1/") || path.starts_with("/otlp/v1/"))
+        {
+            return next.run(req).await;
+        }
+
+        // Allow: POST /ruletest* (ephemeral rule testing)
+        if method == axum::http::Method::POST && path.starts_with("/ruletest") {
+            return next.run(req).await;
+        }
+
+        // Allow: DELETE /rules/*/errors and DELETE /rules/*/dlq (operational DLQ clearing)
+        if method == axum::http::Method::DELETE
+            && path.starts_with("/rules/")
+            && (path.ends_with("/errors") || path.ends_with("/dlq"))
+        {
+            return next.run(req).await;
+        }
+
+        // Block: every other mutating request with 403 Forbidden
+        let body = serde_json::json!({
+            "error": "declarative_mode_active",
+            "message": "Instance is running in read-only Declarative Mode. Modify the manifest file to update resources."
+        });
+        return (axum::http::StatusCode::FORBIDDEN, axum::Json(body)).into_response();
+    }
+
+    next.run(req).await
+}
+
+pub async fn declarative_reload_handler(
+    axum::extract::State(state): axum::extract::State<AppState>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    if !state.declarative_mode {
+        return (
+            axum::http::StatusCode::BAD_REQUEST,
+            axum::Json(serde_json::json!({
+                "error": "not_in_declarative_mode",
+                "message": "Instance is not running in Declarative Mode"
+            })),
+        )
+            .into_response();
+    }
+
+    if let Some(ref path) = state.declarative_path {
+        match crate::declarative::reconcile_declarative_path(&state, path).await {
+            Ok(report) => (
+                axum::http::StatusCode::OK,
+                axum::Json(serde_json::json!(report)),
+            )
+                .into_response(),
+            Err(e) => {
+                state
+                    .declarative_reload_failures
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                (
+                    axum::http::StatusCode::BAD_REQUEST,
+                    axum::Json(serde_json::json!({
+                        "error": "declarative_reload_failed",
+                        "message": e
+                    })),
+                )
+                    .into_response()
+            }
+        }
+    } else {
+        (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            axum::Json(serde_json::json!({
+                "error": "no_declarative_path",
+                "message": "Declarative path not configured"
+            })),
+        )
+            .into_response()
+    }
+}
+
+pub async fn ui_handler() -> impl axum::response::IntoResponse {
+    (
+        [(axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8")],
+        include_str!("ui.html"),
+    )
 }

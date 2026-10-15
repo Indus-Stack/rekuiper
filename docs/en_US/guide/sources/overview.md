@@ -15,6 +15,9 @@ Connectors support one or both ingestion modes. Documentation pages indicate sup
 
 rekuiper includes the following built-in source connectors:
 
+- [Modbus source](./builtin/modbus.md): Ingests register and coil values from Modbus TCP and RTU devices.
+- [OPC-UA source](./builtin/opcua.md): Ingests variable nodes from OPC-UA binary servers over TCP.
+- [OpenTelemetry (OTLP) source](./builtin/otlp.md): Ingests OTLP/HTTP JSON metrics, logs, and trace spans from OpenTelemetry SDKs and agents.
 - [MQTT source](./builtin/mqtt.md): Subscribes to MQTT topics.
 - [RabbitMQ source](./builtin/rabbitmq.md): Consumes messages from RabbitMQ queues using AMQP 0-9-1.
 - [EdgeX source](./builtin/edgex.md): Ingests sensor readings and events from the EdgeX message bus.

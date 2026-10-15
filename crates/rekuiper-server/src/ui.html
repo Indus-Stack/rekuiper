@@ -1,0 +1,1667 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>rekuiper — Edge Stream &amp; IIoT Console</title>
+  <style>
+    :root {
+      --bg-canvas: #F8FAFC;
+      --bg-surface: #FFFFFF;
+      --bg-subtle: #F1F5F9;
+      --bg-hover: #F8FAFC;
+      --border: #E2E8F0;
+      --border-strong: #CBD5E1;
+
+      --text-primary: #0F172A;
+      --text-secondary: #475569;
+      --text-muted: #64748B;
+      --text-faint: #94A3B8;
+
+      --accent: #2563EB;
+      --accent-hover: #1D4ED8;
+      --accent-soft: #EFF6FF;
+      --accent-border: #BFDBFE;
+
+      --emerald-text: #065F46;
+      --emerald-bg: #ECFDF5;
+      --emerald-border: #A7F3D0;
+      --emerald-dot: #10B981;
+
+      --indigo-text: #3730A3;
+      --indigo-bg: #EEF2FF;
+      --indigo-border: #C7D2FE;
+
+      --amber-text: #92400E;
+      --amber-bg: #FFFBEB;
+      --amber-border: #FDE68A;
+
+      --rose-text: #991B1B;
+      --rose-bg: #FEF2F2;
+      --rose-border: #FECACA;
+      --rose-dot: #EF4444;
+
+      --shadow-xs: 0 1px 2px rgba(15, 23, 42, 0.03);
+      --shadow-sm: 0 1px 3px rgba(15, 23, 42, 0.05), 0 1px 2px rgba(15, 23, 42, 0.03);
+      --shadow-md: 0 4px 12px -2px rgba(15, 23, 42, 0.06), 0 2px 4px -2px rgba(15, 23, 42, 0.03);
+      --radius-sm: 6px;
+      --radius-md: 10px;
+      --radius-lg: 14px;
+
+      --font-sans: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      --font-mono: "JetBrains Mono", "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background-color: var(--bg-canvas);
+      color: var(--text-primary);
+      font-family: var(--font-sans);
+      font-size: 14px;
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .tabular {
+      font-variant-numeric: tabular-nums;
+      font-feature-settings: "tnum";
+    }
+
+    /* Top Header */
+    .topbar {
+      background: rgba(255, 255, 255, 0.88);
+      backdrop-filter: blur(8px);
+      border-bottom: 1px solid var(--border);
+      position: sticky;
+      top: 0;
+      z-index: 30;
+      padding: 0 24px;
+      height: 60px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .brand-logo {
+      width: 32px;
+      height: 32px;
+      border-radius: 8px;
+      background: linear-gradient(135deg, #2563EB 0%, #1D4ED8 100%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #FFFFFF;
+      font-weight: 700;
+      font-size: 15px;
+      letter-spacing: -0.5px;
+      box-shadow: 0 2px 6px rgba(37, 99, 235, 0.25);
+    }
+
+    .brand-title {
+      font-weight: 700;
+      font-size: 16px;
+      letter-spacing: -0.02em;
+      color: var(--text-primary);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .brand-subtitle {
+      font-size: 12px;
+      color: var(--text-muted);
+      font-weight: 400;
+      border-left: 1px solid var(--border);
+      padding-left: 10px;
+    }
+
+    .topbar-controls {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    /* Pills & Badges */
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 3px 10px;
+      border-radius: 9999px;
+      font-size: 12px;
+      font-weight: 500;
+      border: 1px solid transparent;
+      white-space: nowrap;
+    }
+
+    .badge-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+    }
+
+    .badge-emerald {
+      background: var(--emerald-bg);
+      color: var(--emerald-text);
+      border-color: var(--emerald-border);
+    }
+    .badge-emerald .badge-dot { background: var(--emerald-dot); }
+
+    .badge-indigo {
+      background: var(--indigo-bg);
+      color: var(--indigo-text);
+      border-color: var(--indigo-border);
+    }
+
+    .badge-amber {
+      background: var(--amber-bg);
+      color: var(--amber-text);
+      border-color: var(--amber-border);
+    }
+    .badge-amber .badge-dot { background: #F59E0B; }
+
+    .badge-rose {
+      background: var(--rose-bg);
+      color: var(--rose-text);
+      border-color: var(--rose-border);
+    }
+    .badge-rose .badge-dot { background: var(--rose-dot); }
+
+    .badge-slate {
+      background: var(--bg-subtle);
+      color: var(--text-secondary);
+      border-color: var(--border);
+    }
+    .badge-slate .badge-dot { background: var(--text-faint); }
+
+    /* Buttons & Inputs */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      padding: 6px 12px;
+      border-radius: var(--radius-sm);
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      border: 1px solid var(--border);
+      background: var(--bg-surface);
+      color: var(--text-primary);
+      box-shadow: var(--shadow-xs);
+    }
+
+    .btn:hover:not(:disabled) {
+      background: var(--bg-subtle);
+      border-color: var(--border-strong);
+    }
+
+    .btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .btn-primary {
+      background: var(--accent);
+      color: #FFFFFF;
+      border-color: var(--accent);
+    }
+
+    .btn-primary:hover:not(:disabled) {
+      background: var(--accent-hover);
+      border-color: var(--accent-hover);
+    }
+
+    .btn-danger {
+      background: var(--rose-bg);
+      color: var(--rose-text);
+      border-color: var(--rose-border);
+    }
+
+    .btn-danger:hover:not(:disabled) {
+      background: #FEE2E2;
+    }
+
+    .btn-sm {
+      padding: 4px 8px;
+      font-size: 12px;
+    }
+
+    .select-input, .text-input {
+      padding: 6px 10px;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border);
+      background: var(--bg-surface);
+      color: var(--text-primary);
+      font-size: 13px;
+      font-family: var(--font-sans);
+      outline: none;
+      transition: border-color 0.15s ease, box-shadow 0.15s ease;
+    }
+
+    .select-input:focus, .text-input:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+    }
+
+    /* Main Container */
+    .container {
+      max-width: 1440px;
+      width: 100%;
+      margin: 0 auto;
+      padding: 24px;
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    /* KPI Strip */
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    @media (max-width: 1200px) {
+      .kpi-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    }
+    @media (max-width: 700px) {
+      .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+
+    .kpi-card {
+      background: var(--bg-surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      padding: 16px;
+      box-shadow: var(--shadow-xs);
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      gap: 8px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .kpi-card.alert-card {
+      border-color: var(--rose-border);
+      background: linear-gradient(180deg, #FFFFFF 0%, #FFFBFB 100%);
+    }
+
+    .kpi-label {
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .kpi-value {
+      font-size: 24px;
+      font-weight: 700;
+      letter-spacing: -0.03em;
+      color: var(--text-primary);
+      line-height: 1.1;
+    }
+
+    .kpi-sub {
+      font-size: 12px;
+      color: var(--text-secondary);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 4px;
+    }
+
+    /* Navigation Tabs */
+    .nav-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 12px;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+
+    .tabs {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      background: var(--bg-subtle);
+      padding: 4px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+    }
+
+    .tab-btn {
+      border: none;
+      background: transparent;
+      color: var(--text-secondary);
+      font-size: 13px;
+      font-weight: 500;
+      padding: 6px 14px;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .tab-btn:hover {
+      color: var(--text-primary);
+    }
+
+    .tab-btn.active {
+      background: var(--bg-surface);
+      color: var(--text-primary);
+      box-shadow: var(--shadow-xs);
+    }
+
+    .filter-group {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    /* Workspace Split Layout */
+    .workspace {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 20px;
+      align-items: start;
+    }
+
+    .workspace.with-inspector {
+      grid-template-columns: 1fr 480px;
+    }
+
+    @media (max-width: 1100px) {
+      .workspace.with-inspector {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    /* Surface Card & Table */
+    .card {
+      background: var(--bg-surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      box-shadow: var(--shadow-sm);
+      overflow: hidden;
+    }
+
+    .card-header {
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      background: #FCFDFE;
+    }
+
+    .card-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text-primary);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .table-wrap {
+      width: 100%;
+      overflow-x: auto;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      text-align: left;
+    }
+
+    th {
+      padding: 10px 16px;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--text-muted);
+      background: var(--bg-subtle);
+      border-bottom: 1px solid var(--border);
+      user-select: none;
+      white-space: nowrap;
+    }
+
+    td {
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+      font-size: 13px;
+      color: var(--text-primary);
+      vertical-align: middle;
+    }
+
+    tr:last-child td {
+      border-bottom: none;
+    }
+
+    tbody tr.clickable-row {
+      cursor: pointer;
+      transition: background-color 0.1s ease;
+    }
+
+    tbody tr.clickable-row:hover {
+      background-color: var(--bg-hover);
+    }
+
+    tbody tr.selected-row {
+      background-color: var(--accent-soft);
+    }
+
+    .rate-pill {
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-left: 4px;
+      font-weight: 400;
+    }
+
+    /* Inspector Panel */
+    .inspector {
+      background: var(--bg-surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      box-shadow: var(--shadow-md);
+      position: sticky;
+      top: 80px;
+      max-height: calc(100vh - 104px);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .inspector-body {
+      padding: 18px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+    }
+
+    .section-title {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .code-block {
+      background: var(--bg-subtle);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 12px;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: #1E293B;
+      overflow-x: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+      line-height: 1.55;
+    }
+
+    /* 5-Stage DLQ Breakdown Grid */
+    .stage-grid {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 6px;
+    }
+
+    .stage-box {
+      border: 1px solid var(--border);
+      background: var(--bg-canvas);
+      border-radius: var(--radius-sm);
+      padding: 8px 6px;
+      text-align: center;
+    }
+
+    .stage-box.has-err {
+      background: var(--rose-bg);
+      border-color: var(--rose-border);
+      color: var(--rose-text);
+    }
+
+    .stage-name {
+      font-size: 10px;
+      color: var(--text-muted);
+      font-weight: 600;
+      display: block;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .stage-box.has-err .stage-name {
+      color: var(--rose-text);
+    }
+
+    .stage-count {
+      font-size: 15px;
+      font-weight: 700;
+      margin-top: 2px;
+    }
+
+    /* DLQ Envelope List */
+    .dlq-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .dlq-item {
+      border: 1px solid var(--rose-border);
+      background: #FFFBFB;
+      border-radius: var(--radius-sm);
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .dlq-item-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    .dlq-error-msg {
+      font-size: 12.5px;
+      font-weight: 600;
+      color: var(--rose-text);
+      font-family: var(--font-mono);
+    }
+
+    /* Empty state */
+    .empty-state {
+      padding: 40px 20px;
+      text-align: center;
+      color: var(--text-muted);
+    }
+
+    /* Toast Notification */
+    .toast-container {
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      z-index: 50;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .toast {
+      background: var(--bg-surface);
+      border: 1px solid var(--border);
+      border-left: 4px solid var(--accent);
+      padding: 12px 16px;
+      border-radius: var(--radius-sm);
+      box-shadow: var(--shadow-md);
+      font-size: 13px;
+      color: var(--text-primary);
+      min-width: 260px;
+      animation: slideIn 0.2s ease-out;
+    }
+    .toast.toast-error { border-left-color: var(--rose-dot); }
+    .toast.toast-success { border-left-color: var(--emerald-dot); }
+
+    @keyframes slideIn {
+      from { transform: translateY(10px); opacity: 0; }
+      to { transform: translateY(0); opacity: 1; }
+    }
+
+    .two-col {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+    }
+    @media (max-width: 900px) {
+      .two-col { grid-template-columns: 1fr; }
+    }
+
+    .form-group {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      margin-bottom: 14px;
+    }
+    .form-label {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-secondary);
+    }
+    textarea.text-input {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      min-height: 140px;
+      resize: vertical;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Top Navigation -->
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-logo">rk</div>
+      <div class="brand-title">
+        rekuiper
+        <span class="brand-subtitle">Edge SQL &amp; IIoT Telemetry Engine</span>
+      </div>
+    </div>
+
+    <div class="topbar-controls">
+      <span id="conn-badge" class="badge badge-emerald">
+        <span class="badge-dot"></span>
+        <span id="conn-text">Connected</span>
+      </span>
+
+      <span id="mode-badge" class="badge badge-slate" title="Runtime Configuration Mode">
+        Mutable Mode
+      </span>
+
+      <button id="reload-manifest-btn" class="btn btn-sm" style="display: none;" onclick="reloadDeclarativeManifest()">
+        &#x21bb; Reload Manifest
+      </button>
+
+      <select id="poll-interval" class="select-input" onchange="updatePollInterval(this.value)" aria-label="Refresh interval">
+        <option value="1000">Poll: 1s</option>
+        <option value="2000" selected>Poll: 2s</option>
+        <option value="5000">Poll: 5s</option>
+        <option value="0">Paused</option>
+      </select>
+
+      <button class="btn btn-sm" onclick="refreshAll(true)">Refresh Now</button>
+    </div>
+  </header>
+
+  <!-- Main Content -->
+  <main class="container">
+
+    <!-- KPI Strip -->
+    <section class="kpi-grid">
+      <div class="kpi-card">
+        <div class="kpi-label">
+          <span>ACTIVE RULES</span>
+          <span class="badge badge-emerald" id="kpi-rules-pct">100%</span>
+        </div>
+        <div class="kpi-value tabular" id="kpi-rules-count">0 / 0</div>
+        <div class="kpi-sub">
+          <span id="kpi-rules-stopped">0 stopped</span>
+          <span id="kpi-uptime" class="tabular"></span>
+        </div>
+      </div>
+
+      <div class="kpi-card">
+        <div class="kpi-label">
+          <span>INGRESS THROUGHPUT</span>
+          <span style="color: var(--accent); font-weight: 600;">IN</span>
+        </div>
+        <div class="kpi-value tabular" id="kpi-in-rate">0 <span style="font-size: 13px; font-weight: 500; color: var(--text-muted);">rec/s</span></div>
+        <div class="kpi-sub tabular">
+          <span>Total In:</span>
+          <strong id="kpi-in-total">0</strong>
+        </div>
+      </div>
+
+      <div class="kpi-card">
+        <div class="kpi-label">
+          <span>EGRESS THROUGHPUT</span>
+          <span style="color: var(--emerald-text); font-weight: 600;">OUT</span>
+        </div>
+        <div class="kpi-value tabular" id="kpi-out-rate">0 <span style="font-size: 13px; font-weight: 500; color: var(--text-muted);">rec/s</span></div>
+        <div class="kpi-sub tabular">
+          <span>Total Out:</span>
+          <strong id="kpi-out-total">0</strong>
+        </div>
+      </div>
+
+      <div class="kpi-card">
+        <div class="kpi-label">
+          <span>TOPOLOGY CATALOG</span>
+        </div>
+        <div class="kpi-value tabular" id="kpi-catalog-count">0</div>
+        <div class="kpi-sub tabular">
+          <span id="kpi-streams-sub">0 Streams</span> &middot;
+          <span id="kpi-tables-sub">0 Tables</span>
+        </div>
+      </div>
+
+      <div class="kpi-card">
+        <div class="kpi-label">
+          <span>SINK RETRY CACHE</span>
+        </div>
+        <div class="kpi-value tabular" id="kpi-cache-depth">0</div>
+        <div class="kpi-sub tabular">
+          <span>Filtered: <strong id="kpi-filtered-total">0</strong></span>
+        </div>
+      </div>
+
+      <div class="kpi-card" id="kpi-dlq-card">
+        <div class="kpi-label">
+          <span>DLQ &amp; POISON PILLS</span>
+          <span class="badge badge-slate" id="kpi-dlq-badge">Clean</span>
+        </div>
+        <div class="kpi-value tabular" id="kpi-dlq-total">0</div>
+        <div class="kpi-sub tabular">
+          <span>Exceptions: <strong id="kpi-exc-total">0</strong></span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Navigation & Filter Bar -->
+    <section class="nav-bar">
+      <div class="tabs">
+        <button class="tab-btn active" id="tab-btn-rules" onclick="switchTab('rules')">
+          Pipelines &amp; Rules
+        </button>
+        <button class="tab-btn" id="tab-btn-catalog" onclick="switchTab('catalog')">
+          Streams, Tables &amp; Connections
+        </button>
+        <button class="tab-btn" id="tab-btn-ingest" onclick="switchTab('ingest')">
+          OTLP &amp; Data Test Console
+        </button>
+        <button class="tab-btn" id="tab-btn-metrics" onclick="switchTab('metrics')">
+          Prometheus /metrics
+        </button>
+      </div>
+
+      <div class="filter-group" id="rules-filter-bar">
+        <input
+          type="search"
+          id="rule-search"
+          class="text-input"
+          placeholder="Filter rules by ID or status..."
+          oninput="renderRulesTable()"
+          style="width: 240px;"
+        />
+        <select id="rule-status-filter" class="select-input" onchange="renderRulesTable()">
+          <option value="all">All Statuses</option>
+          <option value="running">Running Only</option>
+          <option value="stopped">Stopped / Halted</option>
+          <option value="dlq">Has DLQ / Errors (&gt; 0)</option>
+        </select>
+      </div>
+    </section>
+
+    <!-- TAB 1: Pipelines & Rules + Slide-Over Inspector -->
+    <section id="view-rules" class="workspace">
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">
+            Rule Execution Pipelines
+            <span class="badge badge-slate tabular" id="table-rule-count">0</span>
+          </div>
+          <div style="font-size: 12px; color: var(--text-muted);">
+            Click any rule to inspect SQL, stage counters &amp; Dead-Letter Queue poison pills
+          </div>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Rule ID</th>
+                <th>Status</th>
+                <th>Records In</th>
+                <th>Records Out</th>
+                <th>Filtered</th>
+                <th>Sink Cache</th>
+                <th>DLQ / Errors</th>
+                <th style="text-align: right;">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="rules-tbody">
+              <tr>
+                <td colspan="8" class="empty-state">Loading active rules...</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Inspector Drawer -->
+      <aside id="rule-inspector" class="inspector" style="display: none;">
+        <div class="card-header">
+          <div class="card-title">
+            <span id="insp-rule-id" style="font-family: var(--font-mono);">rule_id</span>
+            <span id="insp-status-badge" class="badge badge-emerald">Running</span>
+          </div>
+          <button class="btn btn-sm" onclick="closeInspector()" title="Close Inspector">&#x2715;</button>
+        </div>
+
+        <div class="inspector-body">
+          <!-- Rule SQL -->
+          <div>
+            <div class="section-title">
+              <span>Pipeline SQL Definition</span>
+              <span id="insp-options-summary" style="font-family: var(--font-mono); text-transform: none;"></span>
+            </div>
+            <pre class="code-block" id="insp-sql">SELECT * FROM stream</pre>
+          </div>
+
+          <!-- 5-Stage DLQ Breakdown -->
+          <div>
+            <div class="section-title">
+              <span>DLQ Poison-Pill Stage Breakdown</span>
+              <button class="btn btn-danger btn-sm" id="clear-dlq-btn" onclick="clearSelectedRuleDlq()">
+                Clear DLQ Buffer
+              </button>
+            </div>
+            <div class="stage-grid">
+              <div class="stage-box" id="st-codec">
+                <span class="stage-name" title="CodecDecode">Codec</span>
+                <div class="stage-count tabular" id="st-codec-val">0</div>
+              </div>
+              <div class="stage-box" id="st-schema">
+                <span class="stage-name" title="SchemaValidation">Schema</span>
+                <div class="stage-count tabular" id="st-schema-val">0</div>
+              </div>
+              <div class="stage-box" id="st-sql">
+                <span class="stage-name" title="SqlEval">SQL Eval</span>
+                <div class="stage-count tabular" id="st-sql-val">0</div>
+              </div>
+              <div class="stage-box" id="st-tpl">
+                <span class="stage-name" title="DataTemplate">Template</span>
+                <div class="stage-count tabular" id="st-tpl-val">0</div>
+              </div>
+              <div class="stage-box" id="st-sink">
+                <span class="stage-name" title="SinkDelivery">Sink 4xx</span>
+                <div class="stage-count tabular" id="st-sink-val">0</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Recent DLQ Envelopes -->
+          <div>
+            <div class="section-title">
+              <span>Recent DLQ Envelopes (In-Memory Ring Buffer)</span>
+              <span class="tabular" id="insp-dlq-count-label">0 entries</span>
+            </div>
+            <div id="insp-dlq-list" class="dlq-list">
+              <div class="empty-state" style="padding: 18px; background: var(--bg-canvas); border-radius: 6px; border: 1px dashed var(--border);">
+                Zero poison pills recorded for this rule.
+              </div>
+            </div>
+          </div>
+
+          <!-- Sinks & Options JSON -->
+          <div>
+            <div class="section-title">
+              <span>Configured Sink Actions &amp; Options</span>
+            </div>
+            <pre class="code-block" id="insp-actions-json">[]</pre>
+          </div>
+        </div>
+      </aside>
+    </section>
+
+    <!-- TAB 2: Streams, Tables & Connections -->
+    <section id="view-catalog" style="display: none;" class="two-col">
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">
+            Declared Streams
+            <span class="badge badge-slate tabular" id="catalog-streams-count">0</span>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Stream Name</th>
+                <th>Details / Schema</th>
+              </tr>
+            </thead>
+            <tbody id="streams-tbody">
+              <tr><td colspan="2" class="empty-state">No streams defined.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 20px;">
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">
+              Lookup &amp; Scan Tables (Modbus / OPC-UA / SQL / File)
+              <span class="badge badge-slate tabular" id="catalog-tables-count">0</span>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Table Name</th>
+                  <th>Details</th>
+                </tr>
+              </thead>
+              <tbody id="tables-tbody">
+                <tr><td colspan="2" class="empty-state">No tables defined.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">
+              Shared Connections
+              <span class="badge badge-slate tabular" id="catalog-conns-count">0</span>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Connection ID</th>
+                  <th>Configuration</th>
+                </tr>
+              </thead>
+              <tbody id="conns-tbody">
+                <tr><td colspan="2" class="empty-state">No shared connections configured.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 3: OTLP & Data Plane Test Console -->
+    <section id="view-ingest" style="display: none;" class="two-col">
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">Data-Plane &amp; OTLP Telemetry Injector</div>
+        </div>
+        <div style="padding: 18px;">
+          <div class="form-group">
+            <label class="form-label" for="ingest-endpoint">Target Ingestion Endpoint</label>
+            <select id="ingest-endpoint" class="select-input" onchange="loadPresetPayload(this.value)">
+              <option value="/v1/metrics">POST /v1/metrics (OTLP/HTTP Metrics JSON)</option>
+              <option value="/v1/logs">POST /v1/logs (OTLP/HTTP Logs JSON)</option>
+              <option value="/v1/traces">POST /v1/traces (OTLP/HTTP Traces JSON)</option>
+              <option value="/data/demo">POST /data/{stream} (HTTP Push Stream JSON)</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="ingest-custom-path">Endpoint Path (Editable)</label>
+            <input type="text" id="ingest-custom-path" class="text-input" value="/v1/metrics" style="font-family: var(--font-mono);" />
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="ingest-payload">JSON Payload</label>
+            <textarea id="ingest-payload" class="text-input"></textarea>
+          </div>
+
+          <div style="display: flex; justify-content: flex-end; gap: 10px;">
+            <button class="btn" onclick="loadPresetPayload(document.getElementById('ingest-endpoint').value)">Reset Preset</button>
+            <button class="btn btn-primary" onclick="sendIngestPayload()">Send Payload</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">Server Response</div>
+        </div>
+        <div style="padding: 18px;">
+          <pre class="code-block" id="ingest-response" style="min-height: 310px;">Click "Send Payload" to push a test event into rekuiper's data plane.</pre>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 4: Prometheus /metrics -->
+    <section id="view-metrics" style="display: none;">
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">Raw Prometheus Exposition (`GET /metrics`)</div>
+          <button class="btn btn-sm" onclick="fetchPrometheusMetrics()">Refresh /metrics</button>
+        </div>
+        <div style="padding: 18px;">
+          <pre class="code-block" id="prom-metrics-box" style="max-height: 600px;">Loading /metrics...</pre>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <div class="toast-container" id="toast-container"></div>
+
+  <script>
+    const state = {
+      rules: [],
+      ruleMetrics: {},
+      prevTotals: { ts: 0, inCount: 0, outCount: 0, perRuleIn: {}, perRuleOut: {} },
+      rates: { totalIn: 0, totalOut: 0, perRuleIn: {}, perRuleOut: {} },
+      streams: [],
+      tables: [],
+      connections: [],
+      declarativeMode: false,
+      selectedRuleId: null,
+      pollTimer: null,
+      pollIntervalMs: 2000
+    };
+
+    const OTLP_PRESETS = {
+      '/v1/metrics': {
+        resourceMetrics: [{
+          resource: {
+            attributes: [
+              { key: "service.name", value: { stringValue: "plc-edge-gateway-01" } },
+              { key: "host.arch", value: { stringValue: "aarch64" } }
+            ]
+          },
+          scopeMetrics: [{
+            metrics: [{
+              name: "industrial.motor.temperature",
+              unit: "Cel",
+              gauge: {
+                dataPoints: [{
+                  timeUnixNano: "1760478000000000000",
+                  asDouble: 84.6,
+                  attributes: [{ key: "line", value: { stringValue: "assembly-A" } }]
+                }]
+              }
+            }]
+          }]
+        }]
+      },
+      '/v1/logs': {
+        resourceLogs: [{
+          resource: {
+            attributes: [{ key: "service.name", value: { stringValue: "modbus-poller" } }]
+          },
+          scopeLogs: [{
+            logRecords: [{
+              timeUnixNano: "1760478000000000000",
+              severityNumber: 17,
+              severityText: "ERROR",
+              body: { stringValue: "Modbus slave 1 register 40001 CRC mismatch" },
+              attributes: [{ key: "slave_id", value: { intValue: "1" } }]
+            }]
+          }]
+        }]
+      },
+      '/v1/traces': {
+        resourceSpans: [{
+          resource: {
+            attributes: [{ key: "service.name", value: { stringValue: "opcua-subscriber" } }]
+          },
+          scopeSpans: [{
+            spans: [{
+              traceId: "4bf92f3577b34da6a3ce929d0e0e4736",
+              spanId: "00f067aa0ba902b7",
+              name: "ReadNodeId",
+              startTimeUnixNano: "1760478000000000000",
+              endTimeUnixNano: "1760478000004500000",
+              attributes: [{ key: "node_id", value: { stringValue: "ns=2;s=Temperature" } }]
+            }]
+          }]
+        }]
+      },
+      '/data/demo': {
+        temperature: 82.4,
+        humidity: 48.0,
+        device_id: "sensor-01"
+      }
+    };
+
+    function showToast(msg, type = 'info') {
+      const container = document.getElementById('toast-container');
+      const el = document.createElement('div');
+      el.className = `toast toast-${type}`;
+      el.textContent = msg;
+      container.appendChild(el);
+      setTimeout(() => el.remove(), 3500);
+    }
+
+    function fmtNum(n) {
+      if (n === undefined || n === null || isNaN(n)) return '0';
+      return Number(n).toLocaleString();
+    }
+
+    async function apiFetch(path, options = {}) {
+      const res = await fetch(path, options);
+      const contentType = res.headers.get('content-type') || '';
+      let body = null;
+      if (contentType.includes('application/json')) {
+        body = await res.json().catch(() => null);
+      } else {
+        body = await res.text().catch(() => '');
+      }
+      return { ok: res.ok, status: res.status, body };
+    }
+
+    function extractMetricSum(metricsObj, suffix) {
+      if (!metricsObj || typeof metricsObj !== 'object') return 0;
+      let total = 0;
+      for (const [k, v] of Object.entries(metricsObj)) {
+        if ((k === suffix || k.endsWith(suffix)) && typeof v === 'number') {
+          total += v;
+        }
+      }
+      return total;
+    }
+
+    async function refreshAll(manual = false) {
+      try {
+        const [pingRes, rulesRes, streamsRes, tablesRes, connsRes, promRes] = await Promise.all([
+          apiFetch('/'),
+          apiFetch('/rules'),
+          apiFetch('/streams'),
+          apiFetch('/tables'),
+          apiFetch('/connections'),
+          apiFetch('/metrics')
+        ]);
+
+        // Connection status
+        const connBadge = document.getElementById('conn-badge');
+        const connText = document.getElementById('conn-text');
+        if (rulesRes.ok) {
+          connBadge.className = 'badge badge-emerald';
+          connText.textContent = (pingRes.body && pingRes.body.version)
+            ? `v${pingRes.body.version}`
+            : 'Online';
+          if (pingRes.body && pingRes.body.uptime) {
+            document.getElementById('kpi-uptime').textContent = `Up ${pingRes.body.uptime}s`;
+          }
+        } else {
+          connBadge.className = 'badge badge-rose';
+          connText.textContent = 'Disconnected';
+        }
+
+        // Check declarative mode from ping/metrics
+        const promText = typeof promRes.body === 'string' ? promRes.body : '';
+        if (
+          (pingRes.body && pingRes.body.declarative_mode === true) ||
+          promText.includes('rekuiper_declarative_reload_failures_total')
+        ) {
+          setDeclarativeBadge(true);
+        }
+
+        // Normalize rules list
+        const rawRules = Array.isArray(rulesRes.body) ? rulesRes.body : [];
+        state.rules = rawRules.map(r => {
+          if (typeof r === 'string') return { id: r, status: 'Running' };
+          return {
+            id: r.id || r.name || 'unknown',
+            status: r.status || 'Running',
+            message: r.message || ''
+          };
+        });
+
+        // Fetch per-rule status metrics in parallel
+        const statusPromises = state.rules.map(r =>
+          apiFetch(`/rules/${encodeURIComponent(r.id)}/status`).then(res => [r.id, res.ok ? res.body : {}])
+        );
+        const statusEntries = await Promise.all(statusPromises);
+        const nextMetrics = {};
+        for (const [id, m] of statusEntries) {
+          nextMetrics[id] = m || {};
+        }
+        state.ruleMetrics = nextMetrics;
+
+        // Calculate rates
+        const now = Date.now();
+        const dtSec = state.prevTotals.ts > 0 ? Math.max((now - state.prevTotals.ts) / 1000, 0.2) : 0;
+
+        let sumIn = 0;
+        let sumOut = 0;
+        let sumFiltered = 0;
+        let sumCache = 0;
+        let sumDlq = 0;
+        let sumExc = 0;
+
+        for (const r of state.rules) {
+          const m = state.ruleMetrics[r.id] || {};
+          const rIn = extractMetricSum(m, 'records_in_total');
+          const rOut = extractMetricSum(m, 'records_out_total');
+          const rFilt = extractMetricSum(m, 'records_filtered_total');
+          const rCache = extractMetricSum(m, 'sink_cache_len') || extractMetricSum(m, 'buffer_length');
+          const rDlq = extractMetricSum(m, 'dlq_records_total');
+          const rExc = extractMetricSum(m, 'exceptions_total');
+
+          sumIn += rIn;
+          sumOut += rOut;
+          sumFiltered += rFilt;
+          sumCache += rCache;
+          sumDlq += rDlq;
+          sumExc += rExc;
+
+          if (dtSec > 0 && state.prevTotals.perRuleIn[r.id] !== undefined) {
+            state.rates.perRuleIn[r.id] = Math.max(0, Math.round((rIn - state.prevTotals.perRuleIn[r.id]) / dtSec));
+            state.rates.perRuleOut[r.id] = Math.max(0, Math.round((rOut - state.prevTotals.perRuleOut[r.id]) / dtSec));
+          } else {
+            state.rates.perRuleIn[r.id] = 0;
+            state.rates.perRuleOut[r.id] = 0;
+          }
+          state.prevTotals.perRuleIn[r.id] = rIn;
+          state.prevTotals.perRuleOut[r.id] = rOut;
+        }
+
+        if (dtSec > 0 && state.prevTotals.ts > 0) {
+          state.rates.totalIn = Math.max(0, Math.round((sumIn - state.prevTotals.inCount) / dtSec));
+          state.rates.totalOut = Math.max(0, Math.round((sumOut - state.prevTotals.outCount) / dtSec));
+        }
+        state.prevTotals.ts = now;
+        state.prevTotals.inCount = sumIn;
+        state.prevTotals.outCount = sumOut;
+
+        // Streams, Tables, Connections
+        state.streams = Array.isArray(streamsRes.body) ? streamsRes.body : [];
+        state.tables = Array.isArray(tablesRes.body) ? tablesRes.body : [];
+        state.connections = Array.isArray(connsRes.body)
+          ? connsRes.body
+          : (connsRes.body && typeof connsRes.body === 'object' ? Object.entries(connsRes.body) : []);
+
+        // Update KPIs
+        updateKpiCards(sumIn, sumOut, sumFiltered, sumCache, sumDlq, sumExc);
+        renderRulesTable();
+        renderCatalogTables();
+
+        if (document.getElementById('view-metrics').style.display !== 'none' && promText) {
+          document.getElementById('prom-metrics-box').textContent = promText;
+        }
+
+        if (state.selectedRuleId) {
+          await refreshInspector(state.selectedRuleId);
+        }
+
+        if (manual) showToast('Dashboard state refreshed', 'success');
+      } catch (err) {
+        document.getElementById('conn-badge').className = 'badge badge-rose';
+        document.getElementById('conn-text').textContent = 'Offline';
+      }
+    }
+
+    function setDeclarativeBadge(isDeclarative) {
+      state.declarativeMode = isDeclarative;
+      const badge = document.getElementById('mode-badge');
+      const reloadBtn = document.getElementById('reload-manifest-btn');
+      if (isDeclarative) {
+        badge.className = 'badge badge-indigo';
+        badge.textContent = 'Declarative GitOps (Read-Only)';
+        reloadBtn.style.display = 'inline-flex';
+      } else {
+        badge.className = 'badge badge-slate';
+        badge.textContent = 'Mutable Mode';
+        reloadBtn.style.display = 'none';
+      }
+    }
+
+    function updateKpiCards(sumIn, sumOut, sumFiltered, sumCache, sumDlq, sumExc) {
+      const totalRules = state.rules.length;
+      const runningRules = state.rules.filter(r => String(r.status).toLowerCase().includes('running')).length;
+      const stoppedRules = totalRules - runningRules;
+
+      document.getElementById('kpi-rules-count').textContent = `${runningRules} / ${totalRules}`;
+      document.getElementById('kpi-rules-stopped').textContent = `${stoppedRules} stopped`;
+      const pctEl = document.getElementById('kpi-rules-pct');
+      pctEl.textContent = totalRules > 0 ? `${Math.round((runningRules / totalRules) * 100)}%` : 'Idle';
+      pctEl.className = stoppedRules > 0 ? 'badge badge-amber' : 'badge badge-emerald';
+
+      document.getElementById('kpi-in-rate').innerHTML = `${fmtNum(state.rates.totalIn)} <span style="font-size: 13px; font-weight: 500; color: var(--text-muted);">rec/s</span>`;
+      document.getElementById('kpi-in-total').textContent = fmtNum(sumIn);
+
+      document.getElementById('kpi-out-rate').innerHTML = `${fmtNum(state.rates.totalOut)} <span style="font-size: 13px; font-weight: 500; color: var(--text-muted);">rec/s</span>`;
+      document.getElementById('kpi-out-total').textContent = fmtNum(sumOut);
+
+      document.getElementById('kpi-catalog-count').textContent = fmtNum(state.streams.length + state.tables.length);
+      document.getElementById('kpi-streams-sub').textContent = `${state.streams.length} Streams`;
+      document.getElementById('kpi-tables-sub').textContent = `${state.tables.length} Tables`;
+
+      document.getElementById('kpi-cache-depth').textContent = fmtNum(sumCache);
+      document.getElementById('kpi-filtered-total').textContent = fmtNum(sumFiltered);
+
+      document.getElementById('kpi-dlq-total').textContent = fmtNum(sumDlq);
+      document.getElementById('kpi-exc-total').textContent = fmtNum(sumExc);
+
+      const dlqCard = document.getElementById('kpi-dlq-card');
+      const dlqBadge = document.getElementById('kpi-dlq-badge');
+      if (sumDlq > 0 || sumExc > 0) {
+        dlqCard.classList.add('alert-card');
+        dlqBadge.className = 'badge badge-rose';
+        dlqBadge.textContent = `${fmtNum(sumDlq)} Poison Pills`;
+      } else {
+        dlqCard.classList.remove('alert-card');
+        dlqBadge.className = 'badge badge-emerald';
+        dlqBadge.textContent = 'Clean';
+      }
+    }
+
+    function renderRulesTable() {
+      const tbody = document.getElementById('rules-tbody');
+      const query = (document.getElementById('rule-search').value || '').toLowerCase().trim();
+      const statusFilter = document.getElementById('rule-status-filter').value;
+
+      const filtered = state.rules.filter(r => {
+        const m = state.ruleMetrics[r.id] || {};
+        const rDlq = extractMetricSum(m, 'dlq_records_total') + extractMetricSum(m, 'exceptions_total');
+        const isRunning = String(r.status).toLowerCase().includes('running');
+
+        if (query && !r.id.toLowerCase().includes(query) && !String(r.status).toLowerCase().includes(query)) {
+          return false;
+        }
+        if (statusFilter === 'running' && !isRunning) return false;
+        if (statusFilter === 'stopped' && isRunning) return false;
+        if (statusFilter === 'dlq' && rDlq === 0) return false;
+        return true;
+      });
+
+      document.getElementById('table-rule-count').textContent = filtered.length;
+
+      if (filtered.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="8" class="empty-state">No matching rules found.</td></tr>`;
+        return;
+      }
+
+      tbody.innerHTML = filtered.map(r => {
+        const m = state.ruleMetrics[r.id] || {};
+        const rIn = extractMetricSum(m, 'records_in_total');
+        const rOut = extractMetricSum(m, 'records_out_total');
+        const rFilt = extractMetricSum(m, 'records_filtered_total');
+        const rCache = extractMetricSum(m, 'sink_cache_len') || extractMetricSum(m, 'buffer_length');
+        const rDlq = extractMetricSum(m, 'dlq_records_total');
+        const rExc = extractMetricSum(m, 'exceptions_total');
+        const inRate = state.rates.perRuleIn[r.id] || 0;
+        const outRate = state.rates.perRuleOut[r.id] || 0;
+
+        const isRunning = String(r.status).toLowerCase().includes('running');
+        const isSelected = state.selectedRuleId === r.id;
+
+        const statusBadge = isRunning
+          ? `<span class="badge badge-emerald"><span class="badge-dot"></span>Running</span>`
+          : `<span class="badge badge-amber"><span class="badge-dot"></span>${escapeHtml(r.status)}</span>`;
+
+        const dlqCell = (rDlq > 0 || rExc > 0)
+          ? `<span class="badge badge-rose tabular"><span class="badge-dot"></span>${fmtNum(rDlq)} DLQ / ${fmtNum(rExc)} Exc</span>`
+          : `<span class="badge badge-slate tabular">0</span>`;
+
+        const toggleBtn = state.declarativeMode
+          ? ''
+          : `<button class="btn btn-sm" onclick="event.stopPropagation(); toggleRuleState('${escapeHtml(r.id)}', ${isRunning})">
+               ${isRunning ? 'Stop' : 'Start'}
+             </button>`;
+
+        return `
+          <tr class="clickable-row ${isSelected ? 'selected-row' : ''}" onclick="selectRule('${escapeHtml(r.id)}')">
+            <td style="font-family: var(--font-mono); font-weight: 600;">${escapeHtml(r.id)}</td>
+            <td>${statusBadge}</td>
+            <td class="tabular">${fmtNum(rIn)} <span class="rate-pill">(${inRate}/s)</span></td>
+            <td class="tabular">${fmtNum(rOut)} <span class="rate-pill">(${outRate}/s)</span></td>
+            <td class="tabular">${fmtNum(rFilt)}</td>
+            <td class="tabular">${fmtNum(rCache)}</td>
+            <td>${dlqCell}</td>
+            <td style="text-align: right;">
+              <div style="display: inline-flex; gap: 6px;">
+                <button class="btn btn-sm" onclick="event.stopPropagation(); selectRule('${escapeHtml(r.id)}')">Inspect</button>
+                ${toggleBtn}
+              </div>
+            </td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    async function selectRule(ruleId) {
+      state.selectedRuleId = ruleId;
+      document.getElementById('view-rules').classList.add('with-inspector');
+      document.getElementById('rule-inspector').style.display = 'flex';
+      renderRulesTable();
+      await refreshInspector(ruleId);
+    }
+
+    function closeInspector() {
+      state.selectedRuleId = null;
+      document.getElementById('view-rules').classList.remove('with-inspector');
+      document.getElementById('rule-inspector').style.display = 'none';
+      renderRulesTable();
+    }
+
+    async function refreshInspector(ruleId) {
+      document.getElementById('insp-rule-id').textContent = ruleId;
+      const ruleEntry = state.rules.find(r => r.id === ruleId);
+      const isRunning = ruleEntry ? String(ruleEntry.status).toLowerCase().includes('running') : true;
+      const badge = document.getElementById('insp-status-badge');
+      badge.className = isRunning ? 'badge badge-emerald' : 'badge badge-amber';
+      badge.textContent = ruleEntry ? ruleEntry.status : 'Running';
+
+      const [defRes, dlqRes] = await Promise.all([
+        apiFetch(`/rules/${encodeURIComponent(ruleId)}`),
+        apiFetch(`/rules/${encodeURIComponent(ruleId)}/errors`)
+      ]);
+
+      if (defRes.ok && defRes.body) {
+        document.getElementById('insp-sql').textContent = defRes.body.sql || 'N/A';
+        const opts = defRes.body.options || {};
+        const onError = opts.onError || opts.on_error || 'drop';
+        document.getElementById('insp-options-summary').textContent = `onError=${onError}`;
+        document.getElementById('insp-actions-json').textContent = JSON.stringify(
+          { actions: defRes.body.actions || [], options: opts },
+          null,
+          2
+        );
+      }
+
+      if (dlqRes.ok && dlqRes.body) {
+        const byStage = dlqRes.body.by_stage || {};
+        updateStageBox('st-codec', 'st-codec-val', byStage.codec_decode || byStage.CodecDecode || 0);
+        updateStageBox('st-schema', 'st-schema-val', byStage.schema_validation || byStage.SchemaValidation || 0);
+        updateStageBox('st-sql', 'st-sql-val', byStage.sql_eval || byStage.SqlEval || 0);
+        updateStageBox('st-tpl', 'st-tpl-val', byStage.data_template || byStage.DataTemplate || 0);
+        updateStageBox('st-sink', 'st-sink-val', byStage.sink_delivery || byStage.SinkDelivery || 0);
+
+        const errors = Array.isArray(dlqRes.body.errors) ? dlqRes.body.errors : [];
+        document.getElementById('insp-dlq-count-label').textContent = `${errors.length} buffered`;
+
+        const listEl = document.getElementById('insp-dlq-list');
+        if (errors.length === 0) {
+          listEl.innerHTML = `
+            <div class="empty-state" style="padding: 18px; background: var(--bg-canvas); border-radius: 6px; border: 1px dashed var(--border);">
+              Zero poison pills in ring buffer.
+            </div>`;
+        } else {
+          listEl.innerHTML = errors.slice().reverse().slice(0, 25).map(env => {
+            const ts = env.timestamp ? new Date(env.timestamp).toISOString() : '';
+            const payloadPreview = env.raw_payload
+              ? `<div class="code-block" style="margin-top:4px; font-size:11px;">${escapeHtml(env.raw_payload)}</div>`
+              : (env.tuple ? `<div class="code-block" style="margin-top:4px; font-size:11px;">${escapeHtml(JSON.stringify(env.tuple))}</div>` : '');
+            return `
+              <div class="dlq-item">
+                <div class="dlq-item-header">
+                  <span class="badge badge-rose">${escapeHtml(String(env.stage || 'error'))}</span>
+                  <span class="tabular">${escapeHtml(ts)}</span>
+                </div>
+                <div class="dlq-error-msg">${escapeHtml(env.error || 'Unknown error')}</div>
+                ${payloadPreview}
+              </div>
+            `;
+          }).join('');
+        }
+      }
+    }
+
+    function updateStageBox(boxId, valId, count) {
+      const box = document.getElementById(boxId);
+      const val = document.getElementById(valId);
+      val.textContent = fmtNum(count);
+      if (count > 0) {
+        box.classList.add('has-err');
+      } else {
+        box.classList.remove('has-err');
+      }
+    }
+
+    async function clearSelectedRuleDlq() {
+      if (!state.selectedRuleId) return;
+      const res = await apiFetch(`/rules/${encodeURIComponent(state.selectedRuleId)}/errors`, { method: 'DELETE' });
+      if (res.ok) {
+        showToast(`Cleared DLQ ring buffer for '${state.selectedRuleId}'`, 'success');
+        await refreshAll();
+      } else {
+        showToast(`Failed to clear DLQ (${res.status})`, 'error');
+      }
+    }
+
+    async function toggleRuleState(ruleId, isRunning) {
+      const action = isRunning ? 'stop' : 'start';
+      const res = await apiFetch(`/rules/${encodeURIComponent(ruleId)}/${action}`, { method: 'POST' });
+      if (res.status === 403) {
+        setDeclarativeBadge(true);
+        showToast('Blocked: Instance is running in read-only Declarative GitOps Mode', 'error');
+        return;
+      }
+      if (res.ok) {
+        showToast(`Rule '${ruleId}' ${action}ped`, 'success');
+        await refreshAll();
+      } else {
+        showToast(`Failed to ${action} rule '${ruleId}'`, 'error');
+      }
+    }
+
+    async function reloadDeclarativeManifest() {
+      const res = await apiFetch('/declarative/reload', { method: 'POST' });
+      if (res.ok) {
+        showToast('Declarative manifest reconciled & reloaded', 'success');
+        await refreshAll();
+      } else {
+        const msg = (res.body && res.body.message) ? res.body.message : `Reload failed (${res.status})`;
+        showToast(msg, 'error');
+      }
+    }
+
+    function renderCatalogTables() {
+      document.getElementById('catalog-streams-count').textContent = state.streams.length;
+      document.getElementById('catalog-tables-count').textContent = state.tables.length;
+      document.getElementById('catalog-conns-count').textContent = state.connections.length;
+
+      const sBody = document.getElementById('streams-tbody');
+      sBody.innerHTML = state.streams.length === 0
+        ? `<tr><td colspan="2" class="empty-state">No streams defined.</td></tr>`
+        : state.streams.map(s => {
+            const name = typeof s === 'string' ? s : (s.name || s.id || JSON.stringify(s));
+            const detail = typeof s === 'object' ? JSON.stringify(s) : 'Active Stream Source';
+            return `<tr><td style="font-family:var(--font-mono);font-weight:600;">${escapeHtml(name)}</td><td style="color:var(--text-secondary);font-family:var(--font-mono);font-size:12px;">${escapeHtml(detail)}</td></tr>`;
+          }).join('');
+
+      const tBody = document.getElementById('tables-tbody');
+      tBody.innerHTML = state.tables.length === 0
+        ? `<tr><td colspan="2" class="empty-state">No lookup tables defined.</td></tr>`
+        : state.tables.map(t => {
+            const name = typeof t === 'string' ? t : (t.name || t.id || JSON.stringify(t));
+            const detail = typeof t === 'object' ? JSON.stringify(t) : 'Lookup / Scan Table';
+            return `<tr><td style="font-family:var(--font-mono);font-weight:600;">${escapeHtml(name)}</td><td style="color:var(--text-secondary);font-family:var(--font-mono);font-size:12px;">${escapeHtml(detail)}</td></tr>`;
+          }).join('');
+
+      const cBody = document.getElementById('conns-tbody');
+      cBody.innerHTML = state.connections.length === 0
+        ? `<tr><td colspan="2" class="empty-state">No shared connections configured.</td></tr>`
+        : state.connections.map(c => {
+            const id = Array.isArray(c) ? c[0] : (c.id || c.name || 'conn');
+            const cfg = Array.isArray(c) ? JSON.stringify(c[1]) : JSON.stringify(c);
+            return `<tr><td style="font-family:var(--font-mono);font-weight:600;">${escapeHtml(String(id))}</td><td style="color:var(--text-secondary);font-family:var(--font-mono);font-size:12px;">${escapeHtml(cfg)}</td></tr>`;
+          }).join('');
+    }
+
+    function switchTab(tab) {
+      ['rules', 'catalog', 'ingest', 'metrics'].forEach(t => {
+        document.getElementById(`view-${t}`).style.display = (t === tab) ? (t === 'rules' || t === 'catalog' || t === 'ingest' ? 'grid' : 'block') : 'none';
+        document.getElementById(`tab-btn-${t}`).classList.toggle('active', t === tab);
+      });
+      document.getElementById('rules-filter-bar').style.display = (tab === 'rules') ? 'flex' : 'none';
+      if (tab === 'metrics') fetchPrometheusMetrics();
+    }
+
+    async function fetchPrometheusMetrics() {
+      const res = await apiFetch('/metrics');
+      document.getElementById('prom-metrics-box').textContent = res.ok ? res.body : `Failed to load /metrics (${res.status})`;
+    }
+
+    function loadPresetPayload(endpoint) {
+      document.getElementById('ingest-custom-path').value = endpoint;
+      const preset = OTLP_PRESETS[endpoint] || OTLP_PRESETS['/v1/metrics'];
+      document.getElementById('ingest-payload').value = JSON.stringify(preset, null, 2);
+    }
+
+    async function sendIngestPayload() {
+      const path = document.getElementById('ingest-custom-path').value.trim();
+      const rawBody = document.getElementById('ingest-payload').value;
+      const outBox = document.getElementById('ingest-response');
+      outBox.textContent = `Sending POST ${path}...`;
+
+      try {
+        const res = await apiFetch(path, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: rawBody
+        });
+        outBox.textContent = `HTTP ${res.status}\n\n` + (typeof res.body === 'object' ? JSON.stringify(res.body, null, 2) : String(res.body));
+        if (res.ok) {
+          showToast(`Ingested payload via ${path}`, 'success');
+          await refreshAll();
+        } else {
+          showToast(`Ingest returned HTTP ${res.status}`, 'error');
+        }
+      } catch (e) {
+        outBox.textContent = `Request Error: ${e.message}`;
+      }
+    }
+
+    function updatePollInterval(val) {
+      state.pollIntervalMs = Number(val);
+      if (state.pollTimer) clearInterval(state.pollTimer);
+      if (state.pollIntervalMs > 0) {
+        state.pollTimer = setInterval(() => refreshAll(false), state.pollIntervalMs);
+      }
+    }
+
+    function escapeHtml(str) {
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    // Initialize
+    loadPresetPayload('/v1/metrics');
+    refreshAll(false);
+    updatePollInterval(2000);
+  </script>
+</body>
+</html>

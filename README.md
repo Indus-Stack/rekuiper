@@ -34,7 +34,7 @@ This demo needs only Docker. A built-in simulator makes the data.
 **1. Start the engine.**
 
 ```bash
-docker run -d --name rekuiper -p 9081:9081 ankurkrp/rekuiper:1.0.0-rc2
+docker run -d --name rekuiper -p 9081:9081 ankurkrp/rekuiper:1.0.0-rc3
 ```
 
 **2. Register simulated sensor readings, ten per second.**
@@ -128,12 +128,12 @@ All tests run in a container limited to one CPU core and 1 GiB of RAM.
 
 | Measure | Result | Tested on |
 | :--- | :--- | :--- |
-| End-to-end streaming SQL throughput | 994,118 events per second (502 ms for 500k records) | 1.0.0-rc2 |
-| Zero-parse in-process SQL pipeline | 2,144,375 events per second (233 ms for 500k records) | 1.0.0-rc2 |
+| End-to-end streaming SQL throughput | 994,118 events per second (502 ms for 500k records) | 1.0.0-rc3 |
+| Zero-parse in-process SQL pipeline | 2,144,375 events per second (233 ms for 500k records) | 1.0.0-rc3 |
 | Parallel rules on one stream | 1,000 rules, 500,000 evaluations per second | 0.505 |
 | MQTT throughput, single rule | 150,000 to 200,000 messages per second | 0.500 |
 | Heap memory under load | 4.4 to 10.2 MiB | 0.500 |
-| Footprint | One static binary, about 30 MB | 1.0.0-rc2 |
+| Footprint | One static binary, about 30 MB | 1.0.0-rc3 |
 
 Full method, hardware limits, and comparisons with eKuiper, Telegraf, and Redpanda Connect: [Benchmark Overview](docs/en_US/benchmarks/overview.md).
 
@@ -170,7 +170,7 @@ Details: [Sources](docs/en_US/guide/sources/overview.md) · [Sinks](docs/en_US/g
 
 ## Coming from eKuiper?
 
-rekuiper implements the LF Edge eKuiper REST API, SQL dialect, rule format, and `kuiper` CLI. Your streams, rules, and tools, including [eKuiper Manager](https://github.com/ankur-paan/ekuiper-manager), work without changes.
+rekuiper implements the eKuiper REST API, SQL dialect, rule format, and `kuiper` CLI. Your streams, rules, and integration pipelines work without changes.
 
 - [Compatibility notes](docs/en_US/concepts/ekuiper_compatibility.md)
 - [Migration guide](docs/en_US/operation/migration.md)
@@ -182,7 +182,7 @@ rekuiper implements the LF Edge eKuiper REST API, SQL dialect, rule format, and 
 
 | Method | Command or link |
 | :--- | :--- |
-| Docker | `docker run -d -p 9081:9081 ankurkrp/rekuiper:1.0.0-rc2` |
+| Docker | `docker run -d -p 9081:9081 ankurkrp/rekuiper:1.0.0-rc3` |
 | Docker Compose | `docker compose -f deploy/docker/docker-compose.yml up -d` |
 | Kubernetes | `helm install rekuiper deploy/chart/ekuiper` ([chart docs](deploy/chart/ekuiper/README.md)) |
 | Binaries | [Releases](https://github.com/ankur-paan/rekuiper/releases) |

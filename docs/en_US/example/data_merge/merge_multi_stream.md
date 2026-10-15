@@ -150,4 +150,4 @@ SELECT temperature, humidity FROM stream1 INNER JOIN stream2 ON stream1.device_i
 
 ### Additional Merge Scenarios
 
-For further discussion of custom merging patterns, visit the [GitHub Discussions](https://github.com/lf-edge/ekuiper/discussions/categories/use-case) forum.
+For further discussion of custom merging patterns, visit the [GitHub Discussions](https://github.com/ankur-paan/rekuiper/discussions) forum.

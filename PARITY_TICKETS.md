@@ -1,6 +1,6 @@
 # eKuiper Drop-In Parity Tracking & Ticket Backlog
 
-This document tracks scoped compatibility work toward LF Edge eKuiper behavior in `rekuiper`. Every item listed here represents a difference or missing capability found during the audit of the eKuiper documentation, source code, and integration test suites. Coverage is scoped and evidence-linked; no absolute parity is claimed (see BENCHMARK-AUDIT.md known gaps).
+This document tracks scoped compatibility work toward upstream eKuiper behavior in `rekuiper`. Every item listed here represents a difference or missing capability found during the audit of the eKuiper documentation, source code, and integration test suites. Coverage is scoped and evidence-linked; no absolute parity is claimed (see BENCHMARK-AUDIT.md known gaps).
 
 No item may be marked complete without:
 1. Genuine production implementation (no dummy `{}` returns, no silent fallback to stateless execution).

@@ -10,6 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > See `BENCHMARK-AUDIT.md` and `test/BENCHMARKS.md` for the audited methodology.
 > No latency-histogram p99 is claimed.
 
+## [1.0.0-rc3] - 2026-10-15
+
+### Added
+- **Modbus and OPC-UA Connectors**: Added pure-Rust sources, tables, and sinks for Modbus TCP, Modbus RTU-over-TCP, and OPC-UA Binary (`opc.tcp`). The connectors communicate directly with industrial equipment without external gateway containers.
+- **Declarative GitOps Engine**: Added the `--declarative` option to load and monitor configuration files and directories. Added the `POST /declarative/reload` endpoint and a mutation guard to enforce read-only operation.
+- **Dead-Letter Queues (DLQ)**: Added per-stage error isolation for decode, validation, SQL evaluation, template, and sink delivery stages. Added the `GET /rules/:id/errors` and `DELETE /rules/:id/errors` management endpoints.
+- **OpenTelemetry (OTLP) Processing**: Added HTTP ingestion endpoints at `/v1/metrics`, `/v1/logs`, and `/v1/traces`. Added processing for 64-bit integer strings. Added the OTLP export sink with retry backoff and error classification.
+- **Inspection Tools (`top` and Web UI)**: Added the `rekuiper top` CLI command for live terminal monitoring. Added the self-contained web console at `GET /ui`.
+
+### Changed
+- **Zero New Dependencies**: Kept `Cargo.lock` free of new external crates.
+- **Telemetry Ingestion Guard**: Permitted HTTP POST telemetry data on `/v1/*` when declarative mode is active.
+
 ## [1.0.0-rc2] - 2026-10-14
 
 ### Added
@@ -82,7 +95,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.507.0-beta] - 2026-10-04
 
 ### Added
-- **eKuiper REST Parity for Rule Status**: Updated `GET /rules/:id/status` to return structured status objects with top-level `status` (`"running"`, `"stopped"`), `message`, and detailed metrics matching the LF Edge eKuiper REST schema.
+- **eKuiper REST Parity for Rule Status**: Updated `GET /rules/:id/status` to return structured status objects with top-level `status` (`"running"`, `"stopped"`), `message`, and detailed metrics matching the upstream eKuiper REST schema.
 - **Rule Metadata Parity**: Added support for user-supplied rule `name` and optional `version` field in `RuleDefinition`, preserved during rule lifecycle and returned in `GET /rules` and `GET /rules/:id`.
 
 ### Changed
@@ -275,7 +288,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Highlights
 - **Dynamic Rule Resume (`POST /rules/:name/start`)**: Implemented dynamic background worker reactivation (`spawn_rule_task`) and streaming source subscription bootstrapping (`bootstrap_rule_sources`) on rule start and restart, ensuring event processing resumes seamlessly when toggled.
 - **Envelope Import Support (`POST /ruleset/import` & `POST /data/import`)**: Added full support for `{ "content": "..." }` stringified JSON/YAML envelopes, `{ "file": "..." }` payloads, and stringified rule maps (`"rules": { "id": "{\"id\": ...}" }`), guaranteeing full catalog import fidelity.
-- **Zero Parity Defects**: Attained clean 0 target defects against baseline LF Edge eKuiper across full evaluation probe suite.
+- **Zero Parity Defects**: Attained clean 0 target defects against baseline upstream eKuiper across full evaluation probe suite.
 
 ## [0.422.0-beta] - 2026-09-10
 

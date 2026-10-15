@@ -65,8 +65,11 @@ pub async fn list_source_metadata() -> impl IntoResponse {
         "httppush",
         "kafka",
         "memory",
+        "modbus",
         "mqtt",
         "neuron",
+        "opcua",
+        "otlp",
         "rabbitmq",
         "random",
         "redis",
@@ -91,9 +94,12 @@ pub async fn list_sink_metadata() -> impl IntoResponse {
         "kafka",
         "log",
         "memory",
+        "modbus",
         "mqtt",
         "neuron",
         "nop",
+        "opcua",
+        "otlp",
         "rabbitmq",
         "redis",
         "redisPub",
@@ -380,6 +386,14 @@ pub async fn get_sink_metadata(Path(name): Path<String>) -> Response {
 
 fn fallback_source_metadata(name: &str) -> Option<Value> {
     match name {
+        "otlp" => Some(json!({
+            "about": { "description": { "en_US": "OpenTelemetry (OTLP) push metrics, logs, and traces source." } },
+            "properties": {
+                "default": [
+                    { "name": "bind", "type": "string", "default": "0.0.0.0:4318", "label": { "en_US": "Listener Bind Address" } }
+                ]
+            }
+        })),
         "video" => Some(json!({
             "about": { "description": { "en_US": "Video streaming source capturing frames via FFmpeg pipeline." } },
             "properties": {
@@ -427,6 +441,15 @@ fn fallback_source_metadata(name: &str) -> Option<Value> {
 
 fn fallback_sink_metadata(name: &str) -> Option<Value> {
     match name {
+        "otlp" => Some(json!({
+            "about": { "description": { "en_US": "OpenTelemetry (OTLP) HTTP export sink." } },
+            "properties": {
+                "default": [
+                    { "name": "endpoint", "type": "string", "label": { "en_US": "OTLP Endpoint URL" } },
+                    { "name": "signal", "type": "string", "default": "metric", "label": { "en_US": "Telemetry Signal" } }
+                ]
+            }
+        })),
         "zmq" | "zeromq" => Some(json!({
             "about": { "description": { "en_US": "ZeroMQ publisher sink." } },
             "properties": {

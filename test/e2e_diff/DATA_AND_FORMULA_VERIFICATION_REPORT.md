@@ -1,7 +1,7 @@
 # Comprehensive Data Processing, SQL Transformation & Formula Evaluation Report
 
 **Target System**: `rekuiper` (`0.501.0-beta` Rust)  
-**Reference Benchmark**: LF Edge `ekuiper` (`2.4.1` Go)  
+**Reference Benchmark**: Upstream `ekuiper` (`2.4.1` Go)  
 **Dataset Size**: 100 Rich Telemetry Data Points (Mixed numeric, string, bool, array, nested json, timestamps)  
 **Transport**: Real-time MQTT Ingestion & Sink via Mosquitto 2.0  
 **Date Executed**: 2026-09-30 22:00:27 UTC  
@@ -53,7 +53,7 @@ SELECT abs(vibe) AS v_abs, ceil(temp) AS t_ceil, floor(temp) AS t_floor, round(t
 **Sample Output Comparison (Record #1)**:
 
 ```json
-// LF Edge eKuiper (Go Reference):
+// Upstream eKuiper (Go Reference):
 {
   "avg_calc": 5.6,
   "p_mod": 1,
@@ -97,7 +97,7 @@ SELECT upper(status) AS s_upper, lower(device_id) AS d_lower, concat(device_id, 
 **Sample Output Comparison (Record #1)**:
 
 ```json
-// LF Edge eKuiper (Go Reference):
+// Upstream eKuiper (Go Reference):
 {
   "d_concat": "DEV_001:IDLE",
   "d_lower": "dev_001",
@@ -161,7 +161,7 @@ SELECT device_id, CASE WHEN temp > 35.0 THEN "CRITICAL" WHEN temp > 22.0 THEN "W
 **Sample Output Comparison (Record #1)**:
 
 ```json
-// LF Edge eKuiper (Go Reference):
+// Upstream eKuiper (Go Reference):
 {
   "alert_level": "NORMAL",
   "device_id": "DEV_001",
@@ -203,7 +203,7 @@ SELECT geo.lat AS latitude, geo.lon AS longitude, config.level AS cfg_level, jso
 **Sample Output Comparison (Record #1)**:
 
 ```json
-// LF Edge eKuiper (Go Reference):
+// Upstream eKuiper (Go Reference):
 {
   "cfg_level": 2,
   "geo_json": "{\"lat\":37.771,\"lon\":-122.411}",
@@ -239,7 +239,7 @@ SELECT readings[0] AS elem_0, readings[1] AS elem_1, cardinality(readings) AS ar
 **Sample Output Comparison (Record #1)**:
 
 ```json
-// LF Edge eKuiper (Go Reference):
+// Upstream eKuiper (Go Reference):
 {
   "arr_joined": "10,20,30",
   "arr_last_pos": 1,
@@ -313,7 +313,7 @@ SELECT cast(voltage, "bigint") AS v_int, cast(temp, "string") AS t_str, cast(1, 
 **Sample Output Comparison (Record #1)**:
 
 ```json
-// LF Edge eKuiper (Go Reference):
+// Upstream eKuiper (Go Reference):
 {
   "b_false": false,
   "b_true": true,
@@ -347,7 +347,7 @@ SELECT device_id, temp, status FROM telemetry WHERE (temp >= 25.0 AND status = "
 **Sample Output Comparison (Record #1)**:
 
 ```json
-// LF Edge eKuiper (Go Reference):
+// Upstream eKuiper (Go Reference):
 {
   "device_id": "DEV_001",
   "status": "IDLE",
@@ -379,7 +379,7 @@ SELECT device_id, status FROM telemetry WHERE device_id LIKE "DEV%" AND status I
 **Sample Output Comparison (Record #1)**:
 
 ```json
-// LF Edge eKuiper (Go Reference):
+// Upstream eKuiper (Go Reference):
 {
   "device_id": "DEV_002",
   "status": "ERROR"
@@ -409,7 +409,7 @@ SELECT (tstamp() >= 0) AS has_tstamp, (length(now()) > 0) AS has_now, (event_tim
 **Sample Output Comparison (Record #1)**:
 
 ```json
-// LF Edge eKuiper (Go Reference):
+// Upstream eKuiper (Go Reference):
 {
   "has_evt_time": true,
   "has_now": true,
@@ -441,7 +441,7 @@ SELECT count(*) AS win_cnt, sum(temp) AS win_sum, round(avg(temp), 2) AS win_avg
 **Sample Output Comparison (Record #1)**:
 
 ```json
-// LF Edge eKuiper (Go Reference):
+// Upstream eKuiper (Go Reference):
 {
   "agg_hit_cnt": 0,
   "has_agg_hit_time": true,
@@ -481,7 +481,7 @@ SELECT round(sin(temp), 3) AS t_sin, round(cos(temp), 3) AS t_cos, round(ln(abs(
 **Sample Output Comparison (Record #1)**:
 
 ```json
-// LF Edge eKuiper (Go Reference):
+// Upstream eKuiper (Go Reference):
 {
   "b_and": 4,
   "b_or": 13,
@@ -521,7 +521,7 @@ SELECT device_id, round((temp * 9.0 / 5.0 + 32.0), 2) AS temp_fahrenheit, round(
 **Sample Output Comparison (Record #1)**:
 
 ```json
-// LF Edge eKuiper (Go Reference):
+// Upstream eKuiper (Go Reference):
 {
   "device_id": "DEV_001",
   "energy_kwh": 26.46,

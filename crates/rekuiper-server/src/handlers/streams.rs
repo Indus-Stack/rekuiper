@@ -599,16 +599,6 @@ pub async fn push_stream_data(
             .into_response();
     }
 
-    // Apply schema coercion if explicit column types are defined
-    if !stream_def.stream_fields.is_empty() {
-        for record in &mut records {
-            rekuiper_core::model::enforce_stream_schema(
-                &mut record.data,
-                &stream_def.stream_fields,
-            );
-        }
-    }
-
     // Resolve the stream handle once per request
     let sender = state.stream_bus.get_or_create(&name);
     if records.is_empty() {
@@ -904,6 +894,88 @@ pub async fn get_table_schema(State(state): State<AppState>, Path(name): Path<St
             })),
         )
             .into_response()
+    }
+}
+
+pub async fn push_otlp_data(
+    State(state): State<AppState>,
+    req: axum::extract::Request,
+) -> Response {
+    let uri = req.uri();
+    let query_stream = uri.query().and_then(|q| {
+        q.split('&').find_map(|pair| {
+            let (k, v) = pair.split_once('=')?;
+            if k.eq_ignore_ascii_case("stream") {
+                Some(v.to_string())
+            } else {
+                None
+            }
+        })
+    });
+    let header_stream = req
+        .headers()
+        .get("x-rekuiper-stream")
+        .and_then(|v| v.to_str().ok().map(|s| s.to_string()));
+
+    let target_stream = query_stream.or(header_stream).unwrap_or_else(|| {
+        for name in state.stream_manager.list_streams() {
+            if let Some(def) = state.stream_manager.get_stream(&name) {
+                if def.options.iter().any(|(k, v)| {
+                    k.eq_ignore_ascii_case("TYPE")
+                        && (v.eq_ignore_ascii_case("otlp")
+                            || v.eq_ignore_ascii_case("opentelemetry"))
+                }) {
+                    return name;
+                }
+            }
+        }
+        "otlp".to_string()
+    });
+
+    let body_bytes = match axum::body::to_bytes(req.into_body(), 10 * 1024 * 1024).await {
+        Ok(b) => b,
+        Err(e) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                format!("Fail to read request body: {}\n", e),
+            )
+                .into_response();
+        }
+    };
+
+    let stream_tx = state.stream_bus.get_or_create(&target_stream);
+
+    match rekuiper_connectors::parse_otlp_payload(&body_bytes) {
+        Ok(records) => {
+            for rec in records {
+                let _ = stream_tx.send(rec).await;
+            }
+            (
+                StatusCode::OK,
+                [("content-type", "application/json")],
+                "{\"partialSuccess\":{}}\n",
+            )
+                .into_response()
+        }
+        Err(e) => {
+            // Push synthetic error record so rules with onError: dlq capture it under DlqStage::CodecDecode
+            let mut err_data = HashMap::new();
+            err_data.insert("__raw_error__".to_string(), json!(e.to_string()));
+            err_data.insert(
+                "__raw_payload__".to_string(),
+                json!(String::from_utf8_lossy(&body_bytes).to_string()),
+            );
+            let _ = stream_tx
+                .send(rekuiper_core::model::StreamRecord::new(err_data))
+                .await;
+
+            (
+                StatusCode::BAD_REQUEST,
+                [("content-type", "application/json")],
+                format!("{{\"error\":\"{}\"}}\n", e),
+            )
+                .into_response()
+        }
     }
 }
 

@@ -1,4 +1,4 @@
-use crate::engine::resolve_redis_addr;
+use crate::engine::{resolve_modbus_table_config, resolve_opcua_table_config, resolve_redis_addr};
 use parking_lot::RwLock;
 use rekuiper_connectors::SqlConnectorConfig;
 use rekuiper_core::TableManager;
@@ -219,6 +219,37 @@ pub(crate) async fn lookup_candidates(
                 Vec::new()
             }
         };
+    }
+    if table_type.eq_ignore_ascii_case("modbus") {
+        if let Some(config) =
+            resolve_modbus_table_config(table_manager, source_configs, &join.target)
+        {
+            return match rekuiper_connectors::modbus_read_snapshot(&config).await {
+                Ok(row) => vec![row],
+                Err(e) => {
+                    tracing::warn!("Modbus lookup on {} failed: {}", join.target, e);
+                    Vec::new()
+                }
+            };
+        }
+        return Vec::new();
+    }
+    if table_type.eq_ignore_ascii_case("opcua")
+        || table_type.eq_ignore_ascii_case("opc_ua")
+        || table_type.eq_ignore_ascii_case("opc-ua")
+    {
+        if let Some(config) =
+            resolve_opcua_table_config(table_manager, source_configs, &join.target)
+        {
+            return match rekuiper_connectors::opcua_read_snapshot(&config).await {
+                Ok(row) => vec![row],
+                Err(e) => {
+                    tracing::warn!("OPC-UA lookup on {} failed: {}", join.target, e);
+                    Vec::new()
+                }
+            };
+        }
+        return Vec::new();
     }
     table_manager.get_table_rows(&join.target)
 }

@@ -127,28 +127,7 @@ impl<'a> Parser<'a> {
             bail!("found {}, expected lparen after stream name.", tok);
         };
 
-        let mut options = HashMap::new();
-        if self.match_keyword("WITH") {
-            self.skip_whitespace();
-            if self.pos < self.input.len() && self.input[self.pos..].starts_with('(') {
-                self.pos += 1;
-                let close = self.input[self.pos..]
-                    .find(')')
-                    .ok_or_else(|| anyhow::anyhow!("Unclosed WITH parenthesis"))?;
-                let with_content = &self.input[self.pos..self.pos + close];
-                self.pos += close + 1;
-
-                // parse key = "value" pairs separated by comma
-                for part in with_content.split(',') {
-                    let part = part.trim();
-                    if let Some((k, v)) = part.split_once('=') {
-                        let k = k.trim().trim_matches('"').trim_matches('\'').to_uppercase();
-                        let v = v.trim().trim_matches('"').trim_matches('\'').to_string();
-                        options.insert(k, v);
-                    }
-                }
-            }
-        }
+        let options = self.parse_with_options()?;
 
         self.skip_whitespace();
         if self.pos < self.input.len() && self.input[self.pos..].starts_with(';') {
@@ -178,6 +157,114 @@ impl<'a> Parser<'a> {
             fields,
             options,
         })
+    }
+
+    /// Parse `WITH (k = v, ...)` options with quote-aware delimiter scanning.
+    fn parse_with_options(&mut self) -> Result<HashMap<String, String>> {
+        let mut options = HashMap::new();
+        if !self.match_keyword("WITH") {
+            return Ok(options);
+        }
+        self.skip_whitespace();
+        if !(self.pos < self.input.len() && self.input[self.pos..].starts_with('(')) {
+            return Ok(options);
+        }
+        self.pos += 1;
+
+        let mut depth = 1usize;
+        let mut in_single = false;
+        let mut in_double = false;
+        let mut close_pos = None;
+
+        for (off, ch) in self.input[self.pos..].char_indices() {
+            if in_single {
+                if ch == '\'' {
+                    in_single = false;
+                }
+            } else if in_double {
+                if ch == '"' {
+                    in_double = false;
+                }
+            } else {
+                match ch {
+                    '\'' => in_single = true,
+                    '"' => in_double = true,
+                    '(' => depth += 1,
+                    ')' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            close_pos = Some(self.pos + off);
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        let close = close_pos.ok_or_else(|| anyhow::anyhow!("Unclosed WITH parenthesis"))?;
+        let with_content = &self.input[self.pos..close];
+        self.pos = close + 1;
+
+        // Parse key = value pairs separated by comma, respecting quotes
+        let mut pairs = Vec::new();
+        let mut current = String::new();
+        let mut s_quote = false;
+        let mut d_quote = false;
+
+        for ch in with_content.chars() {
+            if s_quote {
+                if ch == '\'' {
+                    s_quote = false;
+                }
+                current.push(ch);
+            } else if d_quote {
+                if ch == '"' {
+                    d_quote = false;
+                }
+                current.push(ch);
+            } else {
+                match ch {
+                    '\'' => {
+                        s_quote = true;
+                        current.push(ch);
+                    }
+                    '"' => {
+                        d_quote = true;
+                        current.push(ch);
+                    }
+                    ',' => {
+                        pairs.push(std::mem::take(&mut current));
+                    }
+                    _ => current.push(ch),
+                }
+            }
+        }
+        if !current.trim().is_empty() {
+            pairs.push(current);
+        }
+
+        for part in pairs {
+            let part = part.trim();
+            if let Some((k, v)) = part.split_once('=') {
+                let k = k.trim().trim_matches(['"', '\'', '`']).to_uppercase();
+                let v = v.trim();
+                let v_stripped = if (v.starts_with('\'') && v.ends_with('\''))
+                    || (v.starts_with('"') && v.ends_with('"'))
+                {
+                    if v.len() >= 2 {
+                        &v[1..v.len() - 1]
+                    } else {
+                        v
+                    }
+                } else {
+                    v
+                };
+                options.insert(k, v_stripped.to_string());
+            }
+        }
+
+        Ok(options)
     }
 
     /// Parse an optional `(name TYPE, ...)` column list, returning no columns
@@ -334,28 +421,7 @@ impl<'a> Parser<'a> {
             bail!("found {}, expected lparen after table name.", tok);
         };
 
-        let mut options = HashMap::new();
-        if self.match_keyword("WITH") {
-            self.skip_whitespace();
-            if self.pos < self.input.len() && self.input[self.pos..].starts_with('(') {
-                self.pos += 1;
-                let close = self.input[self.pos..]
-                    .find(')')
-                    .ok_or_else(|| anyhow::anyhow!("Unclosed WITH parenthesis"))?;
-                let with_content = &self.input[self.pos..self.pos + close];
-                self.pos += close + 1;
-
-                // parse key = "value" pairs separated by comma
-                for part in with_content.split(',') {
-                    let part = part.trim();
-                    if let Some((k, v)) = part.split_once('=') {
-                        let k = k.trim().trim_matches('"').trim_matches('\'').to_uppercase();
-                        let v = v.trim().trim_matches('"').trim_matches('\'').to_string();
-                        options.insert(k, v);
-                    }
-                }
-            }
-        }
+        let options = self.parse_with_options()?;
 
         self.skip_whitespace();
         if self.pos < self.input.len() && self.input[self.pos..].starts_with(';') {

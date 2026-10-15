@@ -22,6 +22,9 @@ parking_lot = { workspace = true }
 async-trait = { workspace = true }
 sqlx = { workspace = true }
 rekuiper-conf = { workspace = true }
+serde_yaml = { workspace = true }
+toml = { workspace = true }
+regex = { workspace = true }
 wasmi = "0.36"
 
 [dev-dependencies]

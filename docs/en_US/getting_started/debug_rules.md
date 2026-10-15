@@ -177,14 +177,13 @@ Refer to [Check the Logs](#check-the-logs) for log locations. To enable debug lo
 Below is an example debug log entry for a filter operator:
 
 ```text
-time="2023-05-31 14:58:43" level=debug msg="filter plan receive &{mockStream map[temperature:%!s(float64=-11.77) ts:%!s(float64=1.684738889251e+12)] %!s(int64=1685516298342) map[fi
-le:C:\\repos\\go\\src\\github.com\\lfedge\\ekuiper\\data\\mock.lines] {{{%!s(int32=0) %!s(uint32=0)} %!s(uint32=0) %!s(uint32=0) {{} %!s(int32=0)} {{} %!s(int32=0)}} map[] map[]} {%!s(int32=0) %!s(uint32=0)} map[]}" file="operator/filter_operator.go:36" rule=rule1
+2026-05-31T14:58:43.123456Z DEBUG rekuiper_core::plan::filter: filter received record payload={"temperature":-11.77,"ts":1684738889251} rule=rule1
 ```
 
-The field `rule=rule1` at the end of the log line indicates rule origin. The log shows data received by the filter operator:
-`mockStream map[temperature:%!s(float64=-11.77) ts:%!s(float64=1.684738889251e+12)]`
+The field `rule=rule1` at the end of the log line indicates the rule origin. The log shows data received by the filter operator:
+`{"temperature":-11.77, "ts":1684738889251}`
 
-This entry indicates stream name `mockStream` and payload attributes `temperature=-11.77` and `ts=1.684738889251e+12`. Compare your `WHERE` condition with this payload to evaluate why records do not pass.
+This entry indicates stream record payload attributes `temperature=-11.77` and `ts=1684738889251`. Compare your `WHERE` condition with this payload to evaluate why records do not pass.
 
 **4. Create debug rules**
 

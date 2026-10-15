@@ -30,7 +30,7 @@ docker run -d \
   -p 9081:9081 \
   -p 20498:20498 \
   -p 20499:20499 \
-  ankurkrp/rekuiper:1.0.0-rc2
+  ankurkrp/rekuiper:1.0.0-rc3
 ```
 
 ### Production Deployment with Persistent Storage
@@ -49,7 +49,7 @@ docker run -d \
   -v /var/log/rekuiper:/kuiper/log \
   -e KUIPER__BASIC__PROMETHEUS="true" \
   -e LOG_LEVEL="info" \
-  ankurkrp/rekuiper:1.0.0-rc2
+  ankurkrp/rekuiper:1.0.0-rc3
 ```
 
 Verify service availability:
@@ -63,7 +63,7 @@ curl http://localhost:9081/ping
 
 ## 3. Production Deployment with Docker Compose
 
-You can deploy rekuiper with an MQTT broker (Eclipse Mosquitto) and the web management dashboard ([eKuiper Manager](https://github.com/ankur-paan/ekuiper-manager)).
+Deploy rekuiper and an MQTT broker (Eclipse Mosquitto) with Docker Compose.
 
 Create a `docker-compose.yml` file:
 
@@ -72,7 +72,7 @@ version: '3.8'
 
 services:
   rekuiper:
-    image: ankurkrp/rekuiper:1.0.0-rc2
+    image: ankurkrp/rekuiper:1.0.0-rc3
     container_name: rekuiper
     restart: unless-stopped
     ports:
@@ -81,10 +81,9 @@ services:
       - "20499:20499"
     environment:
       KUIPER__BASIC__REST_PORT: "9081"
-      KUIPER__BASIC__CLI_PORT: "20499"
       KUIPER__BASIC__PROMETHEUS: "true"
-      MQTT_SOURCE__DEFAULT__SERVERS: "[tcp://mosquitto:1883]"
-      LOG_LEVEL: "info"
+      MQTT_SOURCE__DEFAULT__SERVER: "tcp://mosquitto:1883"
+      RUST_LOG: "info"
     volumes:
       - rekuiper-data:/kuiper/data
       - rekuiper-etc:/kuiper/etc
@@ -99,19 +98,6 @@ services:
     restart: unless-stopped
     ports:
       - "1883:1883"
-    networks:
-      - edge-net
-
-  manager:
-    image: ankur-paan/ekuiper-manager:latest
-    container_name: ekuiper-manager
-    restart: unless-stopped
-    ports:
-      - "9082:9082"
-    environment:
-      DEFAULT_EKUIPER_ENDPOINT: "http://rekuiper:9081"
-    depends_on:
-      - rekuiper
     networks:
       - edge-net
 
@@ -132,7 +118,8 @@ docker compose up -d
 
 Service endpoints:
 - **rekuiper REST API**: `http://localhost:9081`
-- **eKuiper Manager Web UI**: `http://localhost:9082`
+- **Embedded Web Console**: `http://localhost:9081/ui`
+- **Prometheus Metrics**: `http://localhost:20499/metrics` (or `http://localhost:9081/metrics`)
 - **MQTT Broker**: `localhost:1883`
 
 ---
@@ -147,7 +134,7 @@ Prebuilt binaries are available on [GitHub Releases](https://github.com/ankur-pa
 
 ```shell
 # Example for Linux x86_64 (replace with desired release tag)
-curl -LO https://github.com/ankur-paan/rekuiper/releases/download/v1.0.0-rc2/rekuiperd-x86_64-unknown-linux-musl.tar.gz
+curl -LO https://github.com/ankur-paan/rekuiper/releases/download/v1.0.0-rc3/rekuiperd-x86_64-unknown-linux-musl.tar.gz
 tar -xzf rekuiperd-x86_64-unknown-linux-musl.tar.gz
 cd rekuiper
 

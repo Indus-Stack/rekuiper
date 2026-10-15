@@ -1,13 +1,30 @@
-# Release Notes - rekuiper v1.0.0-rc2
+# Release Notes - rekuiper v1.0.0-rc3
 
-`rekuiper` v1.0.0-rc2 delivers full SQL catalog parity across documentation, published in-process engine performance benchmarks exceeding 2,144,000 EPS, zero-vulnerability control plane dependencies, and expanded Model Context Protocol (MCP) server intelligence.
+`rekuiper` v1.0.0-rc3 adds industrial connectors, declarative GitOps management, dead-letter error queues, OpenTelemetry processing, and inspection tools.
 
 Key highlights:
-- **100% SQL Catalog Documentation Parity**: All 221 built-in SQL functions and aliases now have complete documentation across category guides with verified parameters, return types, and examples.
-- **Published In-Process Engine Benchmark**: Published audited in-process streaming benchmark results for rekuiper v1.0.0-rc2. The zero-parse in-process engine pipeline processes **2,144,375 events/sec** (233.17 ms for 500,000 records). The end-to-end JSON pipeline processes **994,118 events/sec** (502.96 ms) on one CPU core with zero garbage collection pauses.
-- **Zero-Vulnerability Dependency Stack**: Resolved Issue #38 by replacing unmaintained `serde_yaml` with `serde_norway 0.9` and upgrading `sqlx` to 0.8.6. Enforced automated CI security checks via `cargo-deny`.
-- **Complex Event Processing Prompts & Tools**: Added the `generate_cep_rule` prompt template and expanded `validate_sql` and `test_sql_expression` tools for `sequence_match`, `sequence_count`, and `ASOF JOIN`.
-- **WebAssembly Runtime Syntax**: Documented `wasm_run` and `wasm` execution syntax for compiling custom algorithms into WebAssembly modules.
+- **Modbus and OPC-UA Connectors**: The engine connects directly to Modbus TCP, Modbus RTU, and OPC-UA servers. It reads sensor values and writes control setpoints. The connectors run in pure Rust without external C libraries or separate gateway containers.
+- **Declarative GitOps Configuration**: Configure streams, tables, connections, and rules in YAML or JSON files with the `--declarative` option. The engine monitors files for changes and reloads rules automatically. A read-only mode prevents REST API changes when declarative mode is active.
+- **Dead-Letter Queues (DLQ)**: The engine captures invalid records in five processing stages (`codec_decode`, `schema_validation`, `sql_eval`, `data_template`, and `sink_delivery`). It stores error records in memory buffers. View errors with `GET /rules/:id/errors`. Clear errors with `DELETE /rules/:id/errors`.
+- **OpenTelemetry (OTLP) Ingestion and Export**: The engine receives OTLP metrics, logs, and traces through HTTP at `/v1/metrics`, `/v1/logs`, and `/v1/traces`. It converts OTLP data into SQL records. It processes numbers formatted as JSON numbers or numeric strings. The OTLP sink sends query results to external OpenTelemetry collectors.
+- **Inspection Tools**: The `rekuiper top` command shows live engine throughput and rule status in the terminal. An embedded web console is available at `GET /ui`. The web console uses no external fonts or CDN scripts and operates on isolated networks.
+- **No New Dependencies**: All new features use existing Rust libraries in `Cargo.lock`.
+
+- Docker image: `ankurkrp/rekuiper:1.0.0-rc3` (plus `latest`)
+- Helm chart: `deploy/chart/ekuiper` (`AppVersion: 1.0.0-rc3`)
+
+---
+
+# Release Notes - rekuiper v1.0.0-rc2
+
+`rekuiper` v1.0.0-rc2 adds full SQL catalog documentation, published engine performance benchmarks, verified dependency security, and expanded Model Context Protocol (MCP) server tools.
+
+Key highlights:
+- **SQL Catalog Documentation**: All 221 built-in SQL functions and aliases have complete documentation with verified parameters, return types, and examples.
+- **Engine Benchmarks**: Published audited streaming benchmark results for rekuiper v1.0.0-rc2. The zero-parse engine pipeline processes 2,144,375 events per second (233.17 ms for 500,000 records). The end-to-end JSON pipeline processes 994,118 events per second (502.96 ms) on one CPU core.
+- **Dependency Security**: Replaced unmaintained `serde_yaml` with `serde_norway 0.9` and upgraded `sqlx` to 0.8.6. Enforced automated CI security checks through `cargo-deny`.
+- **Complex Event Processing Tools**: Added the `generate_cep_rule` prompt template. Expanded `validate_sql` and `test_sql_expression` tools for `sequence_match`, `sequence_count`, and `ASOF JOIN`.
+- **WebAssembly Runtime Syntax**: Documented `wasm_run` and `wasm` syntax for compiling custom algorithms into WebAssembly modules.
 
 - Docker image: `ankurkrp/rekuiper:1.0.0-rc2` (plus `latest`)
 - Helm chart: `deploy/chart/ekuiper` (`AppVersion: 1.0.0-rc2`)
@@ -48,7 +65,7 @@ Key highlights:
 
 # Release Notes - rekuiper v0.508-beta
 
-`rekuiper` v0.508-beta achieves upstream LF Edge eKuiper parity across sink options, dynamic templates, DDL validation, built-in SQL functions, HTTPPush listeners, REST API envelopes, CLI tools, and Prometheus metrics.
+`rekuiper` v0.508-beta achieves upstream eKuiper parity across sink options, dynamic templates, DDL validation, built-in SQL functions, HTTPPush listeners, REST API envelopes, CLI tools, and Prometheus metrics.
 
 Key highlights:
 - **Sink Options Parity**: Added `sendSingle`, `fields`, `excludeFields`, `dataField`, `batchSize`, and `lingerInterval` options to ActionRuntime. Supported delimited formatting with custom delimiters. Added upfront sink configuration validation for format and MQTT topics.
@@ -74,7 +91,7 @@ Key highlights:
 
 # Release Notes - rekuiper v0.507-beta
 
-`rekuiper` v0.507-beta delivers upstream LF Edge eKuiper REST API and rule metadata parity, enhanced daemon qualification discovery, and GitHub Actions CI runner workflow optimizations.
+`rekuiper` v0.507-beta delivers upstream eKuiper REST API and rule metadata parity, enhanced daemon qualification discovery, and GitHub Actions CI runner workflow optimizations.
 
 Key highlights:
 - **eKuiper REST Parity for Rule Status**: `GET /rules/:id/status` returns structured status objects containing top-level `status` (`"running"`, `"stopped"`), `message`, `source_statuses`, and execution metrics matching the eKuiper REST contract.
@@ -262,7 +279,7 @@ under identical limits, with configs, raw evidence and reproduction steps.
 # Release Notes - rekuiper v0.424-beta
 
 `rekuiper` v0.424-beta fixes every documented compatibility defect found in the
-0.423 evaluation against official LF Edge eKuiper 2.4.1: PostgreSQL float
+0.423 evaluation against official eKuiper 2.4.1: PostgreSQL float
 sinks, SQL polling sources and lookup joins, windowed stream-stream joins,
 array index/slice syntax, `json_path_query` wildcards, ruletest SSE on the
 documented port 10081 with lossless replay, process-restart delivery resume,

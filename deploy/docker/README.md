@@ -4,7 +4,7 @@
 [![Release](https://img.shields.io/badge/release-v1.0.0--rc2-blue.svg)](https://github.com/ankur-paan/rekuiper/releases)
 [![License: MIT or Apache-2.0](https://img.shields.io/badge/license-MIT%20%2F%20Apache--2.0-yellow.svg)](https://github.com/ankur-paan/rekuiper/blob/main/LICENSE)
 
-`rekuiper` is a lightweight streaming SQL engine written in Rust for edge computing, IIoT gateways, connected vehicles, and robotics. It is a drop-in replacement for LF Edge eKuiper. It processes 150k–200k messages per second per CPU core with a low memory footprint.
+`rekuiper` is a lightweight streaming SQL engine written in Rust for edge computing, IIoT gateways, connected vehicles, and robotics. It is a drop-in replacement for eKuiper. It processes 150k–200k messages per second per CPU core with a low memory footprint.
 
 `rekuiper` includes an embedded **Model Context Protocol (MCP)** server (`rekuiper-mcp`). AI assistants (Antigravity IDE, Claude Desktop, Cursor) use this server to inspect schemas, validate SQL offline, query topologies, and trace streaming rules.
 
@@ -21,7 +21,7 @@ docker run -d --name rekuiper \
   -p 9081:9081 -p 59720:59720 -p 20499:20499 \
   -e KUIPER__BASIC__CONSOLELOG=true \
   -e KUIPER__BASIC__PROMETHEUS=true \
-  ankurkrp/rekuiper:1.0.0-rc2
+  ankurkrp/rekuiper:1.0.0-rc3
 ```
 
 Check engine status:
@@ -143,7 +143,7 @@ docker run -d --name rekuiper \
   -p 9081:9081 -p 59720:59720 -p 20499:20499 \
   -v rekuiper-data:/kuiper/data \
   -v rekuiper-etc:/kuiper/etc \
-  ankurkrp/rekuiper:1.0.0-rc2
+  ankurkrp/rekuiper:1.0.0-rc3
 ```
 
 ---

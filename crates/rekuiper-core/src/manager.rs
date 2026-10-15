@@ -1,12 +1,13 @@
 use crate::kv::KvStore;
 use crate::model::{
-    RuleDefinition, RuleStatus, SchemaDefinition, StreamDefinition, TableDefinition,
+    DlqEnvelope, DlqStage, DlqStats, RuleDefinition, RuleStatus, SchemaDefinition,
+    StreamDefinition, TableDefinition,
 };
 use crate::runtime::StreamBus;
 use anyhow::{bail, Result};
 use parking_lot::RwLock;
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use tokio::sync::Mutex as AsyncMutex;
 use tokio::task::JoinHandle;
@@ -408,7 +409,9 @@ pub struct ActiveRule {
     pub def: RuleDefinition,
     pub status: Arc<RwLock<RuleStatus>>,
     pub handle: Option<JoinHandle<()>>,
-    counters: Arc<RuleCounters>,
+    pub counters: Arc<RuleCounters>,
+    pub dlq_buffer: Arc<RwLock<VecDeque<DlqEnvelope>>>,
+    pub dlq_capacity: usize,
 }
 
 /// Per-rule atomic counters. Rule tasks hold an `Arc<RuleCounters>` cloned at
@@ -426,6 +429,9 @@ pub struct RuleCounters {
     pub high_water: std::sync::atomic::AtomicU64,
     pub blocked_micros: std::sync::atomic::AtomicU64,
     pub last_exception: parking_lot::RwLock<String>,
+    pub dlq_records: std::sync::atomic::AtomicU64,
+    pub dlq_stages: [std::sync::atomic::AtomicU64; 5],
+    pub dlq_sink_failures: std::sync::atomic::AtomicU64,
 }
 
 impl Default for RuleCounters {
@@ -441,6 +447,15 @@ impl Default for RuleCounters {
             high_water: std::sync::atomic::AtomicU64::new(0),
             blocked_micros: std::sync::atomic::AtomicU64::new(0),
             last_exception: parking_lot::RwLock::new(String::new()),
+            dlq_records: std::sync::atomic::AtomicU64::new(0),
+            dlq_stages: [
+                std::sync::atomic::AtomicU64::new(0),
+                std::sync::atomic::AtomicU64::new(0),
+                std::sync::atomic::AtomicU64::new(0),
+                std::sync::atomic::AtomicU64::new(0),
+                std::sync::atomic::AtomicU64::new(0),
+            ],
+            dlq_sink_failures: std::sync::atomic::AtomicU64::new(0),
         }
     }
 }
@@ -463,6 +478,7 @@ impl RuleCounters {
         guard.dropped_by_policy_total = self.dropped.load(Relaxed);
         guard.sink_queue_high_water = self.high_water.load(Relaxed) as usize;
         guard.sink_blocked_micros_total = self.blocked_micros.load(Relaxed);
+        guard.dlq_records_total = self.dlq_records.load(Relaxed);
     }
 
     /// Lock-free hot-path bumps (rule loops hold the Arc; no map locks).
@@ -510,6 +526,35 @@ impl RuleCounters {
         use std::sync::atomic::Ordering::Relaxed;
         self.blocked_micros.fetch_add(micros, Relaxed);
     }
+    pub fn inc_dlq(&self, stage: DlqStage) {
+        use std::sync::atomic::Ordering::Relaxed;
+        self.dlq_records.fetch_add(1, Relaxed);
+        let idx = stage as usize;
+        if idx < 5 {
+            self.dlq_stages[idx].fetch_add(1, Relaxed);
+        }
+    }
+    pub fn inc_dlq_sink_failures(&self) {
+        use std::sync::atomic::Ordering::Relaxed;
+        self.dlq_sink_failures.fetch_add(1, Relaxed);
+    }
+    pub fn dlq_records(&self) -> u64 {
+        use std::sync::atomic::Ordering::Relaxed;
+        self.dlq_records.load(Relaxed)
+    }
+    pub fn dlq_stage_records(&self, stage: DlqStage) -> u64 {
+        use std::sync::atomic::Ordering::Relaxed;
+        let idx = stage as usize;
+        if idx < 5 {
+            self.dlq_stages[idx].load(Relaxed)
+        } else {
+            0
+        }
+    }
+    pub fn dlq_sink_failures(&self) -> u64 {
+        use std::sync::atomic::Ordering::Relaxed;
+        self.dlq_sink_failures.load(Relaxed)
+    }
 }
 
 #[derive(Clone)]
@@ -526,6 +571,21 @@ pub struct RuleManager {
 struct PersistedRule {
     def: RuleDefinition,
     status: String,
+}
+
+fn extract_dlq_capacity(def: &RuleDefinition) -> usize {
+    def.options
+        .as_ref()
+        .and_then(|o| o.get("dlq"))
+        .and_then(|d| {
+            d.get("buffer_capacity")
+                .or_else(|| d.get("bufferCapacity"))
+                .or_else(|| d.get("buffer_size"))
+                .or_else(|| d.get("capacity"))
+        })
+        .and_then(|v| v.as_u64())
+        .map(|v| v as usize)
+        .unwrap_or(100)
 }
 
 impl RuleManager {
@@ -594,6 +654,7 @@ impl RuleManager {
         }
         self.persist_rule(&def.id, &def, "running").await?;
         let rule_id = def.id.clone();
+        let dlq_capacity = extract_dlq_capacity(&def);
         let active = ActiveRule {
             def,
             status: Arc::new(RwLock::new(RuleStatus {
@@ -606,6 +667,8 @@ impl RuleManager {
             })),
             handle: None,
             counters: Arc::new(RuleCounters::default()),
+            dlq_buffer: Arc::new(RwLock::new(VecDeque::with_capacity(dlq_capacity))),
+            dlq_capacity,
         };
         self.rules
             .write()
@@ -748,7 +811,87 @@ impl RuleManager {
         active.counters.dropped.store(0, Relaxed);
         active.counters.high_water.store(0, Relaxed);
         active.counters.blocked_micros.store(0, Relaxed);
+        active.counters.dlq_records.store(0, Relaxed);
+        for s in &active.counters.dlq_stages {
+            s.store(0, Relaxed);
+        }
+        active.counters.dlq_sink_failures.store(0, Relaxed);
         active.counters.sync_to(&active.status);
+        Ok(())
+    }
+
+    pub fn dlq_buffer(&self, id: &str) -> Option<Arc<RwLock<VecDeque<DlqEnvelope>>>> {
+        self.rules
+            .read()
+            .get(id)
+            .map(|r| r.read().dlq_buffer.clone())
+    }
+
+    pub fn get_rule_dlq(&self, id: &str) -> Option<Vec<DlqEnvelope>> {
+        let map = self.rules.read();
+        let rule_arc = map.get(id)?;
+        let active = rule_arc.read();
+        let buf = active.dlq_buffer.read();
+        Some(buf.iter().cloned().collect())
+    }
+
+    pub fn clear_rule_dlq(&self, id: &str) -> Result<usize> {
+        let map = self.rules.read();
+        let rule_arc = map
+            .get(id)
+            .ok_or_else(|| anyhow::anyhow!("Rule {} not found", id))?;
+        let active = rule_arc.read();
+        let mut buf = active.dlq_buffer.write();
+        let count = buf.len();
+        buf.clear();
+        Ok(count)
+    }
+
+    pub fn get_rule_dlq_stats(&self, id: &str) -> Option<DlqStats> {
+        use std::sync::atomic::Ordering::Relaxed;
+        let map = self.rules.read();
+        let rule_arc = map.get(id)?;
+        let active = rule_arc.read();
+        let counters = &active.counters;
+        let buf = active.dlq_buffer.read();
+        Some(DlqStats {
+            rule_id: id.to_string(),
+            total_errors: counters.dlq_records.load(Relaxed),
+            codec_decode: counters.dlq_stages[DlqStage::CodecDecode as usize].load(Relaxed),
+            schema_validation: counters.dlq_stages[DlqStage::SchemaValidation as usize]
+                .load(Relaxed),
+            sql_eval: counters.dlq_stages[DlqStage::SqlEval as usize].load(Relaxed),
+            data_template: counters.dlq_stages[DlqStage::DataTemplate as usize].load(Relaxed),
+            sink_delivery: counters.dlq_stages[DlqStage::SinkDelivery as usize].load(Relaxed),
+            sink_failures: counters.dlq_sink_failures.load(Relaxed),
+            recent_errors: buf.iter().cloned().collect(),
+        })
+    }
+
+    pub async fn halt_rule_with_error(&self, id: &str, error_msg: &str) -> Result<()> {
+        let _guard = self.op_lock.lock().await;
+        let rule_arc = {
+            let map = self.rules.read();
+            map.get(id)
+                .cloned()
+                .ok_or_else(|| anyhow::anyhow!("Rule {} not found", id))?
+        };
+        let snapshot = rule_arc.read().def.clone();
+        self.persist_rule(id, &snapshot, "stopped").await?;
+        {
+            if let Some(rule_arc) = self.rules.read().get(id) {
+                let mut rule = rule_arc.write();
+                if let Some(handle) = rule.handle.take() {
+                    handle.abort();
+                }
+                rule.counters.record_exception(error_msg);
+                let mut st = rule.status.write();
+                st.status = "stopped".to_string();
+                st.last_stop_timestamp = chrono::Utc::now().timestamp_millis();
+                st.message = format!("halted on error: {}", error_msg);
+                st.last_exception = error_msg.to_string();
+            }
+        }
         Ok(())
     }
 
@@ -881,6 +1024,7 @@ impl RuleManager {
             } else {
                 "stopped"
             };
+            let dlq_capacity = extract_dlq_capacity(&stored.def);
             let active = ActiveRule {
                 def: stored.def,
                 status: Arc::new(RwLock::new(RuleStatus {
@@ -893,6 +1037,8 @@ impl RuleManager {
                 })),
                 handle: None,
                 counters: Arc::new(RuleCounters::default()),
+                dlq_buffer: Arc::new(RwLock::new(VecDeque::with_capacity(dlq_capacity))),
+                dlq_capacity,
             };
             self.rules
                 .write()

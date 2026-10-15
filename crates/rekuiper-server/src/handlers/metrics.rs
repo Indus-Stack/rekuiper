@@ -117,6 +117,7 @@ pub async fn prometheus_metrics_handler(State(state): State<AppState>) -> impl I
     let mut sink_conn_status_buf = String::new();
     let mut sink_latency_buf = String::new();
     let mut sink_latency_hist_buf = String::new();
+    let mut dlq_buf = String::new();
 
     // Exposition headers (# HELP / # TYPE)
     rule_count_buf.push_str(
@@ -385,6 +386,18 @@ pub async fn prometheus_metrics_handler(State(state): State<AppState>) -> impl I
                 sink_name, rule.id, status.sink_records_out_total
             ));
         }
+
+        if let Some(counters) = state.rule_manager.rule_counters(&rule.id) {
+            for stage in rekuiper_core::model::DlqStage::ALL {
+                let cnt = counters.dlq_stage_records(stage);
+                dlq_buf.push_str(&format!(
+                    "rekuiper_rule_dlq_records_total{{rule=\"{}\",stage=\"{}\"}} {}\n",
+                    rule.id,
+                    stage.label_str(),
+                    cnt
+                ));
+            }
+        }
     }
 
     // Rule counts
@@ -445,6 +458,20 @@ pub async fn prometheus_metrics_handler(State(state): State<AppState>) -> impl I
     out.push_str(&sink_conn_status_buf);
     out.push_str(&sink_latency_buf);
     out.push_str(&sink_latency_hist_buf);
+
+    if !dlq_buf.is_empty() {
+        out.push_str("# HELP rekuiper_rule_dlq_records_total total records routed to dead-letter queue by stage\n# TYPE rekuiper_rule_dlq_records_total counter\n");
+        out.push_str(&dlq_buf);
+    }
+
+    let reload_failures = state
+        .declarative_reload_failures
+        .load(std::sync::atomic::Ordering::Relaxed);
+    out.push_str("# HELP rekuiper_declarative_reload_failures_total total number of declarative reload failures\n# TYPE rekuiper_declarative_reload_failures_total counter\n");
+    out.push_str(&format!(
+        "rekuiper_declarative_reload_failures_total {}\n",
+        reload_failures
+    ));
 
     (
         StatusCode::OK,

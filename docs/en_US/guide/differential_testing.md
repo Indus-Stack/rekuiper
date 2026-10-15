@@ -1,10 +1,10 @@
 # End-to-End Differential and Chaos Qualification Guide
 
 > [!NOTE]
-> **Verification Status**: Verified against `rekuiper` and LF Edge `eKuiper` v2.4.1 cluster on **2026-09-30 18:49:09 UTC**.  
+> **Verification Status**: Verified against `rekuiper` and upstream `eKuiper` v2.4.1 cluster on **2026-09-30 18:49:09 UTC**.  
 > **Scorecard**: 154 / 154 Lifecycle and Chaos Scenarios Passed (100%). 12 / 12 SQL Formula Categories Verified under Live Stream Load (100% Exact Numerical Parity).
 
-This guide documents the automated differential qualification harness. The harness verifies that `rekuiper` serves as an exact drop-in replacement for LF Edge `eKuiper` v2.4.1 across REST APIs, state persistence, error boundaries, streaming transformations, and mathematical calculations.
+This guide documents the automated differential qualification harness. The harness verifies that `rekuiper` serves as an exact drop-in replacement for upstream `eKuiper` v2.4.1 across REST APIs, state persistence, error boundaries, streaming transformations, and mathematical calculations.
 
 ## 1. Differential Architecture
 

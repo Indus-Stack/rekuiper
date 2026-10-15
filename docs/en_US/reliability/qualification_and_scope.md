@@ -1,9 +1,9 @@
 # Reliability Qualification, Scope, and Verification Status
 
-> **Release Version**: `1.0.0-rc2`  
-> **Status**: **Release Candidate 2** (Pre-GA)
+> **Release Version**: `1.0.0-rc3`  
+> **Status**: **Release Candidate 3** (Pre-GA)
 
-This document defines verified capabilities, failure recovery semantics, operational procedures, and the qualification harness for **rekuiper** (`1.0.0-rc2`).
+This document defines verified capabilities, failure recovery semantics, operational procedures, and the qualification harness for **rekuiper** (`1.0.0-rc3`).
 
 ## 1. Implemented Capabilities and Verification Status
 

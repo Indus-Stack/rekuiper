@@ -295,3 +295,24 @@ ekuiperEnv:
     mqttDefaultServer: MQTT_SOURCE__DEFAULT__SERVER
   value:
     mqttDefaultServer: "tcp://broker.emqx.io:1883"
+
+# Declarative GitOps pipeline management
+declarative:
+  # Enable Declarative GitOps mode (sets --declarative and locks down control plane)
+  enabled: false
+  # Enable hot-reload on ConfigMap / manifest file updates
+  watch: true
+  # Directory in container where declarative manifests are mounted
+  mountPath: /etc/rekuiper/pipelines.d
+  # Map of manifest filename to manifest YAML/JSON/TOML content
+  pipelines: {}
+    # 01-streams.yaml: |
+    #   streams:
+    #     demo_stream: "CREATE STREAM demo_stream () WITH (DATASOURCE=\"telemetry\", FORMAT=\"json\");"
+    # 02-rules.yaml: |
+    #   rules:
+    #     demo_rule:
+    #       sql: "SELECT * FROM demo_stream"
+    #       actions:
+    #         - log: {}
+

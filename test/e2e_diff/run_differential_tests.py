@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Comprehensive Differential Test Suite: rekuiper vs lfedge/ekuiper
+Comprehensive Differential Test Suite: rekuiper vs upstream eKuiper
 Author: Antigravity Automated Verification
 Scope: Full REST API Lifecycle, Fuzzy Testing, Chaos Testing, Functional & Reliability Stress Testing
 """
@@ -961,7 +961,7 @@ def generate_reports():
     with open(md_path, "w", encoding="utf-8") as md:
         md.write("# Differential Verification & Reliability Qualification Report\n\n")
         md.write(f"**Target System**: `rekuiper` (`0.501.0-beta` Rust)  \n")
-        md.write(f"**Reference Benchmark**: LF Edge `ekuiper` (`2.4.1` Go)  \n")
+        md.write(f"**Reference Benchmark**: Upstream `ekuiper` (`2.4.1` Go)  \n")
         md.write(f"**Date Executed**: {time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime())}  \n")
         md.write(f"**Test Environment**: WSL2 (Ubuntu Linux x86_64, Docker Bridge Network, Mosquitto 2.0, Redis 7)\n\n")
 

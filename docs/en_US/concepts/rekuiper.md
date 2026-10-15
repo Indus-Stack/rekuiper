@@ -2,7 +2,7 @@
 
 rekuiper is a lightweight stream processing engine for edge computing, written in Rust. The engine is designed for resource-constrained edge gateways and devices.
 
-rekuiper implements the REST API, SQL dialect, rule format, and `kuiper` CLI of LF Edge eKuiper. Existing eKuiper streams, rules, and management tools operate without modification.
+rekuiper implements the REST API, SQL dialect, rule format, and `kuiper` CLI of eKuiper. Existing eKuiper streams, rules, and management tools operate without modification.
 
 ![rekuiper Architecture](../resources/arch.png)
 

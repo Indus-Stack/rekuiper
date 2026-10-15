@@ -1,99 +1,213 @@
+#!/usr/bin/env python3
 import os
 import sys
 import json
 import re
 from urllib.parse import urlparse
 
-directory_file = sys.argv[1]
-docs_path = sys.argv[2]
+FORBIDDEN_KEYWORDS = [
+    "go_sdk",
+    "python_sdk",
+    "ekuiper-manager",
+    "legacy_backup",
+    "Dockerfile-alpine-python",
+    "Dockerfile-slim-python",
+    "openvino",
+    "tensorflow_lite",
+    "lf edge",
+    "lf-edge",
+    "lfedge",
+]
+
 success = True
 
 
-def check_md_content(md_file):
-    global success
-
-    if not os.path.exists(md_file):
-        print(f'{md_file} not exists')
-        success = False
-        return
-
-    md_content = re.sub(r'<!--([\s\S]*?)-->', '', open(md_file, 'r').read())
-
-    if 'ee' in directory_file:
-        md_content = re.sub(r'{% emqxce %}([\s\S]*?){% endemqxce %}', '', md_content)
-    else:
-        md_content = re.sub(r'{% emqxee %}([\s\S]*?){% endemqxee %}', '', md_content)
-
-    image_list = re.findall('(.*?)!\[(.*?)\]\((.*?)\)', md_content)
-    url_list = re.findall('(.*?)\[(.*?)\]\((.*?)\)', md_content)
-    for url in url_list:
-        if url[0].endswith('!'):
-            continue
-        if url[2].startswith(('http://', 'https://', '<', '#', 'mailto:', 'tel:')):
-            continue
-        if urlparse(url[2]).path.endswith('.html'):
-            continue
-        url_path = url[2].split('.md')[0]
-        ref_md_path = os.path.join(f'{"/".join(md_file.split("/")[:-1])}/', f'{url_path}.md')
-
-        if not os.path.exists(ref_md_path):
-            print(f'In {md_file}：', end='')
-            print(f'{url[2]} not found or not in {directory_file}')
-            success = False
-
-    for image in image_list:
-        if image[0].startswith('<!--'):
-            continue
-        if image[2].startswith(('http://', 'https://', '<')):
-            continue
-        image_path = os.path.join(f'{"/".join(md_file.split("/")[:-1])}/', image[2])
-
-        if not os.path.exists(image_path):
-            print(f'In {md_file}：', end='')
-            print(image[2], 'does not exist')
-            success = False
+def normalize_path(path):
+    return os.path.normpath(path).replace('\\', '/')
 
 
-def get_md_files(dir_config, path):
-    global success
+def get_md_files_from_config(dir_config, docs_path, lang_dir):
     md_list = []
-    for i in dir_config:
-        md_name = i.get('path')
-        md_children = i.get('children')
+    for item in dir_config:
+        md_name = item.get('path')
+        md_children = item.get('children')
 
         if md_name:
             if md_name.startswith(('http://', 'https://')):
                 continue
-            elif md_name == './':
-                md_list.append(f'{docs_path}/{path}/index.md')
+            elif md_name in ('.', './'):
+                target = os.path.join(docs_path, lang_dir, 'index.md')
+                md_list.append(normalize_path(target))
             else:
-                md_list.append(f'{docs_path}/{path}/{md_name}.md')
+                target = os.path.join(docs_path, lang_dir, f'{md_name}.md')
+                md_list.append(normalize_path(target))
 
         if md_children:
-            md_list += get_md_files(md_children, path)
+            md_list += get_md_files_from_config(md_children, docs_path, lang_dir)
 
     return list(set(md_list))
 
 
-if __name__ == '__main__':
-    if os.path.exists(f'{docs_path}/{directory_file}'):
-        md_file_list = []
-        config_dict = json.load(open(f'{docs_path}/{directory_file}'))
-        md_file_list += get_md_files(config_dict['cn'], 'zh_CN')
-        md_file_list += get_md_files(config_dict['en'], 'en_US')
+def check_forbidden_keywords(md_file, content):
+    global success
+    for line_idx, line in enumerate(content.splitlines(), start=1):
+        for keyword in FORBIDDEN_KEYWORDS:
+            if re.search(r'\b' + re.escape(keyword) + r'\b', line, re.IGNORECASE) or keyword in line.lower():
+                print(f"[FORBIDDEN KEYWORD] {md_file}:{line_idx}: contains banned term '{keyword}': {line.strip()}")
+                success = False
 
-        for file_path, dir_list, file_list in os.walk(docs_path):
-            for file_name in file_list:
-                if file_name.split('.')[-1] != 'md':
-                    continue
-                md_path = os.path.join(file_path, file_name)
-                if md_path not in md_file_list:
-                    os.remove(md_path)
 
-        for file in md_file_list:
-            check_md_content(file)
+def check_relative_links_and_images(md_file, content, docs_path):
+    global success
+    base_dir = os.path.dirname(md_file)
+
+    # Strip code blocks to avoid false positives in code snippets
+    # but keep markdown link syntax outside code blocks
+    cleaned_content = re.sub(r'```[\s\S]*?```', '', content)
+    cleaned_content = re.sub(r'<!--[\s\S]*?-->', '', cleaned_content)
+
+    # Find all image links: ![alt](target) and <img src="..." />
+    image_matches = re.findall(r'!\[(.*?)\]\((.*?)\)', cleaned_content)
+    raw_targets = [target for _, target in image_matches]
+    raw_targets += re.findall(r'<img\s+[^>]*src=["\'](.*?)["\']', cleaned_content, re.IGNORECASE)
+
+    for target in raw_targets:
+        target = target.strip()
+        if not target or target.startswith(('http://', 'https://', 'data:', '<')):
+            continue
+        # Strip title attribute if present: "url 'title'"
+        clean_target = target.split()[0].strip('\'"')
+        clean_target = clean_target.split('#')[0].split('?')[0]
+        if not clean_target:
+            continue
+
+        if clean_target.startswith('/'):
+            rel_target = clean_target.lstrip('/')
+            candidates = [
+                os.path.join(docs_path, 'en_US', 'public', rel_target),
+                os.path.join(docs_path, 'zh_CN', 'public', rel_target),
+                os.path.join(docs_path, 'public', rel_target),
+                os.path.join(docs_path, rel_target),
+            ]
+            if any(os.path.exists(p) for p in candidates):
+                continue
+            print(f"[MISSING IMAGE] {md_file}: Image target '{target}' does not exist in public directories")
+            success = False
+            continue
+
+        resolved = normalize_path(os.path.join(base_dir, clean_target))
+        if not os.path.exists(resolved):
+            print(f"[MISSING IMAGE] {md_file}: Image target '{target}' does not exist on disk (resolved to: {resolved})")
+            success = False
+
+    # Find all relative markdown links: [text](target)
+    link_matches = re.findall(r'(?<!\!)\[(.*?)\]\((.*?)\)', cleaned_content)
+    for text, target in link_matches:
+        target = target.strip()
+        if not target or target.startswith(('http://', 'https://', '#', 'mailto:', 'tel:', '<')):
+            continue
+        if target.endswith('.html') or '.html#' in target:
+            continue
+        # Strip title attribute if present
+        clean_target = target.split()[0].strip('\'"')
+        clean_target = clean_target.split('#')[0].split('?')[0]
+        if not clean_target:
+            continue
+
+        if clean_target.startswith('/'):
+            rel_target = clean_target.lstrip('/')
+            candidates = [
+                os.path.join(docs_path, 'en_US', rel_target),
+                os.path.join(docs_path, 'zh_CN', rel_target),
+                os.path.join(docs_path, rel_target),
+            ]
+            found = False
+            for p in candidates:
+                if os.path.exists(p) or (not p.endswith('.md') and os.path.exists(p + '.md')):
+                    found = True
+                    break
+            if found:
+                continue
+            print(f"[BROKEN LINK] {md_file}: Root link '{target}' does not exist on disk")
+            success = False
+            continue
+
+        # Check if local file exists
+        resolved = normalize_path(os.path.join(base_dir, clean_target))
+        if not os.path.exists(resolved):
+            # If target didn't have .md, check with .md extension
+            if not resolved.endswith('.md') and os.path.exists(resolved + '.md'):
+                continue
+            print(f"[BROKEN LINK] {md_file}: Relative link '{target}' does not exist on disk (resolved to: {resolved})")
+            success = False
+
+
+def main():
+    global success
+    if len(sys.argv) < 3:
+        print("Usage: directory_check.py <directory_file> <docs_path>")
+        sys.exit(1)
+
+    directory_file = sys.argv[1]
+    docs_path = sys.argv[2]
+
+    # Resolve config file path
+    if os.path.exists(directory_file):
+        config_path = directory_file
+    elif os.path.exists(os.path.join(docs_path, directory_file)):
+        config_path = os.path.join(docs_path, directory_file)
+    else:
+        print(f"Error: directory configuration file '{directory_file}' not found.")
+        sys.exit(1)
+
+    with open(config_path, 'r', encoding='utf-8') as f:
+        config_dict = json.load(f)
+
+    # Verify all files listed in directory.json exist
+    expected_files = []
+    if 'en' in config_dict:
+        expected_files += get_md_files_from_config(config_dict['en'], docs_path, 'en_US')
+    if 'cn' in config_dict:
+        expected_files += get_md_files_from_config(config_dict['cn'], docs_path, 'zh_CN')
+
+    for expected_file in expected_files:
+        if not os.path.exists(expected_file):
+            print(f"[MISSING DOCUMENT] Configured page '{expected_file}' listed in {config_path} does not exist.")
+            success = False
+
+    # Scan all markdown files in docs/en_US
+    scan_root = os.path.join(docs_path, 'en_US')
+    if not os.path.exists(scan_root):
+        scan_root = docs_path
+
+    all_scanned_files = []
+    for root, dirs, files in os.walk(scan_root):
+        # Skip node_modules and .vitepress build artifacts
+        if 'node_modules' in root or '.vitepress' in root or 'dist' in root or 'legacy_backup' in root:
+            continue
+        for file in files:
+            if file.endswith('.md'):
+                all_scanned_files.append(normalize_path(os.path.join(root, file)))
+
+    print(f"Auditing {len(all_scanned_files)} markdown files in {scan_root}...")
+
+    for md_file in all_scanned_files:
+        try:
+            with open(md_file, 'r', encoding='utf-8', errors='replace') as f:
+                content = f.read()
+        except Exception as e:
+            print(f"[READ ERROR] Could not read {md_file}: {e}")
+            success = False
+            continue
+
+        check_forbidden_keywords(md_file, content)
+        check_relative_links_and_images(md_file, content, docs_path)
 
     if not success:
-        sys.exit('No pass!')
+        sys.exit("Directory & link integrity check FAILED! Please resolve the errors above.")
     else:
-        print('Check completed!')
+        print("Directory check completed successfully! (0 forbidden keywords, 0 broken links/images).")
+
+
+if __name__ == '__main__':
+    main()

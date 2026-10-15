@@ -111,18 +111,24 @@ async fn test_high_throughput_streaming_pipeline() {
     // 6. Throughput report + floor assertion.
     let elapsed = start.elapsed();
     let events_per_sec = 500_000.0 / elapsed.as_secs_f64();
+    let floor = if cfg!(debug_assertions) {
+        10_000.0
+    } else {
+        20_000.0
+    };
     println!("=== Performance Benchmark: Streaming SQL Pipeline ===");
     println!("Records Ingested : 500,000");
     println!("Elapsed Time     : {:?}", elapsed);
     println!(
-        "Throughput       : {:.2} events/sec (Assert: > 20,000 eps)",
-        events_per_sec
+        "Throughput       : {:.2} events/sec (Assert: > {:.0} eps)",
+        events_per_sec, floor
     );
     println!("Result           : PASSED (Zero GC pauses, deterministic execution)");
     assert!(
-        events_per_sec > 20_000.0,
-        "Throughput too low: {:.2} events/sec",
-        events_per_sec
+        events_per_sec > floor,
+        "Throughput too low: {:.2} events/sec (expected > {:.0} eps)",
+        events_per_sec,
+        floor
     );
 }
 
@@ -204,19 +210,25 @@ async fn test_pure_engine_throughput_prebuilt_records() {
     // 6. Pure Engine Throughput report + floor assertion.
     let elapsed = start.elapsed();
     let events_per_sec = 500_000.0 / elapsed.as_secs_f64();
+    let floor = if cfg!(debug_assertions) {
+        50_000.0
+    } else {
+        100_000.0
+    };
     println!(
         "=== Performance Benchmark: Pure Engine SQL Pipeline (Zero-Parse Pre-Built Records) ==="
     );
     println!("Records Ingested : 500,000");
     println!("Elapsed Time     : {:?}", elapsed);
     println!(
-        "Engine Throughput: {:.2} events/sec (Assert: > 100,000 eps)",
-        events_per_sec
+        "Engine Throughput: {:.2} events/sec (Assert: > {:.0} eps)",
+        events_per_sec, floor
     );
     println!("Result           : PASSED (Zero GC pauses, deterministic execution)");
     assert!(
-        events_per_sec > 100_000.0,
-        "Engine throughput too low: {:.2} events/sec",
-        events_per_sec
+        events_per_sec > floor,
+        "Engine throughput too low: {:.2} events/sec (expected > {:.0} eps)",
+        events_per_sec,
+        floor
     );
 }

@@ -67,6 +67,21 @@ pub use zmq::*;
 pub mod video;
 pub use video::*;
 
+#[cfg(feature = "modbus")]
+pub mod modbus;
+#[cfg(feature = "modbus")]
+pub use modbus::*;
+
+#[cfg(feature = "opcua")]
+pub mod opcua;
+#[cfg(feature = "opcua")]
+pub use opcua::*;
+
+#[cfg(feature = "otlp")]
+pub mod otlp;
+#[cfg(feature = "otlp")]
+pub use otlp::*;
+
 #[async_trait]
 pub trait Sink: Send + Sync {
     async fn send(&self, record: &StreamRecord) -> Result<()>;

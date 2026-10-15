@@ -10,7 +10,12 @@ In EdgeX Foundry, microservices communicate through an internal message bus (suc
 - **SQL Engine**: Filters, transforms, enriches, and computes aggregates over streaming data.
 - **Sink**: Routes processed alerts and summaries to downstream brokers, databases, REST endpoints, or back to the EdgeX message bus.
 
-![EdgeX Integration Architecture](./arch_light.png)
+```mermaid
+flowchart LR
+    Dev[EdgeX Device Services] -->|Events / Readings| Bus[EdgeX Message Bus (MQTT)]
+    Bus -->|Ingest Stream| Rek[rekuiper Engine]
+    Rek -->|Filtered Alerts| Target[Downstream Sinks / EdgeX Command]
+```
 
 ### Automated Data Type Mapping
 
@@ -241,7 +246,7 @@ ziti edge create service rekuiper-service --configs rekuiper-host-cfg,rekuiper-i
 
 #### 3. Run with Docker Compose
 
-Deploy the zero-trust stack using [deploy/docker/docker-compose-edgex-openziti.yml](../../deploy/docker/docker-compose-edgex-openziti.yml):
+Deploy the zero-trust stack using [deploy/docker/docker-compose-edgex-openziti.yml](../../../deploy/docker/docker-compose-edgex-openziti.yml):
 
 ```shell
 docker-compose -f deploy/docker/docker-compose-edgex-openziti.yml up -d
@@ -251,7 +256,6 @@ Verify that no host ports are bound (`0.0.0.0:*`) while rekuiper remains fully a
 
 ## Cross References
 
-- [Management Web UI](../operation/manager-ui/overview.md)
 - [EdgeX Source Configuration](../guide/sources/builtin/edgex.md)
 - [EdgeX Metadata Functions](edgex_meta.md)
 - [EdgeX Message Bus Sink](../guide/sinks/builtin/edgex.md)

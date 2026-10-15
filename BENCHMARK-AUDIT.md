@@ -144,8 +144,8 @@ pattern at smaller scale (tuned lossless at 20k, lossy at 500k for all).
 
 - `openapi.json` states `x-source-tag: https://github.com/lf-edge/ekuiper/tree/v2.4.1`,
   `x-source-commit: bf8c1258...`, `info.license: Apache 2.0`, `externalDocs` to upstream
-  `docs/en_US/api/restapi`. Derivation from LF Edge eKuiper v2.4.1 is verified in-file.
-  `LICENSE` / `LICENSE-MIT` already retain `Copyright (c) LF Edge eKuiper Contributors`.
+  `docs/en_US/api/restapi`. Derivation from upstream eKuiper v2.4.1 is verified in-file.
+  `LICENSE` / `LICENSE-MIT` already retain upstream contributor copyright notices.
   Added factual `NOTICE` summarizing the above (no legal conclusions).
 - `docs/en_US`, `docs/zh_CN`, `deploy/`, `test/` JMeter/txt fixtures entered in initial
   commit `de1952c` and resemble upstream layout; file-level provenance not re-verified here.
@@ -176,7 +176,7 @@ pattern at smaller scale (tuned lossless at 20k, lossy at 500k for all).
 - No tag, no release, no Docker publish.
 - No revert of concurrent CI test change (`crates/rekuiper-server/tests/fvt_compat.rs` `c90b059` preserved).
 - No product-code tuning; no `cargo clean` beyond existing state (no engine rebuild).
-- No full system cleanup or unrelated changes; healthy `ekuiper-manager-*` stack untouched
+- No full system cleanup or unrelated changes; healthy external dashboard stack untouched
   (benchmark used isolated ports/containers `rk-bench-*-fair`, removed after runs).
 
 ## 9. Validation round (local only, 2026-09-12 HOLD)

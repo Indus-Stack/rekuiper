@@ -57,8 +57,7 @@ Example command and output:
       "website": "https://example.org"
     },
     "helpUrl": {
-      "en_US": "https://github.com/lf-edge/ekuiper/blob/master/docs/en_US/plugins/functions/functions.md",
-      "zh_CN": "https://github.com/lf-edge/ekuiper/blob/master/docs/zh_CN/plugins/functions/functions.md"
+      "en_US": "https://github.com/ankur-paan/rekuiper"
     },
     "description": {
       "en_US": "Sample external services for test only",

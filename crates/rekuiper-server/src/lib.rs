@@ -1,3 +1,4 @@
+pub mod declarative;
 pub mod engine;
 pub mod handlers;
 pub mod routes;
@@ -22,8 +23,24 @@ use std::time::Instant;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 
+#[derive(Debug, Clone, Default)]
+pub struct ServerOptions {
+    pub declarative_path: Option<std::path::PathBuf>,
+    pub declarative_watch: bool,
+}
+
 pub async fn start_server(config: KuiperConfig, version: String) -> Result<()> {
+    start_server_with_options(config, version, ServerOptions::default()).await
+}
+
+pub async fn start_server_with_options(
+    config: KuiperConfig,
+    version: String,
+    options: ServerOptions,
+) -> Result<()> {
     let init_start = Instant::now();
+    let is_declarative = options.declarative_path.is_some();
+
     // Embedded KV persistence (eKuiper `data/sqliteKV.db`): definitions
     // survive daemon restarts and running rules resume automatically.
     let kv: Arc<dyn rekuiper_core::KvStore> =
@@ -34,16 +51,6 @@ pub async fn start_server(config: KuiperConfig, version: String) -> Result<()> {
     let table_manager = TableManager::new_with_kv(kv.clone());
     let schema_manager = SchemaManager::new_with_kv(kv.clone());
     let plugin_manager = PluginManager::new_with_kv(kv.clone());
-
-    stream_manager.load_from_kv(&kv).await?;
-    table_manager.load_from_kv(&kv).await?;
-    rule_manager.load_from_kv(&kv).await?;
-    schema_manager.load_from_kv(&kv).await?;
-    plugin_manager.load_from_kv(&kv).await?;
-    let proto_schemas = schema_manager.load_proto_dir(std::path::Path::new("etc/schemas"));
-    if proto_schemas > 0 {
-        tracing::info!("Loaded {} schemas from etc/schemas", proto_schemas);
-    }
 
     let state = AppState {
         start_time: Instant::now(),
@@ -78,13 +85,36 @@ pub async fn start_server(config: KuiperConfig, version: String) -> Result<()> {
         js_udfs: routes::create_default_js_udfs(),
         latest_import_status: Arc::new(RwLock::new(routes::default_import_status())),
         kv: Some(kv.clone()),
+        declarative_mode: is_declarative,
+        declarative_path: options.declarative_path.clone(),
+        declarative_watch: options.declarative_watch,
+        active_rule_hashes: Arc::new(RwLock::new(HashMap::new())),
+        declarative_reload_failures: Arc::new(std::sync::atomic::AtomicU64::new(0)),
     };
 
-    // Restored connection/source/sink configs must precede rule restore so
-    // resumed rules resolve their CONF_KEYs (brokers, DB URLs) instead of
-    // falling back to loopback defaults with silent zero-delivery.
-    load_config_maps(&state).await?;
-    restore_running_rules(&state).await;
+    if let Some(ref d_path) = options.declarative_path {
+        tracing::info!("Initializing server in Declarative Mode from {:?}", d_path);
+        declarative::reconcile_declarative_path(&state, d_path)
+            .await
+            .map_err(|e| anyhow::anyhow!("Declarative manifest initialization failed: {}", e))?;
+        if options.declarative_watch {
+            declarative::spawn_declarative_watcher(state.clone(), d_path.clone());
+        }
+    } else {
+        state.stream_manager.load_from_kv(&kv).await?;
+        state.table_manager.load_from_kv(&kv).await?;
+        state.rule_manager.load_from_kv(&kv).await?;
+        state.schema_manager.load_from_kv(&kv).await?;
+        state.plugin_manager.load_from_kv(&kv).await?;
+        let proto_schemas = state
+            .schema_manager
+            .load_proto_dir(std::path::Path::new("etc/schemas"));
+        if proto_schemas > 0 {
+            tracing::info!("Loaded {} schemas from etc/schemas", proto_schemas);
+        }
+        load_config_maps(&state).await?;
+        restore_running_rules(&state).await;
+    }
 
     // Dedicated ruletest SSE listener serving the documented
     // `http://<httpServerIp>:<httpServerPort>/test/:id` endpoint. A bind

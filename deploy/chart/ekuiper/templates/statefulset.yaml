@@ -77,6 +77,11 @@ spec:
           items:
           - key: kuiper.yaml
             path: kuiper.yaml
+      {{- if .Values.declarative.enabled }}
+      - name: declarative-pipelines
+        configMap:
+          name: {{ include "ekuiper.fullname" . }}-pipelines
+      {{- end }}
       {{- if .Values.tls.enabled }}
       - name: certs
         secret:
@@ -96,10 +101,16 @@ spec:
           {{- if .Values.containerSecurityContext.enabled }}
           securityContext: {{- omit .Values.containerSecurityContext "enabled" | toYaml | nindent 12 }}
           {{- end }}
-          {{- if .Values.ekuiperEnv.enabled }}
           env:
+          {{- if .Values.ekuiperEnv.enabled }}
           - name: {{ .Values.ekuiperEnv.key.mqttDefaultServer }}
             value: {{ .Values.ekuiperEnv.value.mqttDefaultServer }}
+          {{- end }}
+          {{- if .Values.declarative.enabled }}
+          - name: REKUIPER_DECLARATIVE_PATH
+            value: {{ .Values.declarative.mountPath | quote }}
+          - name: REKUIPER_DECLARATIVE_WATCH
+            value: {{ .Values.declarative.watch | quote }}
           {{- end }}
           command:
           - /bin/sh
@@ -129,6 +140,11 @@ spec:
             mountPath: "/kuiper/data"
           - name: ekuiper-plugins
             mountPath: "/kuiper/plugins"
+          {{- if .Values.declarative.enabled }}
+          - name: declarative-pipelines
+            mountPath: {{ .Values.declarative.mountPath | quote }}
+            readOnly: true
+          {{- end }}
           {{- if .Values.tls.enabled }}
           - name: certs
             mountPath: "/var/kuiper/xyz-rootca.pem"
