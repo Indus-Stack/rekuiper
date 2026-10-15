@@ -125,7 +125,10 @@ impl ModbusFunction {
             "input" | "input_register" | "inputregister" | "fc04" | "4" => {
                 Ok(ModbusFunction::Input)
             }
-            _ => bail!("Unknown Modbus function '{}'; must be coil, discrete, holding, or input", s),
+            _ => bail!(
+                "Unknown Modbus function '{}'; must be coil, discrete, holding, or input",
+                s
+            ),
         }
     }
 
@@ -659,7 +662,9 @@ pub fn decode_register_value(
             let mut s = String::new();
             for &w in raw_words {
                 let (c1, c2) = match byte_order {
-                    ModbusByteOrder::Badc | ModbusByteOrder::Dcba => ((w & 0xFF) as u8, (w >> 8) as u8),
+                    ModbusByteOrder::Badc | ModbusByteOrder::Dcba => {
+                        ((w & 0xFF) as u8, (w >> 8) as u8)
+                    }
                     _ => ((w >> 8) as u8, (w & 0xFF) as u8),
                 };
                 if c1 != 0 {
@@ -700,7 +705,10 @@ impl ModbusClient {
             let s = tokio::time::timeout(self.timeout, TcpStream::connect(&self.endpoint))
                 .await
                 .context("Modbus TCP connect timed out")?
-                .context(format!("Failed to connect to Modbus endpoint {}", self.endpoint))?;
+                .context(format!(
+                    "Failed to connect to Modbus endpoint {}",
+                    self.endpoint
+                ))?;
             let _ = s.set_nodelay(true);
             self.stream = Some(s);
         }
@@ -712,10 +720,7 @@ impl ModbusClient {
     }
 
     /// Dispatches a read request (FC01, FC02, FC03, FC04) and parses the response.
-    pub async fn read_range(
-        &mut self,
-        range: &CoalescedRange,
-    ) -> Result<Vec<u16>> {
+    pub async fn read_range(&mut self, range: &CoalescedRange) -> Result<Vec<u16>> {
         let req_tid = self.tid.fetch_add(1, Ordering::SeqCst);
         let fc = range.function.code();
         let unit_id = range.unit_id;
@@ -961,11 +966,7 @@ pub async fn modbus_read_snapshot(config: &ModbusConfig) -> Result<HashMap<Strin
         .collect::<Result<Vec<_>>>()?;
 
     let coalesced = coalesce_registers(&prep_regs, config.effective_unit_id(), config.max_gap);
-    let mut client = ModbusClient::new(
-        config.endpoint(),
-        config.is_rtu(),
-        config.timeout_ms,
-    );
+    let mut client = ModbusClient::new(config.endpoint(), config.is_rtu(), config.timeout_ms);
 
     let mut record = HashMap::new();
 
@@ -1046,9 +1047,8 @@ impl ModbusSource {
                 self.config.timeout_ms,
             );
 
-            let mut interval = tokio::time::interval(Duration::from_millis(
-                self.config.interval_ms.max(10),
-            ));
+            let mut interval =
+                tokio::time::interval(Duration::from_millis(self.config.interval_ms.max(10)));
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
             while !*cancel_rx.borrow() {
@@ -1072,7 +1072,8 @@ impl ModbusSource {
                                 raw_bytes_read.extend_from_slice(&w.to_be_bytes());
                             }
                             for reg in &range.registers {
-                                let offset = (reg.wire_address.saturating_sub(range.start_address)) as usize;
+                                let offset =
+                                    (reg.wire_address.saturating_sub(range.start_address)) as usize;
                                 let end = offset + reg.word_count as usize;
                                 if end <= words.len() {
                                     let slice = &words[offset..end];
@@ -1121,22 +1122,25 @@ impl ModbusSource {
                         .join(" ");
 
                     let mut err_record = HashMap::new();
-                    err_record.insert(
-                        "__raw_error__".to_string(),
-                        Value::String(combined_err),
-                    );
+                    err_record.insert("__raw_error__".to_string(), Value::String(combined_err));
                     err_record.insert(
                         "__raw_payload__".to_string(),
                         Value::String(format!("raw Modbus bytes: [{}]", raw_hex)),
                     );
 
                     let stream_rec = StreamRecord::new(err_record);
-                    if matches!(self.tx.send(stream_rec).await, Err(rekuiper_core::PublishError::Closed)) {
+                    if matches!(
+                        self.tx.send(stream_rec).await,
+                        Err(rekuiper_core::PublishError::Closed)
+                    ) {
                         break;
                     }
                 } else if !record_map.is_empty() {
                     let stream_rec = StreamRecord::new(record_map);
-                    if matches!(self.tx.send(stream_rec).await, Err(rekuiper_core::PublishError::Closed)) {
+                    if matches!(
+                        self.tx.send(stream_rec).await,
+                        Err(rekuiper_core::PublishError::Closed)
+                    ) {
                         break;
                     }
                 }
@@ -1266,7 +1270,10 @@ impl ModbusSink {
         }
     }
 
-    pub async fn write_record(&self, record: &HashMap<String, Value>) -> Result<(), (bool, String)> {
+    pub async fn write_record(
+        &self,
+        record: &HashMap<String, Value>,
+    ) -> Result<(), (bool, String)> {
         let field_name = self.config.field.as_deref().unwrap_or("value");
         let val = record.get(field_name).or_else(|| record.get("val"));
 
@@ -1280,7 +1287,9 @@ impl ModbusSink {
         let unit_id = self.config.effective_unit_id();
 
         let pdu = if is_coil {
-            let b = val.as_bool().unwrap_or_else(|| val.as_i64().unwrap_or(0) != 0);
+            let b = val
+                .as_bool()
+                .unwrap_or_else(|| val.as_i64().unwrap_or(0) != 0);
             let val_word: u16 = if b { 0xFF00 } else { 0x0000 };
             vec![
                 0x05, // FC05 Write Single Coil
@@ -1291,14 +1300,20 @@ impl ModbusSink {
             ]
         } else {
             // Holding register write (FC06 or FC16)
-            let dt = ModbusDataType::parse(&self.config.data_type).map_err(|e| (true, e.to_string()))?;
+            let dt =
+                ModbusDataType::parse(&self.config.data_type).map_err(|e| (true, e.to_string()))?;
             let bo = ModbusByteOrder::parse(&self.config.byte_order);
 
             match dt {
                 ModbusDataType::Int16 | ModbusDataType::Uint16 => {
-                    let num = val.as_i64().unwrap_or_else(|| val.as_f64().unwrap_or(0.0) as i64) as u16;
+                    let num = val
+                        .as_i64()
+                        .unwrap_or_else(|| val.as_f64().unwrap_or(0.0) as i64)
+                        as u16;
                     let (b0, b1) = match bo {
-                        ModbusByteOrder::Badc | ModbusByteOrder::Dcba => (num as u8, (num >> 8) as u8),
+                        ModbusByteOrder::Badc | ModbusByteOrder::Dcba => {
+                            (num as u8, (num >> 8) as u8)
+                        }
                         _ => ((num >> 8) as u8, num as u8),
                     };
                     vec![0x06, (wire_addr >> 8) as u8, wire_addr as u8, b0, b1]
@@ -1306,7 +1321,13 @@ impl ModbusSink {
                 ModbusDataType::Float32 => {
                     let f = val.as_f64().unwrap_or(0.0) as f32;
                     if !f.is_finite() {
-                        return Err((true, format!("Cannot write non-finite float32 ({:?}) to Modbus register", f)));
+                        return Err((
+                            true,
+                            format!(
+                                "Cannot write non-finite float32 ({:?}) to Modbus register",
+                                f
+                            ),
+                        ));
                     }
                     let be = f.to_be_bytes();
                     let (b0, b1, b2, b3) = match bo {
@@ -1330,7 +1351,10 @@ impl ModbusSink {
                     ]
                 }
                 _ => {
-                    let num = val.as_i64().unwrap_or_else(|| val.as_f64().unwrap_or(0.0) as i64) as u16;
+                    let num = val
+                        .as_i64()
+                        .unwrap_or_else(|| val.as_f64().unwrap_or(0.0) as i64)
+                        as u16;
                     vec![
                         0x06,
                         (wire_addr >> 8) as u8,
@@ -1357,7 +1381,10 @@ impl ModbusSink {
                     let is_permanent = matches!(exc, 0x01..=0x03);
                     return Err((
                         is_permanent,
-                        format!("Modbus write exception {:#04x} at address {}", exc, wire_addr),
+                        format!(
+                            "Modbus write exception {:#04x} at address {}",
+                            exc, wire_addr
+                        ),
                     ));
                 }
                 Ok(())

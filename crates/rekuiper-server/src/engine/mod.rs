@@ -19,8 +19,9 @@ use rekuiper_connectors::codec::extract_required_fields_from_expr_names;
 use rekuiper_connectors::{
     FileSource, FileSourceConfig, HttpPullConfig, HttpPullSource, JsonFieldMask, KafkaConfig,
     KafkaSource, ModbusSource, MqttConfig, MqttSource, OpcUaSource, PayloadFormat, RabbitMqConfig,
-    RabbitMqSource, RedisSubSource, SimulatorConfig, SimulatorSource, SqlConnectorConfig, SqlSource,
-    VideoSource, VideoSourceConfig, WebSocketConfig, WebSocketSource, ZmqSource, ZmqSourceConfig,
+    RabbitMqSource, RedisSubSource, SimulatorConfig, SimulatorSource, SqlConnectorConfig,
+    SqlSource, VideoSource, VideoSourceConfig, WebSocketConfig, WebSocketSource, ZmqSource,
+    ZmqSourceConfig,
 };
 use rekuiper_core::model::{RuleStatus, StreamField, StreamRecord};
 use rekuiper_core::{
@@ -1717,8 +1718,13 @@ pub(crate) fn spawn_rule_task(
         tokio::spawn(async move {
             let mut rx = rx;
             while let Some(mut record) = rx.recv().await {
-                if schema_dlq.on_error == OnErrorPolicy::Dlq || schema_dlq.on_error == OnErrorPolicy::Halt {
-                    match rekuiper_core::model::enforce_stream_schema_checked(&mut record.data, &fields) {
+                if schema_dlq.on_error == OnErrorPolicy::Dlq
+                    || schema_dlq.on_error == OnErrorPolicy::Halt
+                {
+                    match rekuiper_core::model::enforce_stream_schema_checked(
+                        &mut record.data,
+                        &fields,
+                    ) {
                         Ok(()) => {
                             if tx.send(record).await.is_err() {
                                 break;
@@ -1775,8 +1781,13 @@ pub(crate) fn spawn_rule_task(
                 tokio::spawn(async move {
                     let mut rx = jrx;
                     while let Some(mut record) = rx.recv().await {
-                        if join_dlq.on_error == OnErrorPolicy::Dlq || join_dlq.on_error == OnErrorPolicy::Halt {
-                            match rekuiper_core::model::enforce_stream_schema_checked(&mut record.data, &join_fields) {
+                        if join_dlq.on_error == OnErrorPolicy::Dlq
+                            || join_dlq.on_error == OnErrorPolicy::Halt
+                        {
+                            match rekuiper_core::model::enforce_stream_schema_checked(
+                                &mut record.data,
+                                &join_fields,
+                            ) {
                                 Ok(()) => {
                                     if tx.send(record).await.is_err() {
                                         break;
@@ -1788,7 +1799,10 @@ pub(crate) fn spawn_rule_task(
                                         rekuiper_core::model::DlqStage::SchemaValidation,
                                         err.to_string(),
                                         payload_str.as_deref(),
-                                        Some(serde_json::to_value(&record.data).unwrap_or(Value::Null)),
+                                        Some(
+                                            serde_json::to_value(&record.data)
+                                                .unwrap_or(Value::Null),
+                                        ),
                                         None,
                                     );
                                     if join_dlq.on_error == OnErrorPolicy::Halt {
@@ -1797,7 +1811,10 @@ pub(crate) fn spawn_rule_task(
                                 }
                             }
                         } else {
-                            rekuiper_core::model::enforce_stream_schema(&mut record.data, &join_fields);
+                            rekuiper_core::model::enforce_stream_schema(
+                                &mut record.data,
+                                &join_fields,
+                            );
                             if tx.send(record).await.is_err() {
                                 break;
                             }
@@ -2776,7 +2793,10 @@ pub(crate) fn resolve_modbus_options(
         .map(|(_, v)| v.trim())
         .filter(|s| !s.is_empty())
     {
-        config.interval_ms = rekuiper_connectors::simulator::parse_interval_ms(&Value::String(iv.to_string())).as_millis().max(1) as u64;
+        config.interval_ms =
+            rekuiper_connectors::simulator::parse_interval_ms(&Value::String(iv.to_string()))
+                .as_millis()
+                .max(1) as u64;
     }
     if let Some(to) = options
         .iter()
@@ -2787,14 +2807,18 @@ pub(crate) fn resolve_modbus_options(
     }
     if let Some(ab) = options
         .iter()
-        .find(|(k, _)| k.eq_ignore_ascii_case("ADDRESS_BASE") || k.eq_ignore_ascii_case("ADDRESSBASE"))
+        .find(|(k, _)| {
+            k.eq_ignore_ascii_case("ADDRESS_BASE") || k.eq_ignore_ascii_case("ADDRESSBASE")
+        })
         .and_then(|(_, v)| v.trim().parse::<u16>().ok())
     {
         config.address_base = Some(ab);
     }
     if let Some(plc) = options
         .iter()
-        .find(|(k, _)| k.eq_ignore_ascii_case("PLC_ADDRESSING") || k.eq_ignore_ascii_case("PLCADDRESSING"))
+        .find(|(k, _)| {
+            k.eq_ignore_ascii_case("PLC_ADDRESSING") || k.eq_ignore_ascii_case("PLCADDRESSING")
+        })
         .map(|(_, v)| v.trim().eq_ignore_ascii_case("true") || v.trim() == "1")
     {
         config.plc_addressing = plc;
@@ -2894,7 +2918,10 @@ pub(crate) fn resolve_opcua_options(
         .map(|(_, v)| v.trim())
         .filter(|s| !s.is_empty())
     {
-        config.interval_ms = rekuiper_connectors::simulator::parse_interval_ms(&Value::String(iv.to_string())).as_millis().max(1) as u64;
+        config.interval_ms =
+            rekuiper_connectors::simulator::parse_interval_ms(&Value::String(iv.to_string()))
+                .as_millis()
+                .max(1) as u64;
     }
     if let Some(to) = options
         .iter()
@@ -2905,7 +2932,9 @@ pub(crate) fn resolve_opcua_options(
     }
     if let Some(sp) = options
         .iter()
-        .find(|(k, _)| k.eq_ignore_ascii_case("SECURITY_POLICY") || k.eq_ignore_ascii_case("SECURITYPOLICY"))
+        .find(|(k, _)| {
+            k.eq_ignore_ascii_case("SECURITY_POLICY") || k.eq_ignore_ascii_case("SECURITYPOLICY")
+        })
         .map(|(_, v)| v.trim())
         .filter(|s| !s.is_empty())
     {
@@ -3002,7 +3031,11 @@ pub(crate) fn resolve_otlp_options(
     }
     if let Some(ep) = options
         .iter()
-        .find(|(k, _)| k.eq_ignore_ascii_case("ENDPOINT") || k.eq_ignore_ascii_case("BIND") || k.eq_ignore_ascii_case("SERVER"))
+        .find(|(k, _)| {
+            k.eq_ignore_ascii_case("ENDPOINT")
+                || k.eq_ignore_ascii_case("BIND")
+                || k.eq_ignore_ascii_case("SERVER")
+        })
         .map(|(_, v)| v.trim().to_string())
         .filter(|s| !s.is_empty())
     {

@@ -1209,7 +1209,10 @@ pub fn interpolate_env_vars(raw: &str, allow_unresolved: bool) -> Result<String,
                 } else if allow_unresolved {
                     result.push_str(mat.as_str());
                 } else {
-                    unresolved.push(format!("Unresolved environment variable: ${{{}}}", var_name));
+                    unresolved.push(format!(
+                        "Unresolved environment variable: ${{{}}}",
+                        var_name
+                    ));
                     result.push_str(mat.as_str());
                 }
             }
@@ -1250,8 +1253,8 @@ impl DeclarativeManifest {
         ext_or_format: &str,
         allow_unresolved_env: bool,
     ) -> Result<Self, String> {
-        let interpolated = interpolate_env_vars(content, allow_unresolved_env)
-            .map_err(|errs| errs.join("; "))?;
+        let interpolated =
+            interpolate_env_vars(content, allow_unresolved_env).map_err(|errs| errs.join("; "))?;
         let format_lower = ext_or_format.trim_start_matches('.').to_lowercase();
         if format_lower == "toml" {
             toml::from_str::<DeclarativeManifest>(&interpolated)
@@ -1291,10 +1294,7 @@ impl DeclarativeManifest {
                     }]);
                 }
             };
-            let ext = path
-                .extension()
-                .and_then(|s| s.to_str())
-                .unwrap_or("yaml");
+            let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("yaml");
             match Self::from_str(&content, ext, allow_unresolved_env) {
                 Ok(m) => Ok(m),
                 Err(err) => Err(vec![ValidationDiagnostic {
@@ -1311,7 +1311,10 @@ impl DeclarativeManifest {
                 level: DiagnosticLevel::Error,
                 entity_type: "manifest".to_string(),
                 entity_id: path.to_string_lossy().to_string(),
-                message: format!("Manifest path is neither file nor directory: {}", path.display()),
+                message: format!(
+                    "Manifest path is neither file nor directory: {}",
+                    path.display()
+                ),
             }])
         }
     }
@@ -1508,7 +1511,10 @@ impl DeclarativeManifest {
 
         combined.rules = DeclarativeRules::Map(combined_rules_map);
 
-        if diagnostics.iter().any(|d| d.level == DiagnosticLevel::Error) {
+        if diagnostics
+            .iter()
+            .any(|d| d.level == DiagnosticLevel::Error)
+        {
             Err(diagnostics)
         } else {
             Ok(combined)
@@ -1610,7 +1616,10 @@ mod schema_tests {
         data_null.insert("temp".to_string(), Value::from(35.0f64));
         enforce_stream_schema(&mut data_null, &fields);
         assert_eq!(data_null.get("id"), Some(&Value::from(999i64)));
-        assert_eq!(data_null.get("status"), Some(&Value::String("idle".to_string())));
+        assert_eq!(
+            data_null.get("status"),
+            Some(&Value::String("idle".to_string()))
+        );
         assert_eq!(data_null.get("temp"), Some(&Value::from(35.0f64)));
     }
 
@@ -1665,4 +1674,3 @@ rules:
         assert_eq!(rules_map["r1"].sql, "SELECT * FROM s1");
     }
 }
-

@@ -154,7 +154,8 @@ impl DlqRouter {
                 if let Err(e) = ext.dispatch(&envelope).await {
                     tracing::warn!(
                         "[RULE {}] External DLQ dispatch failed: {}. Not re-entering DLQ.",
-                        rid, e
+                        rid,
+                        e
                     );
                     c.inc_dlq_sink_failures();
                 }
@@ -187,7 +188,8 @@ impl DlqRouter {
     ) -> Self {
         let on_error = OnErrorPolicy::from_options(rule_options);
         let dlq_opt = rule_options.and_then(|o| o.get("dlq"));
-        let (capacity, include_raw_payload, ext_action) = if let Some(Value::Object(map)) = dlq_opt {
+        let (capacity, include_raw_payload, ext_action) = if let Some(Value::Object(map)) = dlq_opt
+        {
             let cap = map
                 .get("bufferCapacity")
                 .or_else(|| map.get("buffer_capacity"))
@@ -261,4 +263,3 @@ impl DlqRouter {
         }
     }
 }
-

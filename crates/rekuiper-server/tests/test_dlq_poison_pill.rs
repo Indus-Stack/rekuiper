@@ -104,9 +104,15 @@ async fn test_dlq_codec_decode_poison_pill() {
     assert_eq!(stats.get("total_errors").and_then(|v| v.as_u64()), Some(1));
     assert_eq!(stats.get("codec_decode").and_then(|v| v.as_u64()), Some(1));
 
-    let recent = stats.get("recent_errors").and_then(|v| v.as_array()).unwrap();
+    let recent = stats
+        .get("recent_errors")
+        .and_then(|v| v.as_array())
+        .unwrap();
     assert_eq!(recent.len(), 1);
-    assert_eq!(recent[0].get("stage").and_then(|v| v.as_str()), Some("CodecDecode"));
+    assert_eq!(
+        recent[0].get("stage").and_then(|v| v.as_str()),
+        Some("CodecDecode")
+    );
     assert_eq!(
         recent[0].get("raw_payload").and_then(|v| v.as_str()),
         Some("{bad_json: missing_quotes}")
@@ -181,12 +187,25 @@ async fn test_dlq_schema_validation_poison_pill() {
     let stats: serde_json::Value = resp.json().await.unwrap();
 
     assert_eq!(stats.get("total_errors").and_then(|v| v.as_u64()), Some(1));
-    assert_eq!(stats.get("schema_validation").and_then(|v| v.as_u64()), Some(1));
+    assert_eq!(
+        stats.get("schema_validation").and_then(|v| v.as_u64()),
+        Some(1)
+    );
 
-    let recent = stats.get("recent_errors").and_then(|v| v.as_array()).unwrap();
+    let recent = stats
+        .get("recent_errors")
+        .and_then(|v| v.as_array())
+        .unwrap();
     assert_eq!(recent.len(), 1);
-    assert_eq!(recent[0].get("stage").and_then(|v| v.as_str()), Some("SchemaValidation"));
-    assert!(recent[0].get("error").and_then(|v| v.as_str()).unwrap().contains("bigint"));
+    assert_eq!(
+        recent[0].get("stage").and_then(|v| v.as_str()),
+        Some("SchemaValidation")
+    );
+    assert!(recent[0]
+        .get("error")
+        .and_then(|v| v.as_str())
+        .unwrap()
+        .contains("bigint"));
 }
 
 #[tokio::test]
@@ -246,9 +265,15 @@ async fn test_dlq_sql_eval_poison_pill() {
     assert_eq!(stats.get("total_errors").and_then(|v| v.as_u64()), Some(1));
     assert_eq!(stats.get("sql_eval").and_then(|v| v.as_u64()), Some(1));
 
-    let recent = stats.get("recent_errors").and_then(|v| v.as_array()).unwrap();
+    let recent = stats
+        .get("recent_errors")
+        .and_then(|v| v.as_array())
+        .unwrap();
     assert_eq!(recent.len(), 1);
-    assert_eq!(recent[0].get("stage").and_then(|v| v.as_str()), Some("SqlEval"));
+    assert_eq!(
+        recent[0].get("stage").and_then(|v| v.as_str()),
+        Some("SqlEval")
+    );
     assert!(recent[0].get("tuple").is_some());
 }
 
@@ -313,8 +338,14 @@ async fn test_dlq_raw_payload_capping() {
         .unwrap();
     let stats: serde_json::Value = resp.json().await.unwrap();
 
-    let recent = stats.get("recent_errors").and_then(|v| v.as_array()).unwrap();
-    let raw = recent[0].get("raw_payload").and_then(|v| v.as_str()).unwrap();
+    let recent = stats
+        .get("recent_errors")
+        .and_then(|v| v.as_array())
+        .unwrap();
+    let raw = recent[0]
+        .get("raw_payload")
+        .and_then(|v| v.as_str())
+        .unwrap();
 
     assert!(raw.len() <= MAX_DLQ_RAW_PAYLOAD_BYTES);
     assert!(raw.ends_with("…[truncated]"));
@@ -395,9 +426,18 @@ async fn test_dlq_sink_delivery_http_4xx_permanent_error() {
     let stats: serde_json::Value = resp.json().await.unwrap();
 
     assert_eq!(stats.get("sink_delivery").and_then(|v| v.as_u64()), Some(1));
-    let recent = stats.get("recent_errors").and_then(|v| v.as_array()).unwrap();
-    assert_eq!(recent[0].get("stage").and_then(|v| v.as_str()), Some("SinkDelivery"));
-    assert_eq!(recent[0].get("sink_type").and_then(|v| v.as_str()), Some("rest"));
+    let recent = stats
+        .get("recent_errors")
+        .and_then(|v| v.as_array())
+        .unwrap();
+    assert_eq!(
+        recent[0].get("stage").and_then(|v| v.as_str()),
+        Some("SinkDelivery")
+    );
+    assert_eq!(
+        recent[0].get("sink_type").and_then(|v| v.as_str()),
+        Some("rest")
+    );
 }
 
 #[tokio::test]
@@ -454,8 +494,14 @@ async fn test_dlq_on_error_halt() {
     assert_eq!(resp.status(), reqwest::StatusCode::OK);
     let status: serde_json::Value = resp.json().await.unwrap();
 
-    assert_eq!(status.get("status").and_then(|v| v.as_str()), Some("stopped"));
-    let last_exc = status.get("last_exception").and_then(|v| v.as_str()).unwrap_or("");
+    assert_eq!(
+        status.get("status").and_then(|v| v.as_str()),
+        Some("stopped")
+    );
+    let last_exc = status
+        .get("last_exception")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
     assert!(
         last_exc.contains("call func abs error") || last_exc.contains("alias: v"),
         "Unexpected status message: {}",
@@ -508,7 +554,14 @@ async fn test_dlq_clear_api_and_declarative_allowlist() {
         .await
         .unwrap();
     let stats: serde_json::Value = resp.json().await.unwrap();
-    assert_eq!(stats.get("recent_errors").and_then(|v| v.as_array()).unwrap().len(), 1);
+    assert_eq!(
+        stats
+            .get("recent_errors")
+            .and_then(|v| v.as_array())
+            .unwrap()
+            .len(),
+        1
+    );
 
     // Clear errors
     let resp = client
@@ -526,17 +579,25 @@ async fn test_dlq_clear_api_and_declarative_allowlist() {
         .unwrap();
     let stats: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(stats.get("total_errors").and_then(|v| v.as_u64()), Some(1));
-    assert_eq!(stats.get("recent_errors").and_then(|v| v.as_array()).unwrap().len(), 0);
+    assert_eq!(
+        stats
+            .get("recent_errors")
+            .and_then(|v| v.as_array())
+            .unwrap()
+            .len(),
+        0
+    );
 
     // 2. Test declarative mode allows DELETE /rules/:id/errors
     let (decl_url, _handle, state_decl) = spawn_test_server(true).await;
-    let _ = state_decl.rule_manager.create_rule(
-        rekuiper_core::RuleDefinition {
+    let _ = state_decl
+        .rule_manager
+        .create_rule(rekuiper_core::RuleDefinition {
             id: "r_decl".to_string(),
             sql: "SELECT 1".to_string(),
             ..Default::default()
-        },
-    ).await;
+        })
+        .await;
 
     let resp = client
         .delete(format!("{}/rules/r_decl/errors", decl_url))

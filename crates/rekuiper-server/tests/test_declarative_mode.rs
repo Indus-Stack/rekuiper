@@ -16,7 +16,11 @@ struct TempDir(PathBuf);
 impl TempDir {
     fn new(name: &str) -> Self {
         let mut p = std::env::temp_dir();
-        p.push(format!("rekuiper_decl_test_{}_{}", name, uuid::Uuid::new_v4()));
+        p.push(format!(
+            "rekuiper_decl_test_{}_{}",
+            name,
+            uuid::Uuid::new_v4()
+        ));
         let _ = fs::create_dir_all(&p);
         Self(p)
     }

@@ -92,7 +92,11 @@ pub(crate) async fn handle_runtime_error(
         let stg = stage.unwrap_or(rekuiper_core::model::DlqStage::SqlEval);
         let tuple_val = record_data.and_then(|d| serde_json::to_value(d).ok());
         let raw_str = record_data
-            .and_then(|d| d.get("__raw_payload__").and_then(|v| v.as_str()).map(|s| s.to_string()))
+            .and_then(|d| {
+                d.get("__raw_payload__")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+            })
             .or_else(|| record_data.and_then(|d| serde_json::to_string(d).ok()));
         dlq.route_error(stg, err_msg.clone(), raw_str.as_deref(), tuple_val, None);
     } else {
@@ -360,7 +364,8 @@ pub(crate) async fn run_stateless_rule(
                             Some(rekuiper_core::model::DlqStage::CodecDecode),
                             Some(&record.data),
                             Some(&dlq_router),
-                        ).await;
+                        )
+                        .await;
                         if dlq_router.on_error == crate::engine::dlq::OnErrorPolicy::Halt {
                             return;
                         }
@@ -412,7 +417,8 @@ pub(crate) async fn run_stateless_rule(
                                 Some(rekuiper_core::model::DlqStage::SqlEval),
                                 Some(&record.data),
                                 Some(&dlq_router),
-                            ).await;
+                            )
+                            .await;
                             if dlq_router.on_error == crate::engine::dlq::OnErrorPolicy::Halt {
                                 return;
                             }

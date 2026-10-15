@@ -341,9 +341,11 @@ pub async fn declarative_reload_handler(
 
     if let Some(ref path) = state.declarative_path {
         match crate::declarative::reconcile_declarative_path(&state, path).await {
-            Ok(report) => {
-                (axum::http::StatusCode::OK, axum::Json(serde_json::json!(report))).into_response()
-            }
+            Ok(report) => (
+                axum::http::StatusCode::OK,
+                axum::Json(serde_json::json!(report)),
+            )
+                .into_response(),
             Err(e) => {
                 state
                     .declarative_reload_failures
@@ -376,4 +378,3 @@ pub async fn ui_handler() -> impl axum::response::IntoResponse {
         include_str!("ui.html"),
     )
 }
-

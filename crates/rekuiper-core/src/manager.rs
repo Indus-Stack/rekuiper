@@ -820,11 +820,11 @@ impl RuleManager {
         Ok(())
     }
 
-    pub fn dlq_buffer(
-        &self,
-        id: &str,
-    ) -> Option<Arc<RwLock<VecDeque<DlqEnvelope>>>> {
-        self.rules.read().get(id).map(|r| r.read().dlq_buffer.clone())
+    pub fn dlq_buffer(&self, id: &str) -> Option<Arc<RwLock<VecDeque<DlqEnvelope>>>> {
+        self.rules
+            .read()
+            .get(id)
+            .map(|r| r.read().dlq_buffer.clone())
     }
 
     pub fn get_rule_dlq(&self, id: &str) -> Option<Vec<DlqEnvelope>> {
@@ -858,7 +858,8 @@ impl RuleManager {
             rule_id: id.to_string(),
             total_errors: counters.dlq_records.load(Relaxed),
             codec_decode: counters.dlq_stages[DlqStage::CodecDecode as usize].load(Relaxed),
-            schema_validation: counters.dlq_stages[DlqStage::SchemaValidation as usize].load(Relaxed),
+            schema_validation: counters.dlq_stages[DlqStage::SchemaValidation as usize]
+                .load(Relaxed),
             sql_eval: counters.dlq_stages[DlqStage::SqlEval as usize].load(Relaxed),
             data_template: counters.dlq_stages[DlqStage::DataTemplate as usize].load(Relaxed),
             sink_delivery: counters.dlq_stages[DlqStage::SinkDelivery as usize].load(Relaxed),

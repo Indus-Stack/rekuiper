@@ -348,7 +348,9 @@ async fn test_modbus_tcp_snapshot_and_decoding() {
         ..Default::default()
     };
 
-    let snapshot = modbus_read_snapshot(&config).await.expect("snapshot read failed");
+    let snapshot = modbus_read_snapshot(&config)
+        .await
+        .expect("snapshot read failed");
     assert!(snapshot.contains_key("temp"));
     assert!(snapshot.contains_key("speed"));
 
@@ -434,7 +436,9 @@ async fn test_opcua_snapshot_and_decoding() {
         ..Default::default()
     };
 
-    let snapshot = opcua_read_snapshot(&config).await.expect("opcua snapshot failed");
+    let snapshot = opcua_read_snapshot(&config)
+        .await
+        .expect("opcua snapshot failed");
     assert!(snapshot.contains_key("temp"));
     let temp = snapshot.get("temp").unwrap().as_f64().unwrap();
     assert!((temp - 36.6).abs() < 0.01);

@@ -814,13 +814,12 @@ pub async fn run_cli() -> Result<()> {
                     p,
                     allow_unresolved_env,
                 ) {
-                    Ok(manifest) => {
-                        match rekuiper_sql::validator::validate_manifest(&manifest) {
-                            Ok(summary) => {
-                                if is_json_output {
-                                    println!("{}", serde_json::to_string_pretty(&summary).unwrap());
-                                } else {
-                                    println!(
+                    Ok(manifest) => match rekuiper_sql::validator::validate_manifest(&manifest) {
+                        Ok(summary) => {
+                            if is_json_output {
+                                println!("{}", serde_json::to_string_pretty(&summary).unwrap());
+                            } else {
+                                println!(
                                         "✔ Validated manifest '{}': {} stream(s), {} table(s), {} rule(s), {} connection(s)",
                                         entity_type,
                                         summary.streams_count,
@@ -828,30 +827,26 @@ pub async fn run_cli() -> Result<()> {
                                         summary.rules_count,
                                         summary.connections_count
                                     );
-                                    println!("0 errors found.");
-                                }
-                                std::process::exit(0);
+                                println!("0 errors found.");
                             }
-                            Err(diagnostics) => {
-                                if is_json_output {
-                                    println!(
-                                        "{}",
-                                        serde_json::to_string_pretty(&diagnostics).unwrap()
-                                    );
-                                } else {
-                                    eprintln!(
-                                        "Validation failed for '{}' with {} error(s):",
-                                        entity_type,
-                                        diagnostics.len()
-                                    );
-                                    for d in &diagnostics {
-                                        eprintln!("{}", d);
-                                    }
-                                }
-                                std::process::exit(1);
-                            }
+                            std::process::exit(0);
                         }
-                    }
+                        Err(diagnostics) => {
+                            if is_json_output {
+                                println!("{}", serde_json::to_string_pretty(&diagnostics).unwrap());
+                            } else {
+                                eprintln!(
+                                    "Validation failed for '{}' with {} error(s):",
+                                    entity_type,
+                                    diagnostics.len()
+                                );
+                                for d in &diagnostics {
+                                    eprintln!("{}", d);
+                                }
+                            }
+                            std::process::exit(1);
+                        }
+                    },
                     Err(diagnostics) => {
                         if is_json_output {
                             println!("{}", serde_json::to_string_pretty(&diagnostics).unwrap());
@@ -990,7 +985,11 @@ pub async fn run_cli() -> Result<()> {
                 println!("{}", text);
             }
         }
-        Commands::Top { interval, once, rule } => {
+        Commands::Top {
+            interval,
+            once,
+            rule,
+        } => {
             execute_top(&client, base_url, interval, once, rule).await?;
         }
     }
@@ -1095,16 +1094,28 @@ async fn render_top_frame(
     let mut running_rules = 0usize;
 
     for r in &rules_arr {
-        total_in += r.get("records_in_total").and_then(|v| v.as_u64()).unwrap_or(0);
-        total_out += r.get("records_out_total").and_then(|v| v.as_u64()).unwrap_or(0);
-        total_filter += r.get("records_filtered_total").and_then(|v| v.as_u64()).unwrap_or(0);
+        total_in += r
+            .get("records_in_total")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        total_out += r
+            .get("records_out_total")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        total_filter += r
+            .get("records_filtered_total")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
         total_dlq += r.get("dlq_total").and_then(|v| v.as_u64()).unwrap_or(0);
         if r.get("status").and_then(|v| v.as_str()) == Some("running") {
             running_rules += 1;
         }
     }
 
-    println!("\x1b[1;36m=== rekuiper top ===\x1b[0m \x1b[1m{}\x1b[0m {}", base_url, decl_badge);
+    println!(
+        "\x1b[1;36m=== rekuiper top ===\x1b[0m \x1b[1m{}\x1b[0m {}",
+        base_url, decl_badge
+    );
     println!(
         "Rules: \x1b[1m{}/{}\x1b[0m running | Streams: \x1b[1m{}\x1b[0m | Tables: \x1b[1m{}\x1b[0m",
         running_rules,
@@ -1146,11 +1157,17 @@ async fn render_top_frame(
             println!("\x1b[1mDLQ Stages Breakdown:\x1b[0m");
             println!(
                 "  Codec Decode:      {}",
-                stages.get("codec_decode").and_then(|v| v.as_u64()).unwrap_or(0)
+                stages
+                    .get("codec_decode")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0)
             );
             println!(
                 "  Schema Validation: {}",
-                stages.get("schema_validation").and_then(|v| v.as_u64()).unwrap_or(0)
+                stages
+                    .get("schema_validation")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0)
             );
             println!(
                 "  SQL Evaluation:    {}",
@@ -1158,19 +1175,31 @@ async fn render_top_frame(
             );
             println!(
                 "  Data Template:     {}",
-                stages.get("data_template").and_then(|v| v.as_u64()).unwrap_or(0)
+                stages
+                    .get("data_template")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0)
             );
             println!(
                 "  Sink Delivery:     {}",
-                stages.get("sink_delivery").and_then(|v| v.as_u64()).unwrap_or(0)
+                stages
+                    .get("sink_delivery")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0)
             );
         }
 
         if let Some(recent) = errors_val.get("recent").and_then(|v| v.as_array()) {
             if !recent.is_empty() {
-                println!("\n\x1b[1;31mRecent Poison-Pill Errors ({}) :\x1b[0m", recent.len());
+                println!(
+                    "\n\x1b[1;31mRecent Poison-Pill Errors ({}) :\x1b[0m",
+                    recent.len()
+                );
                 for (idx, err) in recent.iter().take(5).enumerate() {
-                    let stage = err.get("stage").and_then(|v| v.as_str()).unwrap_or("Unknown");
+                    let stage = err
+                        .get("stage")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("Unknown");
                     let msg = err.get("error").and_then(|v| v.as_str()).unwrap_or("");
                     println!("  {}. [{}] {}", idx + 1, stage, msg);
                     if let Some(payload) = err.get("raw_payload").and_then(|v| v.as_str()) {
@@ -1178,7 +1207,9 @@ async fn render_top_frame(
                     }
                 }
             } else {
-                println!("\n\x1b[32mNo active DLQ poison-pill errors recorded for this rule.\x1b[0m");
+                println!(
+                    "\n\x1b[32mNo active DLQ poison-pill errors recorded for this rule.\x1b[0m"
+                );
             }
         }
     } else {
@@ -1193,18 +1224,36 @@ async fn render_top_frame(
         } else {
             for r in &rules_arr {
                 let id = r.get("id").and_then(|v| v.as_str()).unwrap_or("-");
-                let status = r.get("status").and_then(|v| v.as_str()).unwrap_or("stopped");
+                let status = r
+                    .get("status")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("stopped");
                 let status_color = if status == "running" {
                     "\x1b[32mrunning\x1b[0m"
                 } else {
                     "\x1b[33mstopped\x1b[0m"
                 };
-                let in_c = r.get("records_in_total").and_then(|v| v.as_u64()).unwrap_or(0);
-                let out_c = r.get("records_out_total").and_then(|v| v.as_u64()).unwrap_or(0);
-                let filtered = r.get("records_filtered_total").and_then(|v| v.as_u64()).unwrap_or(0);
-                let exceptions = r.get("exceptions_total").and_then(|v| v.as_u64()).unwrap_or(0);
+                let in_c = r
+                    .get("records_in_total")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0);
+                let out_c = r
+                    .get("records_out_total")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0);
+                let filtered = r
+                    .get("records_filtered_total")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0);
+                let exceptions = r
+                    .get("exceptions_total")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0);
                 let dlq = r.get("dlq_total").and_then(|v| v.as_u64()).unwrap_or(0);
-                let cache = r.get("sink_cache_count").and_then(|v| v.as_u64()).unwrap_or(0);
+                let cache = r
+                    .get("sink_cache_count")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0);
 
                 let dlq_str = if dlq > 0 {
                     format!("\x1b[1;31m{:>8}\x1b[0m", dlq)

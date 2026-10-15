@@ -599,7 +599,6 @@ pub async fn push_stream_data(
             .into_response();
     }
 
-
     // Resolve the stream handle once per request
     let sender = state.stream_bus.get_or_create(&name);
     if records.is_empty() {
@@ -923,7 +922,8 @@ pub async fn push_otlp_data(
             if let Some(def) = state.stream_manager.get_stream(&name) {
                 if def.options.iter().any(|(k, v)| {
                     k.eq_ignore_ascii_case("TYPE")
-                        && (v.eq_ignore_ascii_case("otlp") || v.eq_ignore_ascii_case("opentelemetry"))
+                        && (v.eq_ignore_ascii_case("otlp")
+                            || v.eq_ignore_ascii_case("opentelemetry"))
                 }) {
                     return name;
                 }
@@ -965,7 +965,9 @@ pub async fn push_otlp_data(
                 "__raw_payload__".to_string(),
                 json!(String::from_utf8_lossy(&body_bytes).to_string()),
             );
-            let _ = stream_tx.send(rekuiper_core::model::StreamRecord::new(err_data)).await;
+            let _ = stream_tx
+                .send(rekuiper_core::model::StreamRecord::new(err_data))
+                .await;
 
             (
                 StatusCode::BAD_REQUEST,

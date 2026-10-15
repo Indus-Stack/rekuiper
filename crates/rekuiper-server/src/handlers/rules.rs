@@ -239,10 +239,7 @@ pub async fn get_all_rule_status(State(state): State<AppState>) -> impl IntoResp
     Json(all)
 }
 
-pub async fn get_rule_errors(
-    State(state): State<AppState>,
-    Path(name): Path<String>,
-) -> Response {
+pub async fn get_rule_errors(State(state): State<AppState>, Path(name): Path<String>) -> Response {
     if let Err(resp) = check_valid_name(&name) {
         return resp;
     }

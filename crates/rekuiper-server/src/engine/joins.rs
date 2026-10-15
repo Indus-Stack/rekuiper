@@ -1,6 +1,4 @@
-use crate::engine::{
-    resolve_modbus_table_config, resolve_opcua_table_config, resolve_redis_addr,
-};
+use crate::engine::{resolve_modbus_table_config, resolve_opcua_table_config, resolve_redis_addr};
 use parking_lot::RwLock;
 use rekuiper_connectors::SqlConnectorConfig;
 use rekuiper_core::TableManager;
@@ -223,7 +221,9 @@ pub(crate) async fn lookup_candidates(
         };
     }
     if table_type.eq_ignore_ascii_case("modbus") {
-        if let Some(config) = resolve_modbus_table_config(table_manager, source_configs, &join.target) {
+        if let Some(config) =
+            resolve_modbus_table_config(table_manager, source_configs, &join.target)
+        {
             return match rekuiper_connectors::modbus_read_snapshot(&config).await {
                 Ok(row) => vec![row],
                 Err(e) => {
@@ -238,7 +238,9 @@ pub(crate) async fn lookup_candidates(
         || table_type.eq_ignore_ascii_case("opc_ua")
         || table_type.eq_ignore_ascii_case("opc-ua")
     {
-        if let Some(config) = resolve_opcua_table_config(table_manager, source_configs, &join.target) {
+        if let Some(config) =
+            resolve_opcua_table_config(table_manager, source_configs, &join.target)
+        {
             return match rekuiper_connectors::opcua_read_snapshot(&config).await {
                 Ok(row) => vec![row],
                 Err(e) => {

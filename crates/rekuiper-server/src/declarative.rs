@@ -1,7 +1,9 @@
 use crate::engine::spawn_rule_task;
 use crate::handlers::streams::to_stream_fields;
 use crate::state::AppState;
-use rekuiper_core::model::{DeclarativeManifest, RuleDefinition, StreamDefinition, TableDefinition};
+use rekuiper_core::model::{
+    DeclarativeManifest, RuleDefinition, StreamDefinition, TableDefinition,
+};
 use rekuiper_sql::parser::Parser;
 use rekuiper_sql::validator::validate_manifest;
 use serde::{Deserialize, Serialize};
@@ -49,10 +51,7 @@ impl Default for ReconcileReport {
 /// 3. Referenced table DDLs
 /// 4. Referenced connection configurations
 /// 5. Referenced schemas
-pub fn compute_rule_effective_hash(
-    rule: &RuleDefinition,
-    manifest: &DeclarativeManifest,
-) -> u64 {
+pub fn compute_rule_effective_hash(rule: &RuleDefinition, manifest: &DeclarativeManifest) -> u64 {
     let mut hasher = DefaultHasher::new();
 
     // 1. Rule definition
@@ -126,7 +125,11 @@ pub async fn reconcile_manifest(
     // Step A: Pure offline validation before touching any running state
     let _summary = validate_manifest(manifest).map_err(|diagnostics| {
         let msgs: Vec<String> = diagnostics.into_iter().map(|d| d.to_string()).collect();
-        format!("Manifest validation failed with {} error(s):\n{}", msgs.len(), msgs.join("\n"))
+        format!(
+            "Manifest validation failed with {} error(s):\n{}",
+            msgs.len(),
+            msgs.join("\n")
+        )
     })?;
 
     let mut report = ReconcileReport::default();
@@ -141,7 +144,10 @@ pub async fn reconcile_manifest(
 
     // Step C: Reconcile Schemas
     for schema_def in manifest.schemas.values() {
-        let _ = state.schema_manager.register_schema(schema_def.clone()).await;
+        let _ = state
+            .schema_manager
+            .register_schema(schema_def.clone())
+            .await;
     }
 
     // Step D: Reconcile Streams
@@ -230,7 +236,12 @@ pub async fn reconcile_manifest(
         .into_rules_map()
         .map_err(|e| format!("Failed to parse rules from manifest: {}", e))?;
 
-    let existing_rule_ids: Vec<String> = state.rule_manager.list_rules().into_iter().map(|r| r.id).collect();
+    let existing_rule_ids: Vec<String> = state
+        .rule_manager
+        .list_rules()
+        .into_iter()
+        .map(|r| r.id)
+        .collect();
 
     for (rule_id, rule_def) in &incoming_rules {
         let effective_hash = compute_rule_effective_hash(rule_def, manifest);
@@ -305,7 +316,11 @@ pub async fn reconcile_declarative_path(
 ) -> Result<ReconcileReport, String> {
     let manifest = DeclarativeManifest::load_from_path(path, false).map_err(|diagnostics| {
         let msgs: Vec<String> = diagnostics.into_iter().map(|d| d.to_string()).collect();
-        format!("Failed to load manifest at {:?}:\n{}", path, msgs.join("\n"))
+        format!(
+            "Failed to load manifest at {:?}:\n{}",
+            path,
+            msgs.join("\n")
+        )
     })?;
 
     reconcile_manifest(state, &manifest).await
@@ -326,7 +341,8 @@ pub fn compute_path_fingerprint(path: &Path) -> u64 {
         }
     } else if path.is_dir() {
         if let Ok(entries) = std::fs::read_dir(path) {
-            let mut files: Vec<PathBuf> = entries.filter_map(|e| e.ok().map(|x| x.path())).collect();
+            let mut files: Vec<PathBuf> =
+                entries.filter_map(|e| e.ok().map(|x| x.path())).collect();
             files.sort();
             for f in files {
                 if let Some(ext) = f.extension().and_then(|s| s.to_str()) {

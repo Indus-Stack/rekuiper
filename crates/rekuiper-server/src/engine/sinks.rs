@@ -877,8 +877,9 @@ pub(crate) fn prepare_actions(
                     }
                 }
                 "modbus" => {
-                    match serde_json::from_value::<rekuiper_connectors::ModbusSinkConfig>(opts.clone())
-                    {
+                    match serde_json::from_value::<rekuiper_connectors::ModbusSinkConfig>(
+                        opts.clone(),
+                    ) {
                         Ok(config) => {
                             let common_opts = parse_common_opts(opts, rule_send_nil_field, true);
                             out.push(PreparedAction::Modbus {
@@ -892,8 +893,9 @@ pub(crate) fn prepare_actions(
                     }
                 }
                 "opcua" | "opc_ua" | "opc-ua" => {
-                    match serde_json::from_value::<rekuiper_connectors::OpcUaSinkConfig>(opts.clone())
-                    {
+                    match serde_json::from_value::<rekuiper_connectors::OpcUaSinkConfig>(
+                        opts.clone(),
+                    ) {
                         Ok(config) => {
                             let common_opts = parse_common_opts(opts, rule_send_nil_field, true);
                             out.push(PreparedAction::OpcUa {
@@ -907,8 +909,9 @@ pub(crate) fn prepare_actions(
                     }
                 }
                 "otlp" => {
-                    match serde_json::from_value::<rekuiper_connectors::OtlpSinkConfig>(opts.clone())
-                    {
+                    match serde_json::from_value::<rekuiper_connectors::OtlpSinkConfig>(
+                        opts.clone(),
+                    ) {
                         Ok(config) => {
                             let common_opts = parse_common_opts(opts, rule_send_nil_field, true);
                             out.push(PreparedAction::Otlp {
@@ -2438,13 +2441,15 @@ pub(crate) async fn send_action(
                 for row in arr {
                     if let Value::Object(m) = format_record_for_sink_val(row, opts) {
                         let map: HashMap<String, Value> = m.into_iter().collect();
-                        sink.write_record(&map).await.map_err(|(is_perm, err_str)| {
-                            if is_perm {
-                                SendError::Permanent(err_str)
-                            } else {
-                                SendError::Retry(err_str)
-                            }
-                        })?;
+                        sink.write_record(&map)
+                            .await
+                            .map_err(|(is_perm, err_str)| {
+                                if is_perm {
+                                    SendError::Permanent(err_str)
+                                } else {
+                                    SendError::Retry(err_str)
+                                }
+                            })?;
                     }
                 }
                 Ok(())
@@ -2471,13 +2476,15 @@ pub(crate) async fn send_action(
                 for row in arr {
                     if let Value::Object(m) = format_record_for_sink_val(row, opts) {
                         let map: HashMap<String, Value> = m.into_iter().collect();
-                        sink.write_record(&map).await.map_err(|(is_perm, err_str)| {
-                            if is_perm {
-                                SendError::Permanent(err_str)
-                            } else {
-                                SendError::Retry(err_str)
-                            }
-                        })?;
+                        sink.write_record(&map)
+                            .await
+                            .map_err(|(is_perm, err_str)| {
+                                if is_perm {
+                                    SendError::Permanent(err_str)
+                                } else {
+                                    SendError::Retry(err_str)
+                                }
+                            })?;
                     }
                 }
                 Ok(())
@@ -2504,13 +2511,15 @@ pub(crate) async fn send_action(
                 for row in arr {
                     if let Value::Object(m) = format_record_for_sink_val(row, opts) {
                         let map: HashMap<String, Value> = m.into_iter().collect();
-                        sink.write_record(&map).await.map_err(|(is_perm, err_str)| {
-                            if is_perm {
-                                SendError::Permanent(err_str)
-                            } else {
-                                SendError::Retry(err_str)
-                            }
-                        })?;
+                        sink.write_record(&map)
+                            .await
+                            .map_err(|(is_perm, err_str)| {
+                                if is_perm {
+                                    SendError::Permanent(err_str)
+                                } else {
+                                    SendError::Retry(err_str)
+                                }
+                            })?;
                     }
                 }
                 Ok(())
@@ -2648,7 +2657,10 @@ pub(crate) async fn deliver_record(
                                     stage,
                                     err_msg,
                                     payload_str.as_deref(),
-                                    Some(serde_json::to_value(&batch_record.data).unwrap_or(Value::Null)),
+                                    Some(
+                                        serde_json::to_value(&batch_record.data)
+                                            .unwrap_or(Value::Null),
+                                    ),
                                     Some(sink_type),
                                 );
                             }

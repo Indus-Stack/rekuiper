@@ -197,24 +197,36 @@ impl OpcUaNodeId {
 
     pub fn to_string_repr(&self) -> String {
         match self {
-            OpcUaNodeId::Numeric { namespace, identifier } => {
+            OpcUaNodeId::Numeric {
+                namespace,
+                identifier,
+            } => {
                 if *namespace == 0 {
                     format!("i={}", identifier)
                 } else {
                     format!("ns={};i={}", namespace, identifier)
                 }
             }
-            OpcUaNodeId::String { namespace, identifier } => {
+            OpcUaNodeId::String {
+                namespace,
+                identifier,
+            } => {
                 if *namespace == 0 {
                     format!("s={}", identifier)
                 } else {
                     format!("ns={};s={}", namespace, identifier)
                 }
             }
-            OpcUaNodeId::Guid { namespace, identifier } => {
+            OpcUaNodeId::Guid {
+                namespace,
+                identifier,
+            } => {
                 format!("ns={};g={}", namespace, identifier)
             }
-            OpcUaNodeId::Opaque { namespace, identifier } => {
+            OpcUaNodeId::Opaque {
+                namespace,
+                identifier,
+            } => {
                 format!("ns={};b={:?}", namespace, identifier)
             }
         }
@@ -367,12 +379,9 @@ impl OpcUaClient {
             if &ack_header[0..3] != b"ACK" {
                 bail!("Expected OPC UA ACK response, got {:?}", &ack_header[0..3]);
             }
-            let ack_len = u32::from_le_bytes([
-                ack_header[4],
-                ack_header[5],
-                ack_header[6],
-                ack_header[7],
-            ]) as usize;
+            let ack_len =
+                u32::from_le_bytes([ack_header[4], ack_header[5], ack_header[6], ack_header[7]])
+                    as usize;
             if ack_len > 8 {
                 let mut ack_body = vec![0u8; ack_len - 8];
                 stream.read_exact(&mut ack_body).await?;
@@ -430,7 +439,10 @@ impl OpcUaClient {
             let mut opn_resp_header = [0u8; 8];
             stream.read_exact(&mut opn_resp_header).await?;
             if &opn_resp_header[0..3] != b"OPN" {
-                bail!("Expected OPC UA OPN response, got {:?}", &opn_resp_header[0..3]);
+                bail!(
+                    "Expected OPC UA OPN response, got {:?}",
+                    &opn_resp_header[0..3]
+                );
             }
             let resp_len = u32::from_le_bytes([
                 opn_resp_header[4],
@@ -504,7 +516,10 @@ impl OpcUaClient {
             for m in nodes {
                 let parsed = OpcUaNodeId::parse(&m.node_id);
                 match parsed {
-                    OpcUaNodeId::Numeric { namespace, identifier } => {
+                    OpcUaNodeId::Numeric {
+                        namespace,
+                        identifier,
+                    } => {
                         if namespace == 0 && identifier <= 255 {
                             body.push(0x00); // TwoByte
                             body.push(identifier as u8);
@@ -518,7 +533,10 @@ impl OpcUaClient {
                             body.extend_from_slice(&identifier.to_le_bytes());
                         }
                     }
-                    OpcUaNodeId::String { namespace, identifier } => {
+                    OpcUaNodeId::String {
+                        namespace,
+                        identifier,
+                    } => {
                         body.push(0x03); // String
                         body.extend_from_slice(&namespace.to_le_bytes());
                         let bytes = identifier.as_bytes();
@@ -530,7 +548,10 @@ impl OpcUaClient {
                         body.extend_from_slice(&namespace.to_le_bytes());
                         body.extend_from_slice(&[0u8; 16]);
                     }
-                    OpcUaNodeId::Opaque { namespace, identifier } => {
+                    OpcUaNodeId::Opaque {
+                        namespace,
+                        identifier,
+                    } => {
                         body.push(0x05); // ByteString
                         body.extend_from_slice(&namespace.to_le_bytes());
                         body.extend_from_slice(&(identifier.len() as u32).to_le_bytes());
@@ -601,7 +622,9 @@ impl OpcUaClient {
         let node_id = OpcUaNodeId::parse(node_id_str);
 
         let fut = async {
-            self.ensure_connected().await.map_err(|e| (false, e.to_string()))?;
+            self.ensure_connected()
+                .await
+                .map_err(|e| (false, e.to_string()))?;
             let req_handle = self.request_handle.fetch_add(1, Ordering::SeqCst);
             let seq_num = self.sequence_number.fetch_add(1, Ordering::SeqCst);
             let chan_id = self.channel_id;
@@ -630,7 +653,10 @@ impl OpcUaClient {
 
             // WriteValue: NodeId
             match &node_id {
-                OpcUaNodeId::Numeric { namespace, identifier } => {
+                OpcUaNodeId::Numeric {
+                    namespace,
+                    identifier,
+                } => {
                     if *namespace == 0 && *identifier <= 255 {
                         body.push(0x00);
                         body.push(*identifier as u8);
@@ -644,7 +670,10 @@ impl OpcUaClient {
                         body.extend_from_slice(&identifier.to_le_bytes());
                     }
                 }
-                OpcUaNodeId::String { namespace, identifier } => {
+                OpcUaNodeId::String {
+                    namespace,
+                    identifier,
+                } => {
                     body.push(0x03);
                     body.extend_from_slice(&namespace.to_le_bytes());
                     let bytes = identifier.as_bytes();
@@ -676,7 +705,10 @@ impl OpcUaClient {
                         body.extend_from_slice(&(i as i32).to_le_bytes());
                     } else if let Some(f) = n.as_f64() {
                         if !f.is_finite() {
-                            return Err((true, format!("Cannot write non-finite float ({:?}) to OPC UA node", f)));
+                            return Err((
+                                true,
+                                format!("Cannot write non-finite float ({:?}) to OPC UA node", f),
+                            ));
                         }
                         body.push(0x0B); // Double (Variant Type 11)
                         body.extend_from_slice(&f.to_le_bytes());
@@ -703,11 +735,17 @@ impl OpcUaClient {
             msg.extend_from_slice(&body);
 
             let stream = self.stream.as_mut().unwrap();
-            stream.write_all(&msg).await.map_err(|e| (false, e.to_string()))?;
+            stream
+                .write_all(&msg)
+                .await
+                .map_err(|e| (false, e.to_string()))?;
 
             // Read WriteResponse
             let mut resp_header = [0u8; 8];
-            stream.read_exact(&mut resp_header).await.map_err(|e| (false, e.to_string()))?;
+            stream
+                .read_exact(&mut resp_header)
+                .await
+                .map_err(|e| (false, e.to_string()))?;
             let resp_len = u32::from_le_bytes([
                 resp_header[4],
                 resp_header[5],
@@ -715,7 +753,10 @@ impl OpcUaClient {
                 resp_header[7],
             ]) as usize;
             let mut resp_body = vec![0u8; resp_len - 8];
-            stream.read_exact(&mut resp_body).await.map_err(|e| (false, e.to_string()))?;
+            stream
+                .read_exact(&mut resp_body)
+                .await
+                .map_err(|e| (false, e.to_string()))?;
 
             // Parse StatusCode result: 0 = Good
             if resp_body.len() >= 8 {
@@ -852,9 +893,8 @@ fn parse_read_response(
                 0x08 => {
                     // Int64
                     if r.len() >= 8 {
-                        let v = i64::from_le_bytes([
-                            r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7],
-                        ]);
+                        let v =
+                            i64::from_le_bytes([r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7]]);
                         r = &r[8..];
                         OpcUaVariant::Int64(v)
                     } else {
@@ -874,9 +914,8 @@ fn parse_read_response(
                 0x0B => {
                     // Double
                     if r.len() >= 8 {
-                        let v = f64::from_le_bytes([
-                            r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7],
-                        ]);
+                        let v =
+                            f64::from_le_bytes([r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7]]);
                         r = &r[8..];
                         OpcUaVariant::Double(v)
                     } else {
@@ -941,15 +980,9 @@ pub async fn opcua_read_snapshot(config: &OpcUaConfig) -> Result<HashMap<String,
             Ok(val) => {
                 record.insert(name.clone(), val);
                 if config.include_metadata {
-                    record.insert(
-                        format!("{}_status_code", name),
-                        json!(dv.status_code),
-                    );
+                    record.insert(format!("{}_status_code", name), json!(dv.status_code));
                     if let Some(ts) = dv.source_timestamp {
-                        record.insert(
-                            format!("{}_source_timestamp", name),
-                            json!(ts),
-                        );
+                        record.insert(format!("{}_source_timestamp", name), json!(ts));
                     }
                 }
             }
@@ -1021,10 +1054,8 @@ impl OpcUaSource {
                         if !decode_errors.is_empty() {
                             let combined_err = decode_errors.join("; ");
                             let mut err_rec = HashMap::new();
-                            err_rec.insert(
-                                "__raw_error__".to_string(),
-                                Value::String(combined_err),
-                            );
+                            err_rec
+                                .insert("__raw_error__".to_string(), Value::String(combined_err));
                             err_rec.insert(
                                 "__raw_payload__".to_string(),
                                 Value::String(format!(
@@ -1038,12 +1069,18 @@ impl OpcUaSource {
                                 )),
                             );
                             let stream_rec = StreamRecord::new(err_rec);
-                            if matches!(self.tx.send(stream_rec).await, Err(rekuiper_core::PublishError::Closed)) {
+                            if matches!(
+                                self.tx.send(stream_rec).await,
+                                Err(rekuiper_core::PublishError::Closed)
+                            ) {
                                 break;
                             }
                         } else if !record.is_empty() {
                             let stream_rec = StreamRecord::new(record);
-                            if matches!(self.tx.send(stream_rec).await, Err(rekuiper_core::PublishError::Closed)) {
+                            if matches!(
+                                self.tx.send(stream_rec).await,
+                                Err(rekuiper_core::PublishError::Closed)
+                            ) {
                                 break;
                             }
                         }
@@ -1136,7 +1173,10 @@ impl OpcUaSink {
         }
     }
 
-    pub async fn write_record(&self, record: &HashMap<String, Value>) -> Result<(), (bool, String)> {
+    pub async fn write_record(
+        &self,
+        record: &HashMap<String, Value>,
+    ) -> Result<(), (bool, String)> {
         let field_name = self.config.field.as_deref().unwrap_or("value");
         let val = record.get(field_name).or_else(|| record.get("val"));
 
@@ -1157,7 +1197,10 @@ mod tests {
     fn test_node_id_parsing() {
         let n1 = OpcUaNodeId::parse("ns=2;s=Channel1.Device1.SpindleSpeed");
         match n1 {
-            OpcUaNodeId::String { namespace, identifier } => {
+            OpcUaNodeId::String {
+                namespace,
+                identifier,
+            } => {
                 assert_eq!(namespace, 2);
                 assert_eq!(identifier, "Channel1.Device1.SpindleSpeed");
             }
@@ -1166,7 +1209,10 @@ mod tests {
 
         let n2 = OpcUaNodeId::parse("ns=3;i=1004");
         match n2 {
-            OpcUaNodeId::Numeric { namespace, identifier } => {
+            OpcUaNodeId::Numeric {
+                namespace,
+                identifier,
+            } => {
                 assert_eq!(namespace, 3);
                 assert_eq!(identifier, 1004);
             }
@@ -1175,7 +1221,10 @@ mod tests {
 
         let n3 = OpcUaNodeId::parse("i=2258");
         match n3 {
-            OpcUaNodeId::Numeric { namespace, identifier } => {
+            OpcUaNodeId::Numeric {
+                namespace,
+                identifier,
+            } => {
                 assert_eq!(namespace, 0);
                 assert_eq!(identifier, 2258);
             }

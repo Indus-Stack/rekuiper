@@ -177,7 +177,8 @@ async fn test_modbus_stream_sql_rule_execution() {
             "function": "holding",
             "dataType": "uint16"
         }
-    ]).to_string();
+    ])
+    .to_string();
 
     let create_stream_sql = format!(
         "CREATE STREAM modbus_in () WITH (TYPE=\"modbus\", ENDPOINT=\"127.0.0.1:{}\", INTERVAL=\"50ms\", REGISTERS='{}')",
@@ -222,7 +223,11 @@ async fn test_modbus_stream_sql_rule_execution() {
         .expect("timed out waiting for modbus rule output")
         .expect("channel closed");
 
-    let double_temp = rec.data.get("double_temp").and_then(|v| v.as_f64()).unwrap();
+    let double_temp = rec
+        .data
+        .get("double_temp")
+        .and_then(|v| v.as_f64())
+        .unwrap();
     // 25.5 * 2 = 51.0
     assert!((double_temp - 51.0).abs() < 0.01);
 
@@ -289,7 +294,9 @@ async fn test_modbus_sink_exception_routes_to_dlq() {
     let in_tx = state.stream_bus.get_or_create("in_stream");
     let mut data = std::collections::HashMap::new();
     data.insert("val".to_string(), json!(123));
-    let _ = in_tx.send(rekuiper_core::model::StreamRecord::new(data)).await;
+    let _ = in_tx
+        .send(rekuiper_core::model::StreamRecord::new(data))
+        .await;
 
     // Wait for DLQ record
     let dlq_rec = tokio::time::timeout(tokio::time::Duration::from_secs(3), dlq_rx.recv())
@@ -300,7 +307,11 @@ async fn test_modbus_sink_exception_routes_to_dlq() {
     let stage = dlq_rec.data.get("stage").and_then(|v| v.as_str()).unwrap();
     assert_eq!(stage, "SinkDelivery");
 
-    let sink_type = dlq_rec.data.get("sink_type").and_then(|v| v.as_str()).unwrap();
+    let sink_type = dlq_rec
+        .data
+        .get("sink_type")
+        .and_then(|v| v.as_str())
+        .unwrap();
     assert_eq!(sink_type, "modbus");
 
     let error_msg = dlq_rec.data.get("error").and_then(|v| v.as_str()).unwrap();
@@ -442,7 +453,8 @@ async fn test_opcua_stream_and_sink_rule_execution() {
             "name": "temperature",
             "nodeId": "ns=2;s=Temperature"
         }
-    ]).to_string();
+    ])
+    .to_string();
 
     let create_stream_sql = format!(
         "CREATE STREAM opcua_in () WITH (TYPE=\"opcua\", ENDPOINT=\"opc.tcp://127.0.0.1:{}\", INTERVAL=\"50ms\", NODES='{}')",
@@ -485,7 +497,11 @@ async fn test_opcua_stream_and_sink_rule_execution() {
         .expect("timed out waiting for opcua rule output")
         .expect("channel closed");
 
-    let adjusted = rec.data.get("adjusted_temp").and_then(|v| v.as_f64()).unwrap();
+    let adjusted = rec
+        .data
+        .get("adjusted_temp")
+        .and_then(|v| v.as_f64())
+        .unwrap();
     // 45.0 + 5.0 = 50.0
     assert!((adjusted - 50.0).abs() < 0.01);
 }
@@ -504,7 +520,8 @@ async fn test_modbus_table_lookup_join() {
             "dataType": "float32",
             "byteOrder": "ABCD"
         }
-    ]).to_string();
+    ])
+    .to_string();
 
     // 1. Create source stream
     let resp = client
@@ -558,7 +575,9 @@ async fn test_modbus_table_lookup_join() {
     let in_tx = state.stream_bus.get_or_create("sensor_stream");
     let mut data = std::collections::HashMap::new();
     data.insert("device".to_string(), json!("sensor1"));
-    let _ = in_tx.send(rekuiper_core::model::StreamRecord::new(data)).await;
+    let _ = in_tx
+        .send(rekuiper_core::model::StreamRecord::new(data))
+        .await;
 
     // Receive joined record
     let out_rec = tokio::time::timeout(tokio::time::Duration::from_secs(3), out_rx.recv())
@@ -566,6 +585,10 @@ async fn test_modbus_table_lookup_join() {
         .expect("timed out waiting for join output")
         .expect("channel closed");
 
-    let temp = out_rec.data.get("modbus_temp").and_then(|v| v.as_f64()).unwrap();
+    let temp = out_rec
+        .data
+        .get("modbus_temp")
+        .and_then(|v| v.as_f64())
+        .unwrap();
     assert!((temp - 25.5).abs() < 0.01);
 }

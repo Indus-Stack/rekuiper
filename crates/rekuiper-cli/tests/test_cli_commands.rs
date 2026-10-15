@@ -348,9 +348,7 @@ fn test_cli_issue31_subcommands_and_defaults() {
     ]);
     match cli.command {
         Commands::Validate {
-            entity_type,
-            args,
-            ..
+            entity_type, args, ..
         } => {
             assert_eq!(entity_type, "rule");
             assert_eq!(args, vec!["{\"id\":\"r1\",\"sql\":\"SELECT 1\"}"]);
@@ -483,7 +481,11 @@ fn test_cli_errors_and_dlq_alias() {
 fn test_cli_top_command_parsing() {
     let cli = parse(&["rekuiper", "top", "--once"]);
     match cli.command {
-        Commands::Top { interval, once, rule } => {
+        Commands::Top {
+            interval,
+            once,
+            rule,
+        } => {
             assert_eq!(interval, 1000);
             assert!(once);
             assert!(rule.is_none());
@@ -493,7 +495,11 @@ fn test_cli_top_command_parsing() {
 
     let cli = parse(&["rekuiper", "top", "--interval", "500", "--rule", "rule_cpu"]);
     match cli.command {
-        Commands::Top { interval, once, rule } => {
+        Commands::Top {
+            interval,
+            once,
+            rule,
+        } => {
             assert_eq!(interval, 500);
             assert!(!once);
             assert_eq!(rule.as_deref(), Some("rule_cpu"));
