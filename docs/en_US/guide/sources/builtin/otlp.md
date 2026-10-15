@@ -84,13 +84,13 @@ All incoming OTLP batches (`resourceMetrics`, `resourceLogs`, `resourceSpans`) a
 | `resource` | object | Resource attributes map. |
 | `attributes` | object | Span attributes map. |
 
-## ProtoJSON Specification Compatibility
+## ProtoJSON Numeric Fields
 
-According to the official OpenTelemetry ProtoJSON specification, 64-bit integer fields (`timeUnixNano`, `startTimeUnixNano`, `endTimeUnixNano`, and `asInt`) are encoded as JSON string literals (e.g. `"asInt": "100"`) by official OpenTelemetry Collectors and SDKs.
+The OpenTelemetry ProtoJSON specification encodes 64-bit integer fields as JSON string values. Examples are `timeUnixNano` and `asInt`.
 
-rekuiper automatically accepts **both** stringified numbers (`"42"`) and native numeric JSON literals (`42`) seamlessly without requiring pre-transformation.
+rekuiper accepts numeric values formatted as strings (`"42"`) and as JSON numbers (`42`).
 
-## Anomaly Detection & Stream Processing Examples
+## Stream Processing Examples
 
 ### High CPU Metric Anomaly Detection
 
@@ -105,7 +105,7 @@ GROUP BY resource->service.name, name, TumblingWindow(ss, 10)
 HAVING avg_cpu > 0.85
 ```
 
-### Error Log Aggregation & Alerting
+### Error Log Aggregation and Alerts
 
 ```sql
 SELECT
@@ -119,9 +119,9 @@ GROUP BY resource->service.name, severity_text, body, SlidingWindow(ss, 30)
 HAVING error_count >= 5
 ```
 
-## Dead-Letter Queue (DLQ) & Poison-Pill Routing
+## Dead-Letter Queue (DLQ) Integration
 
-When an invalid or malformed payload is submitted to `POST /v1/{metrics,logs,traces}` or the standalone OTLP listener:
-1. An HTTP `400 Bad Request` is returned to the client.
-2. If any running rule uses `onError: "dlq"`, a synthetic error envelope (`{"__raw_error__": "...", "__raw_payload__": "..."}`) is emitted to the target stream.
-3. The rule engine intercepts this record and stores it in the Dead-Letter Queue under `DlqStage::CodecDecode`.
+When a client sends an invalid payload to `POST /v1/{metrics,logs,traces}` or the dedicated OTLP listener:
+1. The server returns HTTP `400 Bad Request`.
+2. If an active rule uses `onError: "dlq"`, the engine creates an error record.
+3. The engine stores the error record in the dead-letter queue under `DlqStage::CodecDecode`.

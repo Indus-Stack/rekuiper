@@ -1,13 +1,13 @@
-# Declarative GitOps & Config-as-Code Mode
+# Declarative GitOps Mode
 
-Platform engineers managing fleet deployments (Kubernetes, NixOS, Balena, Ansible) require infrastructure and stream processing pipelines to be version-controlled, reproducible, and verifiable in CI/CD before deployment.
+Declarative GitOps mode lets you manage stream processing pipelines with configuration files.
 
-rekuiper provides first-class support for **Declarative GitOps Mode**:
-- Define all streams, tables, rules, connections, and schemas in version-controlled YAML, TOML, or JSON manifests.
-- Validate pipelines 100% offline in CI using `rekuiper validate`.
-- Run rekuiper daemon in locked-down, read-only declarative mode (`--declarative <PATH>`).
-- Automatically hot-reload pipelines on file updates (`--watch`), SIGHUP, or `POST /declarative/reload` without disrupting healthy running rules.
-- Maintain secrets security via environment variable expansion (`${VAR}` and `${VAR:-default}`).
+Key capabilities:
+- Define streams, tables, rules, connections, and schemas in YAML, TOML, or JSON manifest files.
+- Validate pipelines offline before deployment with `rekuiper validate`.
+- Run the rekuiper daemon in read-only declarative mode with `--declarative <PATH>`.
+- Reload pipelines automatically on file changes with `--watch`, `SIGHUP`, or `POST /declarative/reload`.
+- Use environment variables (`${VAR}` and `${VAR:-default}`) for configuration values.
 
 ---
 
@@ -40,14 +40,14 @@ Validation failed for 'pipelines.yaml' with 1 error(s):
 
 ## 2. Daemon Configuration
 
-To launch rekuiper in Declarative Mode, pass the `--declarative` flag or set the `REKUIPER_DECLARATIVE_PATH` environment variable.
+To start rekuiper in declarative mode, pass the `--declarative` option or set `REKUIPER_DECLARATIVE_PATH`.
 
 ### Command-Line Arguments
 
-| Flag | Environment Variable | Default | Description |
+| Option | Environment Variable | Default | Description |
 | :--- | :--- | :--- | :--- |
-| `--declarative <PATH>` | `REKUIPER_DECLARATIVE_PATH` | *None* | Path to a manifest file (`pipelines.yaml`) or directory (`pipelines.d/`). Enables declarative mode. |
-| `--watch` | `REKUIPER_DECLARATIVE_WATCH` | `false` | Enable background filesystem polling (1s interval) for atomic hot-reload. |
+| `--declarative <PATH>` | `REKUIPER_DECLARATIVE_PATH` | None | Path to a manifest file or directory. Activates declarative mode. |
+| `--watch` | `REKUIPER_DECLARATIVE_WATCH` | `false` | Monitor files and reload configuration when files change. |
 
 ### Example Startup
 
@@ -125,47 +125,41 @@ When pointing `--declarative` to a directory:
 
 ---
 
-## 4. Read-Only Mutation Guard (Control-Plane Immutability)
+## 4. Read-Only Mode (Mutation Guard)
 
-When running with `--declarative`, rekuiper enforces strict immutability across all control-plane APIs to prevent state drift between the Git repository and the running instance.
+When running with `--declarative`, rekuiper activates a read-only mode to prevent configuration drift.
 
-### Allowlist Enforcement
+### Permitted Requests
 
 | Request | Behavior in Declarative Mode |
 | :--- | :--- |
-| `GET`, `HEAD`, `OPTIONS` | **Allowed** (read-only inspection of status, metrics, streams, rules). |
-| `POST /declarative/reload` | **Allowed** (triggers explicit re-reading and reconciliation of manifests). |
-| `POST /data/*`, `PUT /data/*` | **Allowed** (data ingestion plane for HTTP push sources). |
-| `POST /ruletest*` | **Allowed** (ephemeral interactive rule testing). |
-| All other `POST`, `PUT`, `PATCH`, `DELETE` | **Blocked with HTTP 403 Forbidden** (`{"error": "read_only_declarative_mode"}`). |
-
-This guarantees that ad-hoc REST mutations cannot tamper with pipelines in production.
+| `GET`, `HEAD`, `OPTIONS` | Permitted (read-only inspection of status, metrics, streams, and rules). |
+| `POST /declarative/reload` | Permitted (re-reads and reloads manifest files). |
+| `POST /v1/*`, `POST /data/*` | Permitted (telemetry and data ingestion). |
+| `POST /ruletest*` | Permitted (temporary interactive rule testing). |
+| Other `POST`, `PUT`, `PATCH`, `DELETE` | Blocked with HTTP 403 Forbidden (`{"error": "read_only_declarative_mode"}`). |
 
 ---
 
-## 5. Non-Disruptive Hot Reload & Smart Diffing
+## 5. Reloading Pipelines
 
-Pipelines can be reloaded dynamically at runtime:
-1. **Filesystem Watcher (`--watch`)**: Detects file updates, atomic editor saves (`rename` / inode swaps), and Kubernetes ConfigMap symlink updates (`..data`).
-2. **SIGHUP Signal**: Send `kill -HUP <PID>` to trigger an immediate reload.
-3. **HTTP Webhook**: Send `POST http://<host>:9081/declarative/reload`.
+Reload pipelines at runtime:
+1. **File Monitor (`--watch`)**: Detects file changes automatically.
+2. **SIGHUP Signal**: Send `kill -HUP <PID>` to trigger a reload.
+3. **HTTP Webhook**: Send a `POST` request to `http://<host>:9081/declarative/reload`.
 
-### Transitive Dependency Hashing
+### Rule Reconciliation
 
-rekuiper calculates a composite content hash for each rule:
+During a reload:
+- **Unchanged rules**: Rules without changes continue running without interruption.
+- **Modified rules**: Only rules with changed definitions are restarted.
+- **Removed rules**: Rules removed from the manifest are stopped.
+- **New rules**: Newly added rules are started.
 
-$$\text{RuleEffectiveHash} = \text{Hash}\big(\text{RuleDef} \parallel \text{ReferencedStreamDDLs} \parallel \text{ReferencedTableDDLs} \parallel \text{ReferencedConnections} \parallel \text{ReferencedSchemas}\big)$$
+### Error Handling
 
-During reload:
-- **Unchanged rules**: If a rule definition and all its upstream streams, tables, connections, and schemas are identical, **the running task actor is left untouched**. In-flight state and accumulators continue processing without disruption.
-- **Modified rules**: Only rules whose effective hash changed are cleanly restarted.
-- **Deleted rules**: Rules removed from the manifest are stopped and unpersisted.
-- **New rules**: Added rules are compiled and started immediately.
-
-### Atomic Failure Handling
-
-If a modified manifest contains invalid SQL, broken YAML syntax, or referential integrity errors:
-- The reload is **atomically aborted**.
-- The existing running rules remain active and undisturbed.
-- Prometheus counter `rekuiper_declarative_reload_failures_total` is incremented.
-- `POST /declarative/reload` returns `HTTP 400 Bad Request` with detailed validation diagnostics.
+If a manifest contains syntax errors or invalid SQL:
+- The reload operation stops immediately.
+- Currently running rules continue to run.
+- The engine increments the Prometheus counter `rekuiper_declarative_reload_failures_total`.
+- The reload endpoint returns HTTP 400 Bad Request with error diagnostics.

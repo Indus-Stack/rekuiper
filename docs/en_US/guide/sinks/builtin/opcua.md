@@ -1,6 +1,6 @@
 # OPC-UA Action
 
-The OPC-UA action writes values to variable nodes on external OPC-UA servers using standard binary `opc.tcp://` connections.
+The OPC-UA action writes values to variable nodes on OPC-UA servers through `opc.tcp://` connections.
 
 ## Properties
 
@@ -15,7 +15,7 @@ The OPC-UA action writes values to variable nodes on external OPC-UA servers usi
 
 Other common sink properties are supported. Refer to [sink common properties](../overview.md#common-properties) for more information.
 
-## Closed-Loop Actuation Example
+## Example
 
 ```json
 {
@@ -34,11 +34,11 @@ Other common sink properties are supported. Refer to [sink common properties](..
 }
 ```
 
-## Error Handling & Dead-Letter Queue (DLQ)
+## Dead-Letter Queue (DLQ) Integration
 
-When an OPC-UA write is rejected by the server with permanent error status codes such as:
+When an OPC-UA write fails with permanent status codes:
 - `BadNodeIdUnknown` (`0x80340000`)
 - `BadTypeMismatch` (`0x803C0000`)
 - `BadNotWritable` (`0x803B0000`)
 
-The connector classifies the error as permanent and transfers the record along with the OPC-UA status message to the configured Dead-Letter Queue (`DlqStage::SinkDelivery`). For full configuration details, refer to [Dead-Letter Queues (DLQ) & Error Routing](../../rules/error_handling_dlq.md).
+The connector classifies the error as permanent. It sends the output record to the dead-letter queue under `DlqStage::SinkDelivery`. For configuration options, refer to [Dead-Letter Queues](../../rules/error_handling_dlq.md).

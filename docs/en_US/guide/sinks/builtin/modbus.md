@@ -1,6 +1,6 @@
 # Modbus Action
 
-The Modbus action writes register and coil values to industrial Modbus TCP or Modbus RTU-over-TCP devices, enabling closed-loop control from streaming SQL rules.
+The Modbus action writes register and coil values to Modbus TCP and Modbus RTU devices.
 
 ## Properties
 
@@ -18,9 +18,9 @@ The Modbus action writes register and coil values to industrial Modbus TCP or Mo
 
 Other common sink properties are supported. Refer to [sink common properties](../overview.md#common-properties) for more information.
 
-## Closed-Loop Example
+## Example
 
-Write a calculated setpoint to holding register 100 on an industrial chiller:
+Write a setpoint to holding register 100:
 
 ```json
 {
@@ -42,11 +42,11 @@ Write a calculated setpoint to holding register 100 on an industrial chiller:
 }
 ```
 
-## Error Handling & Dead-Letter Queue (DLQ)
+## Dead-Letter Queue (DLQ) Integration
 
-When a write command fails due to Modbus device exceptions:
+When a write command fails with Modbus exception codes:
 - `0x01`: Illegal Function
 - `0x02`: Illegal Data Address
 - `0x03`: Illegal Data Value
 
-rekuiper flags the failure as a permanent delivery error and routes the output record along with error diagnostics to the configured Dead-Letter Queue (`DlqStage::SinkDelivery`). For full configuration options, refer to [Dead-Letter Queues (DLQ) & Error Routing](../../rules/error_handling_dlq.md).
+The engine classifies the failure as a permanent delivery error. It sends the output record to the dead-letter queue under `DlqStage::SinkDelivery`. For configuration options, refer to [Dead-Letter Queues](../../rules/error_handling_dlq.md).

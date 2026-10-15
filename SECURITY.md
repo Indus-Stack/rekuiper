@@ -10,35 +10,41 @@
 | v0.509-beta | :white_check_mark: |
 | < v0.509-beta | :x: |
 
-## Reporting a Vulnerability
+# Security Policy
 
-We take the security of `rekuiper` seriously. If you have discovered a security vulnerability, we appreciate your help in disclosing it to us in a responsible and private manner.
+## Supported Versions
 
-### How to Report
+| Version | Supported |
+| :--- | :--- |
+| v1.0.0-rc3 (Latest) | :white_check_mark: |
+| v1.0.0-rc2 | :white_check_mark: |
+| v1.0.0-rc1 | :white_check_mark: |
+| v0.509-beta | :white_check_mark: |
+| < v0.509-beta | :x: |
 
-Please do **NOT** report security vulnerabilities through public GitHub issues, discussions, or pull requests.
+## Report a Security Vulnerability
 
-Instead, please report security vulnerabilities directly to the **I-Dacs Labs Security Team** by emailing:
+Do not report security vulnerabilities through public GitHub issues, discussions, or pull requests.
 
-📧 **[measure@i-dacs.com](mailto:measure@i-dacs.com)**
+Report security vulnerabilities directly to the security team:
 
-Please include `[SECURITY] rekuiper vulnerability report` in the subject line.
+- Email: **[measure@i-dacs.com](mailto:measure@i-dacs.com)**
+- Subject line: `[SECURITY] rekuiper vulnerability report`
 
-In your report, please include:
-- A clear description of the vulnerability.
-- Affected component (e.g. streaming SQL engine, REST API, specific connector).
-- Minimal steps or proof-of-concept to reproduce the vulnerability.
-- Any relevant configuration files, logs, or error stack traces.
+Include this information in the report:
+- A description of the vulnerability.
+- The affected component (such as the SQL engine, REST API, or a specific connector).
+- Steps to reproduce the vulnerability.
+- Applicable configuration files, log files, or error messages.
 
-### Response & Disclosure Process
+## Response Process
 
-1. **Acknowledgment**: The I-Dacs Labs security team will acknowledge receipt of your vulnerability report within **48 hours**.
-2. **Investigation & Patch**: We will investigate, verify the issue in an isolated environment, and prepare a secure patch.
-3. **Release & Advisory**: Once patched and verified across all supported platforms, a new release and coordinated security advisory will be published.
-4. **Coordinated Disclosure**: We ask that you maintain responsible confidentiality until an official patched release is made available to protect edge deployments worldwide.
+1. **Acknowledgment**: The security team sends an acknowledgment within 48 hours.
+2. **Investigation and Correction**: The team reproduces the problem in an isolated environment and prepares a correction.
+3. **Release and Advisory**: The project publishes a new software release and a security advisory.
+4. **Coordinated Disclosure**: Keep vulnerability details confidential until the project publishes the security release.
 
 ---
 
-**Developed and maintained by [I-Dacs Labs](https://i-dacs.com)**  
-📧 [measure@i-dacs.com](mailto:measure@i-dacs.com) · 🌐 [i-dacs.com](https://i-dacs.com) · 💼 [LinkedIn](https://www.linkedin.com/company/110770924)  
-*Building the future of Industrial IoT together.*
+**Maintained by [I-Dacs Labs](https://i-dacs.com)**  
+[measure@i-dacs.com](mailto:measure@i-dacs.com) · [i-dacs.com](https://i-dacs.com)

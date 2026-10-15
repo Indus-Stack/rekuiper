@@ -1,35 +1,31 @@
-# Dead-Letter Queues (DLQ) & Poison-Pill Routing
+# Dead-Letter Queues (DLQ) and Error Routing
 
-In industrial stream processing deployments, sensors and external publishing systems frequently emit corrupted binary streams, truncated JSON payloads, out-of-spec types, or unexpected mathematical domain inputs (`NaN` or division by zero). Furthermore, downstream enterprise databases and REST APIs can reject malformed rows with HTTP `400 Bad Request` client errors.
+Invalid records occur during stream processing. Examples include malformed JSON, schema mismatches, division by zero, and sink delivery rejections.
 
-Without poison-pill isolation, a single malformed event causes either:
-1. **Head-of-Line Blocking**: Endless sink retry loops stall the entire stream pipeline.
-2. **Silent Data Loss**: Unaccounted drops violate regulatory audit standards.
-
-rekuiper introduces **Dead-Letter Queues (DLQ) and Multi-Stage Poison-Pill Routing**, providing bounded in-memory error retention, non-recursive external sink dispatch, zero-lock Prometheus metrics, and automated pipeline halt policies.
+rekuiper includes dead-letter queues (DLQ) to isolate and store invalid records without stopping the pipeline.
 
 ---
 
 ## Architecture Overview
 
-rekuiper isolates failures across **5 discrete pipeline execution stages**:
+The engine captures errors in five processing stages:
 
 | Stage | Name | Description |
 | :--- | :--- | :--- |
-| `0` | `CodecDecode` | Low-level payload decompression, UTF-8 validation, or JSON/Protobuf/Delimited decoding failures. |
-| `1` | `SchemaValidation` | Ingress type-checking failures against declared `CREATE STREAM (col type, ...)` definitions. |
-| `2` | `SqlEval` | Mathematical exceptions, casting mismatches, or runtime evaluation panics in SQL expressions. |
-| `3` | `DataTemplate` | Template syntax errors, missing context variables, or serialization issues during sink formatting. |
-| `4` | `SinkDelivery` | Permanent client failures (e.g. HTTP `4xx` client rejections, excluding retryable `408`/`429`). |
+| `0` | `CodecDecode` | Payload decompression, UTF-8 validation, or JSON decoding failures. |
+| `1` | `SchemaValidation` | Data type mismatches against declared stream schemas. |
+| `2` | `SqlEval` | Math exceptions, invalid casts, or function evaluation failures. |
+| `3` | `DataTemplate` | Template syntax errors or serialization failures during sink formatting. |
+| `4` | `SinkDelivery` | Permanent client failures (such as HTTP `4xx` responses). |
 
-Each error captures a structured `DlqEnvelope`:
-* `rule_id`: Identifier of the rule where the failure originated.
-* `stage`: The `DlqStage` variant where execution failed.
-* `error`: Descriptive error diagnostic.
-* `timestamp`: Unix millisecond timestamp when the exception was recorded.
-* `raw_payload`: Original source bytes or string (capped to 4 KB).
-* `tuple`: Intermediary row state before the failing expression or action.
-* `sink_type`: Name of the failing sink plugin (when stage is `SinkDelivery` or `DataTemplate`).
+Each error records this information:
+* `rule_id`: Identifier of the rule.
+* `stage`: The processing stage where execution failed.
+* `error`: Error message text.
+* `timestamp`: Unix millisecond timestamp.
+* `raw_payload`: Source data bytes (limited to 4 KB).
+* `tuple`: Intermediate record values before the failure.
+* `sink_type`: Name of the failing sink plugin.
 
 ---
 
@@ -77,21 +73,19 @@ DLQ behavior is configured per rule under the `options` block:
 
 ---
 
-## Edge Gateway Memory & Concurrency Protections
+## Memory and Concurrency Controls
 
-rekuiper is engineered for constrained edge gateways (256 MB RAM) and high-throughput streaming workloads:
-
-1. **Lock-Free Hot-Path Metrics**: Stage counters are backed by `AtomicU64` primitives (`rekuiper_rule_dlq_records_total`). Scraping `/metrics` or reading status requires zero state locking.
-2. **Strict 4 KB Payload Capping**: Incoming corrupt payloads (even multi-megabyte payloads) are truncated to at most **4,096 bytes** (UTF-8 character-boundary safe, suffixed with `"…[truncated]"`). A full 100-entry ring buffer consumes $\le 400\text{ KB}$ RAM.
-3. **Non-Recursive, Non-Blocking External Dispatch**: External DLQ dispatch runs asynchronously with recursion disabled (`dlq_router: None`). If an external DLQ sink target fails, rekuiper increments `dlq_sink_failures` without recursing into the DLQ router.
+1. **Atomic Metrics**: Stage counters use atomic integers (`rekuiper_rule_dlq_records_total`). Reading metrics does not lock rule state.
+2. **Payload Size Limit**: Corrupted input payloads are truncated to a maximum of 4,096 bytes.
+3. **Non-Recursive Dispatch**: If an external DLQ sink fails, the engine increments `dlq_sink_failures` and stops. It does not recurse into the DLQ handler.
 
 ---
 
-## HTTP REST & CLI Diagnostic Inspection
+## Error Inspection
 
-### Inspecting Errors
+### Inspect Recent Errors
 
-Retrieve recent poison-pill records and error stage distribution:
+Retrieve recorded errors for a rule:
 
 ```bash
 # REST API
@@ -150,7 +144,7 @@ rekuiper dlq rule_industrial_telemetry --clear
 
 DLQ counters are exposed on the standard Prometheus scraping endpoint (`GET /metrics`):
 
-```prometheus
+```text
 # HELP rekuiper_rule_dlq_records_total total records routed to dead-letter queue by stage
 # TYPE rekuiper_rule_dlq_records_total counter
 rekuiper_rule_dlq_records_total{rule="rule_industrial_telemetry",stage="codec_decode"} 0

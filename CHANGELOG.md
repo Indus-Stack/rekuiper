@@ -14,14 +14,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **Modbus and OPC-UA Connectors**: Added pure-Rust sources, tables, and sinks for Modbus TCP, Modbus RTU-over-TCP, and OPC-UA Binary (`opc.tcp`). The connectors communicate directly with industrial equipment without external gateway containers.
-- **Declarative GitOps Engine**: Added the `--manifest` option to load and watch configuration files and directories. Added the `POST /declarative/reload` endpoint and a mutation guard to enforce read-only operation.
+- **Declarative GitOps Engine**: Added the `--declarative` option to load and monitor configuration files and directories. Added the `POST /declarative/reload` endpoint and a mutation guard to enforce read-only operation.
 - **Dead-Letter Queues (DLQ)**: Added per-stage error isolation for decode, validation, SQL evaluation, template, and sink delivery stages. Added the `GET /rules/:id/errors` and `DELETE /rules/:id/errors` management endpoints.
-- **OpenTelemetry (OTLP) Support**: Added HTTP ingestion endpoints at `/v1/metrics`, `/v1/logs`, and `/v1/traces`. Added support for 64-bit integer strings. Added the OTLP export sink with retry and error classification.
+- **OpenTelemetry (OTLP) Processing**: Added HTTP ingestion endpoints at `/v1/metrics`, `/v1/logs`, and `/v1/traces`. Added processing for 64-bit integer strings. Added the OTLP export sink with retry backoff and error classification.
 - **Inspection Tools (`top` and Web UI)**: Added the `rekuiper top` CLI command for live terminal monitoring. Added the self-contained web console at `GET /ui`.
 
 ### Changed
 - **Zero New Dependencies**: Kept `Cargo.lock` free of new external crates.
-- **Telemetry Ingestion Guard**: Allowed HTTP POST telemetry data on `/v1/*` when declarative mode is active.
+- **Telemetry Ingestion Guard**: Permitted HTTP POST telemetry data on `/v1/*` when declarative mode is active.
 
 ## [1.0.0-rc2] - 2026-10-14
 

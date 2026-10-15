@@ -4,16 +4,16 @@
 <span style="background:green;color:white;padding:1px;margin:2px">lookup table source</span>
 <span style="background:green;color:white;padding:1px;margin:2px">sink</span>
 
-The OPC-UA connector provides native, 100% pure-Rust connectivity to OPC Unified Architecture (OPC-UA) servers using the standard binary TCP protocol (`opc.tcp://`).
+The OPC-UA connector connects to OPC Unified Architecture (OPC-UA) servers using the binary TCP protocol (`opc.tcp://`).
 
-Unlike traditional systems that require deploying heavy companion containers (such as Node-RED or commercial protocol bridges) requiring hundreds of megabytes of RAM, rekuiper communicates directly with OPC-UA servers without any external C or OpenSSL dependencies.
+The connector runs in pure Rust without external C libraries or companion containers.
 
 ## Architecture and Security
 
 - **Protocol**: OPC-UA Binary TCP (`opc.tcp://`).
-- **Security Policy**: `SecurityPolicy#None` (`http://opcfoundation.org/UA/SecurityPolicy#None`).
-- **Authentication**: Supports both Anonymous identity tokens and Username / Password authentication in `ActivateSession`.
-- **Zero C Dependencies**: Eliminates OpenSSL and glibc/musl toolchain friction for frictionless deployment on Alpine Linux and minimal edge gateways.
+- **Security Policy**: `SecurityPolicy#None`.
+- **Authentication**: Anonymous identity tokens and Username / Password authentication.
+- **Dependencies**: Zero C library dependencies.
 
 ## Stream and Table DDL Syntax
 
@@ -83,11 +83,11 @@ The connector parses standard OPC-UA NodeId string representations:
 | GUID | `ns=<namespace>;g=<uuid>` | `ns=2;g=72962b91-fa75-4ae6-8d59-5f80f68d3744` |
 | ByteString | `ns=<namespace>;b=<base64>` | `ns=2;b=YWJjZA==` |
 
-## Variant Decoding & NaN Guards
+## Variant Decoding and Float Validation
 
-The connector automatically decodes OPC-UA Variants into native JSON types:
-- **Primitives**: Boolean, SByte, Byte, Int16, UInt16, Int32, UInt32, Int64, UInt64, Float, Double, String, DateTime, Guid, ByteString.
-- **NaN Rejection**: Floating-point values (Float / Double) are checked for `NaN` and `Infinity`. Corrupted or uninitialized values from faulty sensors are dropped to prevent SQL engine math evaluation panics.
+The connector decodes OPC-UA Variants into JSON types:
+- **Primitive Types**: Boolean, SByte, Byte, Int16, UInt16, Int32, UInt32, Int64, UInt64, Float, Double, String, DateTime, Guid, ByteString.
+- **Float Validation**: The connector checks Float and Double values for `NaN` and `Infinity`. It rejects invalid values to prevent SQL evaluation errors.
 
 ## OPC-UA Sink Action (Control Closed Loop)
 
@@ -120,7 +120,7 @@ Write control setpoints and state changes to OPC-UA servers:
 }
 ```
 
-### Error Handling & Dead-Letter Queue (DLQ)
+### Dead-Letter Queue (DLQ) Integration
 
 When an OPC-UA write fails with permanent status codes:
 - `BadNodeIdUnknown` (`0x80340000`)
@@ -128,4 +128,4 @@ When an OPC-UA write fails with permanent status codes:
 - `BadNodeNotInHierarchy` (`0x80350000`)
 - `BadNotWritable` (`0x803B0000`)
 
-The connector treats the failure as a permanent delivery error and routes the output event directly to the Track C Dead-Letter Queue (`DlqStage::SinkDelivery`), maintaining auditability without stalling stream execution.
+The connector classifies the failure as a permanent delivery error. It sends the output event to the dead-letter queue under `DlqStage::SinkDelivery`.

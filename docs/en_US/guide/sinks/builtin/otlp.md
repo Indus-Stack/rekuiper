@@ -52,9 +52,9 @@ Export high-frequency aggregated machine metrics to an enterprise OpenTelemetry 
 }
 ```
 
-## Error Handling & Dead-Letter Queue (DLQ)
+## Dead-Letter Queue (DLQ) Integration
 
-The OTLP sink distinguishes between transient transport glitches and permanent protocol rejections:
+The OTLP sink identifies permanent errors and transient errors:
 
-- **Permanent Failures**: Responses with HTTP `400 Bad Request`, `401 Unauthorized`, `403 Forbidden`, or `422 Unprocessable Entity` indicate invalid credentials or schema incompatibility. rekuiper halts retrying immediately and routes the rejected record to the Dead-Letter Queue under `DlqStage::SinkDelivery`.
-- **Transient Failures**: Responses with HTTP `429 Too Many Requests`, `502 Bad Gateway`, `503 Service Unavailable`, `504 Gateway Timeout`, or network connection drops trigger retry backoff according to the rule's sink buffer policy.
+- **Permanent Errors**: Responses with HTTP `400`, `401`, `403`, or `422`. The sink stops retries and sends the rejected record to the dead-letter queue under `DlqStage::SinkDelivery`.
+- **Transient Errors**: Responses with HTTP `429`, `502`, `503`, `504`, or dropped network connections. The sink retries delivery according to the sink buffer policy.

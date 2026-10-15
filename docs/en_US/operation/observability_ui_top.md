@@ -1,36 +1,35 @@
-# Zero-Container Observability: Embedded UI & `rekuiper top`
+# Inspection Tools: Embedded Web Console and rekuiper top
 
-rekuiper includes built-in browser and terminal inspection tools designed specifically for air-gapped edge appliances and resource-constrained environments.
+rekuiper includes browser and terminal inspection tools for edge devices and isolated networks.
 
-Traditional observability stacks require deploying external visualization containers (e.g. Grafana, Prometheus, or web dashboards) that consume hundreds of megabytes of RAM. With rekuiper:
-- No companion containers are required.
-- No Node.js runtime or external asset CDNs are contacted.
-- All visualization operates within the existing single-binary rekuiper process.
+Key properties:
+- The tools run inside the rekuiper binary without external containers.
+- The web console uses no external scripts or fonts.
+- All inspection functions operate without internet access.
 
 ---
 
-## 1. Embedded Web Dashboard (`GET /ui`)
+## 1. Embedded Web Console (`GET /ui`)
 
-Navigating to `http://<rekuiper-host>:59999/ui` opens the embedded status dashboard.
+Open `http://<rekuiper-host>:9081/ui` in a web browser to view the console.
 
 ### Key Features
-- **No External Dependencies**: The page contains all HTML, CSS, and JavaScript in one file. It does not load external fonts or scripts. It operates on isolated networks without an internet connection.
-- **Clear Display**: Tabular numbers prevent text jitter during updates.
-- **Live Metrics**: The console displays engine uptime, active rules, active streams, message throughput, and error counts. You can select 1s, 2s, or 5s refresh intervals.
-- **Declarative Mode Integration**: When declarative GitOps mode is active, the console shows a badge and a **Reload Manifest** button (`POST /declarative/reload`).
-- **Rule Inspector**: You can click a rule to view details:
+- **No External Dependencies**: The page contains all HTML, CSS, and JavaScript. It does not load external fonts or scripts. It operates on isolated networks.
+- **Live Metrics**: The console shows engine uptime, active rules, active streams, message throughput, and error counts. Select refresh intervals of 1s, 2s, or 5s.
+- **Declarative Mode Integration**: In declarative mode, the console shows a status badge and a **Reload Manifest** button (`POST /declarative/reload`).
+- **Rule Inspector**: Select a rule to view details:
   - Formatted SQL query text.
   - Per-stage error counters (`codec_decode`, `schema_validation`, `sql_eval`, `data_template`, and `sink_delivery`).
-  - Recent error envelopes from `GET /rules/:id/errors`.
+  - Recent error records from `GET /rules/:id/errors`.
   - A **Clear Errors** button (`DELETE /rules/:id/errors`).
 
 ---
 
 ## 2. Terminal Live Monitor (`rekuiper top`)
 
-The CLI includes an interactive real-time process and pipeline monitor modeled after Linux `top` / `htop`.
+The CLI includes an interactive real-time process and pipeline monitor.
 
-### Usage & Syntax
+### Usage and Syntax
 
 ```bash
 # Launch interactive live monitor (default 2s interval)
@@ -42,7 +41,7 @@ rekuiper top -i 500ms
 # Focus on a specific rule
 rekuiper top -r rule_chiller_monitoring
 
-# Single snapshot output (ideal for CI/CD checks and terminal logs)
+# Single snapshot output (for CI checks and log files)
 rekuiper top --once
 ```
 
@@ -53,11 +52,11 @@ rekuiper top --once
 | `--interval` | `-i` | `2s` | Polling refresh interval (e.g. `1s`, `500ms`, `5s`). |
 | `--once` | `-1` | `false` | Print a single frame and exit immediately without clearing the screen. |
 | `--rule` | `-r` | None | Filter telemetry output to a specific rule ID. |
-| `--url` | `-u` | `http://127.0.0.1:59999` | Base URL of the rekuiper server. |
+| `--url` | `-u` | `http://127.0.0.1:9081` | Base URL of the rekuiper server. |
 
-### Terminal Ergonomics & Clean Exit
+### Terminal Control
 
-In continuous mode, `rekuiper top` runs within the terminal's alternate screen buffer (`\x1b[?1049h`) and hides the cursor (`\x1b[?25l`). When interrupted via `Ctrl+C` or `SIGINT`, the monitor intercepts the signal and restores the primary buffer and cursor visibility (`\x1b[?25h\x1b[?1049l`), leaving the user's shell completely clean.
+In continuous mode, `rekuiper top` uses the alternate screen buffer and hides the cursor. When stopped with `Ctrl+C` or `SIGINT`, the command restores the standard screen buffer and cursor visibility.
 
 ### Live Display Sections
 

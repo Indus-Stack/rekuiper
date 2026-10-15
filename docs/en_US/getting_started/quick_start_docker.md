@@ -129,16 +129,26 @@ docker logs rekuiper | grep "LOG SINK"
 
 ---
 
-## 6. Interactive OpenAPI / Swagger UI
+## 6. Web Console and API Documentation
 
-rekuiper embeds an interactive OpenAPI Swagger UI directly inside the engine daemon.
+rekuiper includes an embedded web console and an interactive OpenAPI interface.
 
-Open your browser to:
+Open the web console in a web browser:
+```text
+http://localhost:9081/ui
+```
+
+Open the OpenAPI interface in a web browser:
 ```text
 http://localhost:9081/
 ```
 
-From this interface, you can test REST endpoints, inspect stream schemas, create rules, and query runtime status interactively.
+Use these interfaces to do these tasks:
+- Test REST API endpoints.
+- Inspect stream schemas.
+- Create and edit rules.
+- Monitor engine status and errors.
+
 
 ---
 

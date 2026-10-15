@@ -4,15 +4,15 @@
 <span style="background:green;color:white;padding:1px;margin:2px">lookup table source</span>
 <span style="background:green;color:white;padding:1px;margin:2px">sink</span>
 
-The Modbus connector provides native, 100% pure-Rust connectivity for industrial automation equipment, PLCs, remote terminal units (RTUs), and power meters.
+The Modbus connector connects to industrial automation equipment, PLCs, remote terminal units (RTUs), and power meters.
 
-Unlike legacy architectures that mandate deploying separate protocol gateways (such as Neuron or Node-RED) in companion containers that consume 150 MB+ of RAM, rekuiper communicates directly with Modbus devices with zero external C/pkg-config dependencies, preserving rekuiper's lightweight 8 MB memory footprint on constrained edge hardware.
+The connector runs in pure Rust. It connects directly to Modbus devices without external C libraries or gateway containers.
 
-## Supported Transports
+## Supported Protocol Modes
 
-- **Modbus TCP**: Standard MBAP header framing over TCP sockets (`mode="tcp"` or default when port is 502).
-- **Modbus RTU-over-TCP**: Compact CRC-16 framed binary packets over raw TCP streams (`mode="rtu_over_tcp"` or `"rtu"`), commonly used with Moxa NPort, Advantech, Waveshare, or `ser2net` serial bridges.
-- **Modbus RTU over Serial / Unix Stream**: On Unix targets, specifying a path starting with `/` (e.g. `/dev/ttyUSB0`) connects directly via asynchronous streams.
+- **Modbus TCP**: MBAP header framing through TCP sockets (`mode="tcp"`).
+- **Modbus RTU-over-TCP**: Binary packets with CRC-16 checksum through TCP sockets (`mode="rtu_over_tcp"` or `"rtu"`).
+- **Modbus RTU over Serial Device**: On Unix targets, a path starting with `/` (such as `/dev/ttyUSB0`) connects to serial devices.
 
 ## Stream and Table DDL Syntax
 
@@ -89,24 +89,22 @@ For 32-bit and 64-bit types spanning multiple 16-bit registers:
 | `BADC` | Byte-Swapped (Mid-Big Endian) | `[B1, B0, B3, B2]` | Legacy RTUs |
 | `DCBA` | Little-Endian (Intel) | `[B3, B2, B1, B0]` | PC-based soft PLCs, Beckhoff |
 
-## Smart Register Coalescing
+## Batch Register Reading
 
-Industrial fieldbuses suffer high latency when querying registers individually. rekuiper includes an automatic **smart register coalescer**:
+The engine groups register read requests to decrease network traffic:
 
-1. Identifies registers sharing the same function code and unit ID.
-2. Sorts registers by address.
-3. Merges contiguous spans and spans separated by small gaps ($\le 10$ registers) into a single batch read request, up to the protocol limit (125 registers for holding/input registers, 2000 coils).
-4. Efficiently extracts and decodes individual values from the single response PDU.
+1. It identifies registers with the same function code and unit ID.
+2. It sorts registers by address.
+3. It combines adjacent registers into one read request up to protocol limits (125 registers for holding/input registers, 2000 coils).
+4. It extracts individual values from the single response.
 
-This reduces wire transactions by 80–90% on brownfield serial and TCP links.
+## Float Validation
 
-## NaN & Infinity Rejection
+The connector validates floating-point numbers during register unpacking. It rejects `NaN` and infinite values to prevent SQL evaluation errors.
 
-Uninitialized PLC memory or sensor disconnected states often return IEEE 754 `NaN`, `+Infinity`, or `-Infinity`. rekuiper guards against downstream SQL evaluation failures by validating floats during register unpacking. Non-finite values are rejected and recorded without crashing rule threads.
+## Modbus Sink Action
 
-## Modbus Sink Action (Closed Control Loop)
-
-rekuiper rules can write setpoints and actuation commands back to Modbus devices using action definitions:
+rekuiper rules can write setpoints and control commands to Modbus devices:
 
 ```json
 {
@@ -145,9 +143,9 @@ rekuiper rules can write setpoints and actuation commands back to Modbus devices
 
 ### Dead-Letter Queue (DLQ) Integration
 
-When a Modbus target responds with standard Modbus exception codes:
+When a Modbus target returns exception codes:
 - `0x01`: Illegal Function
 - `0x02`: Illegal Data Address
 - `0x03`: Illegal Data Value
 
-The connector identifies the failure as a **permanent error** and routes the event directly to the Track C Dead-Letter Queue (`DlqStage::SinkDelivery`), preventing infinite retry storms and recording full context for operator investigation.
+The connector classifies the failure as a permanent delivery error. It sends the event to the dead-letter queue under `DlqStage::SinkDelivery`.

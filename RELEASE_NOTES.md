@@ -1,13 +1,13 @@
 # Release Notes - rekuiper v1.0.0-rc3
 
-`rekuiper` v1.0.0-rc3 adds industrial connectors, declarative GitOps management, error queues, OpenTelemetry support, and built-in inspection tools.
+`rekuiper` v1.0.0-rc3 adds industrial connectors, declarative GitOps management, dead-letter error queues, OpenTelemetry processing, and inspection tools.
 
 Key highlights:
 - **Modbus and OPC-UA Connectors**: The engine connects directly to Modbus TCP, Modbus RTU, and OPC-UA servers. It reads sensor values and writes control setpoints. The connectors run in pure Rust without external C libraries or separate gateway containers.
-- **Declarative GitOps Configuration**: You can configure streams, tables, connections, and rules in YAML or JSON files with the `--manifest` option. The engine watches files for changes and reloads rules automatically. A read-only mode prevents REST API changes when GitOps is active.
-- **Dead-Letter Queues (DLQ)**: The engine captures invalid records across all execution stages (`codec_decode`, `schema_validation`, `sql_eval`, `data_template`, and `sink_delivery`). It stores error records in memory buffers. You can view errors with `GET /rules/:id/errors` and delete errors with `DELETE /rules/:id/errors`.
-- **OpenTelemetry (OTLP) Ingest and Export**: The engine receives OTLP metrics, logs, and traces over HTTP at `/v1/metrics`, `/v1/logs`, and `/v1/traces`. It converts OTLP data into SQL records. It supports both JSON numbers and string numbers. The OTLP sink sends query results to external OTel collectors.
-- **Built-in Inspection Tools**: The new `rekuiper top` command displays live engine throughput and rule status in the terminal. An embedded web console is available at `GET /ui`. The console uses no external fonts or CDN scripts and runs on isolated networks.
+- **Declarative GitOps Configuration**: Configure streams, tables, connections, and rules in YAML or JSON files with the `--declarative` option. The engine monitors files for changes and reloads rules automatically. A read-only mode prevents REST API changes when declarative mode is active.
+- **Dead-Letter Queues (DLQ)**: The engine captures invalid records in five processing stages (`codec_decode`, `schema_validation`, `sql_eval`, `data_template`, and `sink_delivery`). It stores error records in memory buffers. View errors with `GET /rules/:id/errors`. Clear errors with `DELETE /rules/:id/errors`.
+- **OpenTelemetry (OTLP) Ingestion and Export**: The engine receives OTLP metrics, logs, and traces through HTTP at `/v1/metrics`, `/v1/logs`, and `/v1/traces`. It converts OTLP data into SQL records. It processes numbers formatted as JSON numbers or numeric strings. The OTLP sink sends query results to external OpenTelemetry collectors.
+- **Inspection Tools**: The `rekuiper top` command shows live engine throughput and rule status in the terminal. An embedded web console is available at `GET /ui`. The web console uses no external fonts or CDN scripts and operates on isolated networks.
 - **No New Dependencies**: All new features use existing Rust libraries in `Cargo.lock`.
 
 - Docker image: `ankurkrp/rekuiper:1.0.0-rc3` (plus `latest`)
@@ -17,14 +17,14 @@ Key highlights:
 
 # Release Notes - rekuiper v1.0.0-rc2
 
-`rekuiper` v1.0.0-rc2 delivers full SQL catalog parity across documentation, published in-process engine performance benchmarks exceeding 2,144,000 EPS, zero-vulnerability control plane dependencies, and expanded Model Context Protocol (MCP) server intelligence.
+`rekuiper` v1.0.0-rc2 adds full SQL catalog documentation, published engine performance benchmarks, verified dependency security, and expanded Model Context Protocol (MCP) server tools.
 
 Key highlights:
-- **100% SQL Catalog Documentation Parity**: All 221 built-in SQL functions and aliases now have complete documentation across category guides with verified parameters, return types, and examples.
-- **Published In-Process Engine Benchmark**: Published audited in-process streaming benchmark results for rekuiper v1.0.0-rc2. The zero-parse in-process engine pipeline processes **2,144,375 events/sec** (233.17 ms for 500,000 records). The end-to-end JSON pipeline processes **994,118 events/sec** (502.96 ms) on one CPU core with zero garbage collection pauses.
-- **Zero-Vulnerability Dependency Stack**: Resolved Issue #38 by replacing unmaintained `serde_yaml` with `serde_norway 0.9` and upgrading `sqlx` to 0.8.6. Enforced automated CI security checks via `cargo-deny`.
-- **Complex Event Processing Prompts & Tools**: Added the `generate_cep_rule` prompt template and expanded `validate_sql` and `test_sql_expression` tools for `sequence_match`, `sequence_count`, and `ASOF JOIN`.
-- **WebAssembly Runtime Syntax**: Documented `wasm_run` and `wasm` execution syntax for compiling custom algorithms into WebAssembly modules.
+- **SQL Catalog Documentation**: All 221 built-in SQL functions and aliases have complete documentation with verified parameters, return types, and examples.
+- **Engine Benchmarks**: Published audited streaming benchmark results for rekuiper v1.0.0-rc2. The zero-parse engine pipeline processes 2,144,375 events per second (233.17 ms for 500,000 records). The end-to-end JSON pipeline processes 994,118 events per second (502.96 ms) on one CPU core.
+- **Dependency Security**: Replaced unmaintained `serde_yaml` with `serde_norway 0.9` and upgraded `sqlx` to 0.8.6. Enforced automated CI security checks through `cargo-deny`.
+- **Complex Event Processing Tools**: Added the `generate_cep_rule` prompt template. Expanded `validate_sql` and `test_sql_expression` tools for `sequence_match`, `sequence_count`, and `ASOF JOIN`.
+- **WebAssembly Runtime Syntax**: Documented `wasm_run` and `wasm` syntax for compiling custom algorithms into WebAssembly modules.
 
 - Docker image: `ankurkrp/rekuiper:1.0.0-rc2` (plus `latest`)
 - Helm chart: `deploy/chart/ekuiper` (`AppVersion: 1.0.0-rc2`)

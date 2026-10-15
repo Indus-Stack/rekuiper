@@ -63,7 +63,7 @@ curl http://localhost:9081/ping
 
 ## 3. Production Deployment with Docker Compose
 
-You can deploy rekuiper with an MQTT broker (Eclipse Mosquitto) using Docker Compose.
+Deploy rekuiper and an MQTT broker (Eclipse Mosquitto) with Docker Compose.
 
 Create a `docker-compose.yml` file:
 
@@ -118,6 +118,7 @@ docker compose up -d
 
 Service endpoints:
 - **rekuiper REST API**: `http://localhost:9081`
+- **Embedded Web Console**: `http://localhost:9081/ui`
 - **Prometheus Metrics**: `http://localhost:20499/metrics` (or `http://localhost:9081/metrics`)
 - **MQTT Broker**: `localhost:1883`
 
