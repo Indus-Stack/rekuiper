@@ -26,7 +26,7 @@ docker run -d \
   -p 9081:9081 \
   -p 20498:20498 \
   -p 20499:20499 \
-  ankurkrp/rekuiper:1.0.0-rc2
+  ankurkrp/rekuiper:1.0.0-rc3
 ```
 
 Verify that the server operates:
@@ -124,23 +124,13 @@ Query was submit successfully.
 
 ---
 
-## 5. Method C: Management with the Web Console (eKuiper Manager)
+## 5. Method C: Management with the Interactive OpenAPI / Swagger UI
 
-Use eKuiper Manager to manage streams, test rules, and monitor topology graphs visually.
+rekuiper embeds an OpenAPI Swagger interface on port `9081` to manage streams, test rules, and query engine metrics interactively from any web browser:
 
-Start the container:
-
-```shell
-docker run -d \
-  --name ekuiper-manager \
-  -p 9082:9082 \
-  -e DEFAULT_EKUIPER_ENDPOINT="http://localhost:9081" \
-  ankur-paan/ekuiper-manager:latest
-```
-
-1. Open `http://localhost:9082` in your browser.
-2. In the service management list, connect to `http://localhost:9081`.
-3. Use the visual rule editor to configure streams, write SQL queries, and monitor real-time throughput charts.
+1. Open `http://localhost:9081/` in your browser.
+2. Browse available REST API endpoints for streams, rules, schemas, and configurations.
+3. Use the interactive "Try it out" feature to execute requests directly against the running engine.
 
 ---
 

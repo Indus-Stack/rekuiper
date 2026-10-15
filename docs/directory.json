@@ -158,6 +158,10 @@
           "path": "guide/rules/incremental"
         },
         {
+          "title": "Dead-Letter Queues (DLQ) & Error Routing",
+          "path": "guide/rules/error_handling_dlq"
+        },
+        {
           "title": "Serialization",
           "path": "guide/serialization/serialization",
           "collapsed": true,
@@ -167,10 +171,6 @@
               "path": "guide/serialization/protobuf_tutorial"
             }
           ]
-        },
-        {
-          "title": "AI/ML with External Functions",
-          "path": "guide/ai/tensorflow_lite_external_function_tutorial"
         }
       ]
     },
@@ -190,6 +190,18 @@
               "title": "Built-in Sources",
               "collapsed": true,
               "children": [
+                {
+                  "title": "Modbus Source",
+                  "path": "guide/sources/builtin/modbus"
+                },
+                {
+                  "title": "OPC-UA Source",
+                  "path": "guide/sources/builtin/opcua"
+                },
+                {
+                  "title": "OpenTelemetry (OTLP) Source",
+                  "path": "guide/sources/builtin/otlp"
+                },
                 {
                   "title": "MQTT Source",
                   "path": "guide/sources/builtin/mqtt"
@@ -266,6 +278,18 @@
               "title": "Built-in Sinks",
               "collapsed": true,
               "children": [
+                {
+                  "title": "Modbus Sink",
+                  "path": "guide/sinks/builtin/modbus"
+                },
+                {
+                  "title": "OPC-UA Sink",
+                  "path": "guide/sinks/builtin/opcua"
+                },
+                {
+                  "title": "OpenTelemetry (OTLP) Sink",
+                  "path": "guide/sinks/builtin/otlp"
+                },
                 {
                   "title": "MQTT Sink",
                   "path": "guide/sinks/builtin/mqtt"
@@ -460,12 +484,16 @@
           "path": "operation/usage/monitor_with_prometheus"
         },
         {
-          "title": "Management Console",
-          "path": "operation/manager-ui/overview"
-        },
-        {
           "title": "Tracing Data",
           "path": "operation/usage/trace_data"
+        },
+        {
+          "title": "Declarative GitOps Mode",
+          "path": "operation/declarative_gitops"
+        },
+        {
+          "title": "Zero-Container Observability (UI & Top)",
+          "path": "operation/observability_ui_top"
         }
       ]
     },
@@ -562,10 +590,6 @@
           "path": "api/cli/plugins"
         },
         {
-          "title": "Script Functions",
-          "path": "api/cli/scripts"
-        },
-        {
           "title": "External Services",
           "path": "api/cli/services"
         },
@@ -596,12 +620,12 @@
           "path": "extension/wasm/overview"
         },
         {
-          "title": "External Services (gRPC / REST)",
-          "path": "extension/external/external_func"
+          "title": "Native Rust UDFs & Plugins",
+          "path": "extension/native/overview"
         },
         {
-          "title": "Script Functions (JavaScript / Boa)",
-          "path": "extension/script/overview"
+          "title": "External Services (gRPC / REST)",
+          "path": "extension/external/external_func"
         }
       ]
     },

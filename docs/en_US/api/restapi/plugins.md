@@ -45,7 +45,7 @@ Request payload using a local filesystem URI:
 ### Plugin Package Structure
 
 > [!NOTE]
-> For portable plugins, refer to the [Portable Plugin Packaging Guide](../../extension/portable/overview.md#package).
+> Legacy portable plugins are unsupported in rekuiper. For cross-language out-of-process services, refer to [External Services (gRPC/REST)](../../extension/external/external_func.md) and [WebAssembly Functions](../../extension/wasm/overview.md).
 
 An example `random.zip` archive contains:
 1. `Random@v1.0.0.so`

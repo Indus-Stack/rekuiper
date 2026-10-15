@@ -72,11 +72,15 @@ pub enum Commands {
     Restart { entity_type: String, name: String },
     /// Get the topology of a rule
     Gettopo { entity_type: String, name: String },
-    /// Validate a rule definition (inline JSON or `-f <file>`)
+    /// Validate a declarative manifest file/directory (offline) or online rule definition
     Validate {
+        /// Manifest path (file/directory) or entity type ('rule')
         entity_type: String,
         #[arg(trailing_var_arg = true, num_args = 0.., allow_hyphen_values = true)]
         args: Vec<String>,
+        /// Allow unresolved environment variables (${VAR}) during validation
+        #[arg(long, default_value_t = false)]
+        allow_unresolved_env: bool,
     },
     /// Export a ruleset or data snapshot to a file (`export [entity] <file>`)
     Export {
@@ -91,6 +95,26 @@ pub enum Commands {
         entity_type: String,
         #[arg(trailing_var_arg = true, num_args = 0.., allow_hyphen_values = true)]
         args: Vec<String>,
+    },
+    /// View or clear dead-letter queue (DLQ) errors for a rule (`errors <rule_id>` or `dlq <rule_id>`)
+    #[command(alias = "dlq")]
+    Errors {
+        rule_id: String,
+        /// Clear the DLQ error buffer for this rule
+        #[arg(long, default_value_t = false)]
+        clear: bool,
+    },
+    /// Live top dashboard of rules, pipelines, metrics, and DLQ errors
+    Top {
+        /// Refresh interval in milliseconds
+        #[arg(long, default_value_t = 1000)]
+        interval: u64,
+        /// Run once and exit (for non-interactive use, pipes, or CI)
+        #[arg(long, default_value_t = false)]
+        once: bool,
+        /// Drill down into a specific rule
+        #[arg(long)]
+        rule: Option<String>,
     },
 }
 
@@ -772,11 +796,81 @@ pub async fn run_cli() -> Result<()> {
                 fail(format!("Unknown entity type: {}", entity_type));
             }
         }
-        Commands::Validate { entity_type, args } => {
-            let (args, file) = split_file_flag(args);
-            if !entity_type.eq_ignore_ascii_case("rule") {
-                fail(format!("Unknown entity type: {}", entity_type));
+        Commands::Validate {
+            entity_type,
+            args,
+            allow_unresolved_env,
+        } => {
+            let p = std::path::Path::new(&entity_type);
+            let is_manifest = !entity_type.eq_ignore_ascii_case("rule")
+                || entity_type.ends_with(".yaml")
+                || entity_type.ends_with(".yml")
+                || entity_type.ends_with(".json")
+                || entity_type.ends_with(".toml")
+                || p.exists();
+
+            if is_manifest {
+                match rekuiper_core::model::DeclarativeManifest::load_from_path(
+                    p,
+                    allow_unresolved_env,
+                ) {
+                    Ok(manifest) => {
+                        match rekuiper_sql::validator::validate_manifest(&manifest) {
+                            Ok(summary) => {
+                                if is_json_output {
+                                    println!("{}", serde_json::to_string_pretty(&summary).unwrap());
+                                } else {
+                                    println!(
+                                        "✔ Validated manifest '{}': {} stream(s), {} table(s), {} rule(s), {} connection(s)",
+                                        entity_type,
+                                        summary.streams_count,
+                                        summary.tables_count,
+                                        summary.rules_count,
+                                        summary.connections_count
+                                    );
+                                    println!("0 errors found.");
+                                }
+                                std::process::exit(0);
+                            }
+                            Err(diagnostics) => {
+                                if is_json_output {
+                                    println!(
+                                        "{}",
+                                        serde_json::to_string_pretty(&diagnostics).unwrap()
+                                    );
+                                } else {
+                                    eprintln!(
+                                        "Validation failed for '{}' with {} error(s):",
+                                        entity_type,
+                                        diagnostics.len()
+                                    );
+                                    for d in &diagnostics {
+                                        eprintln!("{}", d);
+                                    }
+                                }
+                                std::process::exit(1);
+                            }
+                        }
+                    }
+                    Err(diagnostics) => {
+                        if is_json_output {
+                            println!("{}", serde_json::to_string_pretty(&diagnostics).unwrap());
+                        } else {
+                            eprintln!(
+                                "Failed to load manifest '{}': {} error(s):",
+                                entity_type,
+                                diagnostics.len()
+                            );
+                            for d in &diagnostics {
+                                eprintln!("{}", d);
+                            }
+                        }
+                        std::process::exit(1);
+                    }
+                }
             }
+
+            let (args, file) = split_file_flag(args);
             if args.is_empty() && file.is_none() {
                 fail("Expect rule name and json.".to_string());
             }
@@ -878,6 +972,251 @@ pub async fn run_cli() -> Result<()> {
                 .await?;
             let text = handle_response(res).await?;
             println!("{}", text);
+        }
+        Commands::Errors { rule_id, clear } => {
+            if clear {
+                let res = client
+                    .delete(format!("{}/rules/{}/errors", base_url, rule_id))
+                    .send()
+                    .await?;
+                let text = handle_response(res).await?;
+                println!("{}", text);
+            } else {
+                let res = client
+                    .get(format!("{}/rules/{}/errors", base_url, rule_id))
+                    .send()
+                    .await?;
+                let text = handle_response(res).await?;
+                println!("{}", text);
+            }
+        }
+        Commands::Top { interval, once, rule } => {
+            execute_top(&client, base_url, interval, once, rule).await?;
+        }
+    }
+
+    Ok(())
+}
+
+async fn execute_top(
+    client: &reqwest::Client,
+    base_url: &str,
+    interval: u64,
+    once: bool,
+    rule_target: Option<String>,
+) -> Result<()> {
+    if once {
+        render_top_frame(client, base_url, rule_target.as_deref()).await?;
+        return Ok(());
+    }
+
+    // Interactive continuous mode: enter alternate screen and hide cursor
+    print!("\x1b[?1049h\x1b[?25l");
+    use std::io::Write;
+    let _ = std::io::stdout().flush();
+
+    let mut interval_timer =
+        tokio::time::interval(std::time::Duration::from_millis(interval.max(200)));
+
+    loop {
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {
+                break;
+            }
+            _ = interval_timer.tick() => {
+                print!("\x1b[H");
+                let _ = std::io::stdout().flush();
+                if let Err(e) = render_top_frame(client, base_url, rule_target.as_deref()).await {
+                    println!("Error refreshing dashboard: {}", e);
+                }
+            }
+        }
+    }
+
+    // Restore terminal screen and cursor on exit
+    print!("\x1b[?25h\x1b[?1049l");
+    let _ = std::io::stdout().flush();
+    Ok(())
+}
+
+async fn render_top_frame(
+    client: &reqwest::Client,
+    base_url: &str,
+    rule_target: Option<&str>,
+) -> Result<()> {
+    let rules_val = client
+        .get(format!("{}/rules", base_url))
+        .send()
+        .await?
+        .json::<Value>()
+        .await
+        .unwrap_or(Value::Null);
+    let streams_val = client
+        .get(format!("{}/streams", base_url))
+        .send()
+        .await?
+        .json::<Value>()
+        .await
+        .unwrap_or(Value::Null);
+    let tables_val = client
+        .get(format!("{}/tables", base_url))
+        .send()
+        .await?
+        .json::<Value>()
+        .await
+        .unwrap_or(Value::Null);
+    let configs_val = client
+        .get(format!("{}/configs", base_url))
+        .send()
+        .await?
+        .json::<Value>()
+        .await
+        .unwrap_or(Value::Null);
+
+    let is_declarative = configs_val
+        .get("basic")
+        .and_then(|b| b.get("declarativeMode"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let decl_badge = if is_declarative {
+        "\x1b[35m[GITOPS READ-ONLY]\x1b[0m"
+    } else {
+        "\x1b[34m[MUTABLE]\x1b[0m"
+    };
+
+    let stream_count = streams_val.as_array().map(|a| a.len()).unwrap_or(0);
+    let table_count = tables_val.as_array().map(|a| a.len()).unwrap_or(0);
+
+    let rules_arr = rules_val.as_array().cloned().unwrap_or_default();
+    let mut total_in = 0u64;
+    let mut total_out = 0u64;
+    let mut total_filter = 0u64;
+    let mut total_dlq = 0u64;
+    let mut running_rules = 0usize;
+
+    for r in &rules_arr {
+        total_in += r.get("records_in_total").and_then(|v| v.as_u64()).unwrap_or(0);
+        total_out += r.get("records_out_total").and_then(|v| v.as_u64()).unwrap_or(0);
+        total_filter += r.get("records_filtered_total").and_then(|v| v.as_u64()).unwrap_or(0);
+        total_dlq += r.get("dlq_total").and_then(|v| v.as_u64()).unwrap_or(0);
+        if r.get("status").and_then(|v| v.as_str()) == Some("running") {
+            running_rules += 1;
+        }
+    }
+
+    println!("\x1b[1;36m=== rekuiper top ===\x1b[0m \x1b[1m{}\x1b[0m {}", base_url, decl_badge);
+    println!(
+        "Rules: \x1b[1m{}/{}\x1b[0m running | Streams: \x1b[1m{}\x1b[0m | Tables: \x1b[1m{}\x1b[0m",
+        running_rules,
+        rules_arr.len(),
+        stream_count,
+        table_count
+    );
+    println!(
+        "Ingested: \x1b[1m{}\x1b[0m | Emitted: \x1b[1m{}\x1b[0m | Filtered: \x1b[1m{}\x1b[0m | DLQ Poison-Pills: \x1b[1;{}m{}\x1b[0m",
+        total_in,
+        total_out,
+        total_filter,
+        if total_dlq > 0 { "31" } else { "32" },
+        total_dlq
+    );
+    println!();
+
+    if let Some(target) = rule_target {
+        println!("\x1b[1;33m--- Rule Drill-Down: {} ---\x1b[0m", target);
+        let rule_detail = client
+            .get(format!("{}/rules/{}", base_url, target))
+            .send()
+            .await?
+            .json::<Value>()
+            .await
+            .unwrap_or(Value::Null);
+        if let Some(sql) = rule_detail.get("sql").and_then(|v| v.as_str()) {
+            println!("\x1b[1mSQL:\x1b[0m {}", sql);
+        }
+
+        let errors_val = client
+            .get(format!("{}/rules/{}/errors", base_url, target))
+            .send()
+            .await?
+            .json::<Value>()
+            .await
+            .unwrap_or(Value::Null);
+        if let Some(stages) = errors_val.get("stages") {
+            println!("\x1b[1mDLQ Stages Breakdown:\x1b[0m");
+            println!(
+                "  Codec Decode:      {}",
+                stages.get("codec_decode").and_then(|v| v.as_u64()).unwrap_or(0)
+            );
+            println!(
+                "  Schema Validation: {}",
+                stages.get("schema_validation").and_then(|v| v.as_u64()).unwrap_or(0)
+            );
+            println!(
+                "  SQL Evaluation:    {}",
+                stages.get("sql_eval").and_then(|v| v.as_u64()).unwrap_or(0)
+            );
+            println!(
+                "  Data Template:     {}",
+                stages.get("data_template").and_then(|v| v.as_u64()).unwrap_or(0)
+            );
+            println!(
+                "  Sink Delivery:     {}",
+                stages.get("sink_delivery").and_then(|v| v.as_u64()).unwrap_or(0)
+            );
+        }
+
+        if let Some(recent) = errors_val.get("recent").and_then(|v| v.as_array()) {
+            if !recent.is_empty() {
+                println!("\n\x1b[1;31mRecent Poison-Pill Errors ({}) :\x1b[0m", recent.len());
+                for (idx, err) in recent.iter().take(5).enumerate() {
+                    let stage = err.get("stage").and_then(|v| v.as_str()).unwrap_or("Unknown");
+                    let msg = err.get("error").and_then(|v| v.as_str()).unwrap_or("");
+                    println!("  {}. [{}] {}", idx + 1, stage, msg);
+                    if let Some(payload) = err.get("raw_payload").and_then(|v| v.as_str()) {
+                        println!("     Payload: {}", payload);
+                    }
+                }
+            } else {
+                println!("\n\x1b[32mNo active DLQ poison-pill errors recorded for this rule.\x1b[0m");
+            }
+        }
+    } else {
+        println!(
+            "{:<22} {:<10} {:>10} {:>10} {:>10} {:>10} {:>8} {:>8}",
+            "RULE ID", "STATUS", "IN", "OUT", "FILTERED", "EXCEPTIONS", "DLQ", "CACHE"
+        );
+        println!("{}", "-".repeat(94));
+
+        if rules_arr.is_empty() {
+            println!("(No active rules configured)");
+        } else {
+            for r in &rules_arr {
+                let id = r.get("id").and_then(|v| v.as_str()).unwrap_or("-");
+                let status = r.get("status").and_then(|v| v.as_str()).unwrap_or("stopped");
+                let status_color = if status == "running" {
+                    "\x1b[32mrunning\x1b[0m"
+                } else {
+                    "\x1b[33mstopped\x1b[0m"
+                };
+                let in_c = r.get("records_in_total").and_then(|v| v.as_u64()).unwrap_or(0);
+                let out_c = r.get("records_out_total").and_then(|v| v.as_u64()).unwrap_or(0);
+                let filtered = r.get("records_filtered_total").and_then(|v| v.as_u64()).unwrap_or(0);
+                let exceptions = r.get("exceptions_total").and_then(|v| v.as_u64()).unwrap_or(0);
+                let dlq = r.get("dlq_total").and_then(|v| v.as_u64()).unwrap_or(0);
+                let cache = r.get("sink_cache_count").and_then(|v| v.as_u64()).unwrap_or(0);
+
+                let dlq_str = if dlq > 0 {
+                    format!("\x1b[1;31m{:>8}\x1b[0m", dlq)
+                } else {
+                    format!("{:>8}", 0)
+                };
+
+                println!(
+                    "{:<22} {:<19} {:>10} {:>10} {:>10} {:>10} {} {:>8}",
+                    id, status_color, in_c, out_c, filtered, exceptions, dlq_str, cache
+                );
+            }
         }
     }
 

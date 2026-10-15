@@ -6,7 +6,13 @@ This tutorial describes how to actuate EdgeX Foundry devices based on streaming 
 
 An EdgeX application service routes incoming telemetry to rekuiper. When incoming sensor records satisfy rule conditions, rekuiper dispatches command requests back to the EdgeX Core Command service to actuate downstream devices.
 
-![Actuation Flow](./flow.png)
+```mermaid
+flowchart LR
+    Device[EdgeX Device Service] -->|Telemetry| AppService[EdgeX App Service]
+    AppService -->|Message Bus| Rek[rekuiper Engine]
+    Rek -->|Command REST / MQTT| CoreCommand[EdgeX Core Command]
+    CoreCommand -->|Actuate| Device
+```
 
 ### Use Case Scenarios
 
@@ -223,10 +229,10 @@ To inject calculated values into actuation payloads dynamically, use Go template
 ```
 :::
 
-For iterative actions and condition blocks, refer to the [Data Template Guide](../../guide/sinks/data_template.md).
+For iterative actions and condition blocks, refer to the [Data Template Guide](../guide/sinks/data_template.md).
 
 ## Cross References
 
 - [EdgeX Rules Engine Tutorial](./edgex_rule_engine_tutorial.md)
-- [REST Sink Guide](../../guide/sinks/builtin/rest.md)
-- [MQTT Sink Guide](../../guide/sinks/builtin/mqtt.md)
+- [REST Sink Guide](../guide/sinks/builtin/rest.md)
+- [MQTT Sink Guide](../guide/sinks/builtin/mqtt.md)

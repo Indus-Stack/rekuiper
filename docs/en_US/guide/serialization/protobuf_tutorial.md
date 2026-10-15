@@ -1,121 +1,171 @@
 # Process Protocol Buffers Data
 
-rekuiper connects external systems through source and sink connectors using protocols such as MQTT and HTTP. rekuiper supports serialization formats including JSON, Protocol Buffers (Protobuf), and binary streams. Protocol Buffers provides language-neutral, platform-neutral binary serialization with compact payload size and fast processing speed.
+rekuiper connects external systems through source and sink connectors using protocols such as MQTT and HTTP. In addition to standard JSON and delimiter-separated text, rekuiper natively supports Protocol Buffers (Protobuf) binary serialization with compact payload size and fast processing speed.
 
-This tutorial explains how to register Protobuf schemas, decode incoming binary messages in sources, and encode output messages in sinks. You can perform these steps using the management web interface (refer to the [UI Tutorial](../../operation/manager-ui/overview.md)), the [REST API](../../api/restapi/overview.md), or the [command-line interface](../../api/cli/overview.md).
+This tutorial explains how to register Protobuf schemas, decode incoming binary messages in sources, and encode output messages in sinks using the `kuiper` CLI and REST API.
+
+---
 
 ## Prerequisites
 
 Prepare the following components before you begin:
-
 - An MQTT broker reachable at `tcp://127.0.0.1:1883` (such as Eclipse Mosquitto). When running rekuiper in Docker, configure the broker address through the environment variable `MQTT_SOURCE__DEFAULT__SERVER="tcp://127.0.0.1:1883"`.
-- An MQTT client tool such as [MQTT X](https://mqttx.app/).
+- An MQTT client tool such as Mosquitto CLI or [MQTTX](https://mqttx.app/).
 
-## Schema Registry
+---
 
-Protobuf requires a schema definition. Message definitions specify the fields used during encoding and decoding.
+## 1. Schema Registry
 
-The following schema defines a `Book` message containing a `title` string and an integer `price`:
+Protobuf serialization requires a `.proto` schema definition. The following schema defines a `Book` message containing a `title` string and an integer `price`:
 
 ```protobuf
+syntax = "proto3";
+
 message Book {
-  required string title = 1;
-  required int32 price = 2;
+  string title = 1;
+  int32 price = 2;
 }
 ```
 
-Follow these steps to register the schema:
+### Register the Schema via REST API
 
-1. In the management console, select **Configuration -> Schema** and click **Create Schema**.
+Register the schema named `schema1` using the REST schema management API:
 
-   ![Create schema navigation path](./resources/create_schema.png)
+```http
+POST /schemas/protobuf
+Content-Type: application/json
 
-2. Enter the schema parameters:
-   - **Schema Type**: `protobuf`.
-   - **Schema Name**: A unique identifier (for example, `schema1`).
-   - **Schema Content**: Select **Content** and paste the `.proto` text definition into the editor.
+{
+  "name": "schema1",
+  "content": "syntax = \"proto3\";\n\nmessage Book {\n  string title = 1;\n  int32 price = 2;\n}"
+}
+```
 
-   ![Create schema detail window](./resources/create_detail.png)
+Or via CLI:
 
-3. Click **Submit**. The new schema appears in the schema list:
+```bash
+kuiper create schema protobuf schema1 -f /path/to/book.proto
+```
 
-   ![List registered schemas](./resources/list_schema.png)
+Verify that the schema is registered:
 
-The registered schema `schema1` defines the `Book` message type for use in source and sink configurations.
+```http
+GET /schemas/protobuf/schema1
+```
 
-## Read Protobuf Data
+---
 
-This section demonstrates how to ingest and decode Protobuf binary messages from an MQTT topic:
+## 2. Ingest and Decode Protobuf Data
 
-1. Create a data stream: In the management console, select **Source -> Stream** and click **Create Stream**.
-2. Configure stream parameters:
-   - **Stream Name**: `protoDemo`.
-   - **Source Type**: `mqtt`.
-   - **Data Source**: `protoDemo`.
-   - **Stream Format**: `protobuf`.
-   - **Schema**: `schema1`.
-   - **Schema Message**: `Book`.
+This section demonstrates how to ingest and decode Protobuf binary messages from an MQTT topic into structured SQL stream columns.
 
-   ![Create stream with Protobuf format](./resources/create_proto_stream.png)
+### Step 1: Create the Stream with Protobuf Format
 
-3. Create a processing rule: Select **Rules** and click **New Rule**. Switch to text mode and enter the rule configuration:
+Create a stream pointing to `schema1` and message type `Book`:
 
-   ```json
-   {
-      "id": "ruleDecode",
-      "sql": "SELECT * FROM protoDemo",
-      "actions": [{
-        "mqtt": {
-          "server": "tcp://127.0.0.1:1883",
-          "topic": "result/protobuf",
-          "sendSingle": true
-        }
-      }]
-   }
+```bash
+kuiper create stream protoDemo '() WITH (TYPE="mqtt", DATASOURCE="protoDemo", FORMAT="protobuf", SCHEMAID="schema1.Book")'
+```
+
+Or via REST:
+
+```http
+POST /streams
+Content-Type: application/json
+
+{
+  "sql": "CREATE STREAM protoDemo () WITH (TYPE=\"mqtt\", DATASOURCE=\"protoDemo\", FORMAT=\"protobuf\", SCHEMAID=\"schema1.Book\")"
+}
+```
+
+### Step 2: Create a Rule to Process Decoded Data
+
+Create a rule that transforms the decoded data and publishes results to topic `result/protobuf`:
+
+```http
+POST /rules
+Content-Type: application/json
+
+{
+  "id": "ruleDecode",
+  "sql": "SELECT title, price FROM protoDemo WHERE price > 50",
+  "actions": [
+    {
+      "mqtt": {
+        "server": "tcp://127.0.0.1:1883",
+        "topic": "result/protobuf",
+        "sendSingle": true
+      }
+    },
+    {
+      "log": {}
+    }
+  ]
+}
+```
+
+### Step 3: Verify Decoding
+
+1. Subscribe to `result/protobuf`:
+   ```bash
+   mosquitto_sub -h 127.0.0.1 -t "result/protobuf"
    ```
 
-   ![Create rule for Protobuf decoding](./resources/proto_src_rule.png)
+2. Publish binary hex data corresponding to a `Book` (e.g. `title: "Rust Systems", price: 65`):
+   ```bash
+   echo -en '\x0a\x0c\x52\x75\x73\x74\x20\x53\x79\x73\x74\x65\x6d\x73\x10\x41' | mosquitto_pub -h 127.0.0.1 -t "protoDemo" -s
+   ```
 
-4. Verify data decoding:
-   1. Connect MQTT X to `tcp://127.0.0.1:1883`.
-   2. Subscribe to the output topic `result/protobuf`.
-   3. Publish binary Hex data encoded according to the `Book` schema to topic `protoDemo`: `0a1073747265616d696e672073797374656d107b`.
+3. The subscriber receives the decoded JSON output:
+   ```json
+   {"title": "Rust Systems", "price": 65}
+   ```
 
-      ![Send Protobuf binary data](./resources/source_send.png)
+---
 
-   4. Verify that the client receives the decoded JSON object on `result/protobuf`:
+## 3. Encode and Write Protobuf Data
 
-      ![Receive decoded JSON payload](./resources/receive_json.png)
+You can also read incoming JSON records, process them in SQL, and serialize output payloads as binary Protobuf messages to minimize outbound network bandwidth:
 
-## Write Protobuf Data
+### Step 1: Create an Input Stream
 
-This section demonstrates reading JSON records, processing data, and publishing binary Protobuf payloads to an MQTT broker to minimize transmission bandwidth:
+```bash
+kuiper create stream jsonStream '() WITH (TYPE="mqtt", DATASOURCE="events/json", FORMAT="json")'
+```
 
-1. Create an input stream: Select **Source -> Stream** and click **Create Stream**. Create a stream using JSON format subscribed to the `demo` topic.
+### Step 2: Create a Rule with Protobuf Serialization in Sink Action
 
-   ![Create stream with JSON format](./resources/create_json_stream.png)
+```http
+POST /rules
+Content-Type: application/json
 
-2. Create an output rule:
-   1. Click **New Rule**, set Rule ID and Name, and enter query SQL: `SELECT * FROM demo`.
-   2. Add an MQTT action configured for Protobuf serialization:
-      - **Server**: Cloud broker address.
-      - **Topic**: `result/protobufOut`.
-      - **Send Single**: `true`.
-      - **Format**: `protobuf`.
-      - **Schema**: `schema1`.
-      - **Schema Message**: `Book`.
+{
+  "id": "ruleEncode",
+  "sql": "SELECT title, price FROM jsonStream",
+  "actions": [
+    {
+      "mqtt": {
+        "server": "tcp://127.0.0.1:1883",
+        "topic": "result/protobufOut",
+        "format": "protobuf",
+        "schemaId": "schema1.Book",
+        "sendSingle": true
+      }
+    }
+  ]
+}
+```
 
-      ![Configure MQTT action](./resources/action_mqtt.png)
-      ![Configure Protobuf serialization parameters](./resources/action_protobuf.png)
+### Step 3: Verify Binary Output
 
-   3. Click **Submit** to activate the rule.
+1. Subscribe to `result/protobufOut` using an MQTT client.
+2. Publish a JSON message to `events/json`:
+   ```bash
+   mosquitto_pub -h 127.0.0.1 -t "events/json" -m '{"title":"Edge Guide","price":80}'
+   ```
+3. The subscriber on `result/protobufOut` receives the binary Protobuf serialized payload.
 
-3. Verify binary output:
-   - Subscribe to topic `result/protobufOut` in MQTT X.
-   - Publish JSON records to `demo`.
-   - Verify that the subscriber receives binary Protobuf payloads.
-
-   ![Receive encoded Protobuf payload](./resources/receive_protobuf.png)
+---
 
 ## Summary
 

@@ -1,12 +1,25 @@
 # Deploy and Manage rekuiper with OpenYurt
 
-LF Edge rekuiper is lightweight IoT data analytics and streaming software that usually runs at the edge. A [manager dashboard](../../operation/manager-ui/overview.md) manages one or more rekuiper instances. The dashboard usually deploys on a cloud node to manage rekuiper instances across multiple edge nodes.
+rekuiper is lightweight IoT data analytics and streaming software that usually runs at the edge. The cloud control plane manages edge rekuiper instances through secure reverse proxies and REST APIs.
 
 In many environments, the cloud node cannot access the edge node directly because of firewall or network security boundaries. This condition prevents direct cloud-to-edge management. [OpenYurt](https://github.com/openyurtio/openyurt) resolves this problem. OpenYurt extends native Kubernetes to support edge computing architectures. OpenYurt enables users to manage edge applications as if they run in the cloud infrastructure.
 
-In this tutorial, you deploy rekuiper and the web dashboard in an OpenYurt cluster. You configure a Yurt tunnel to manage the edge instance from the cloud. The tutorial uses a two-node Kubernetes cluster. The rekuiper instance runs on the edge node. The manager dashboard runs on the cloud node.
+In this tutorial, you deploy rekuiper in an OpenYurt cluster. You configure a Yurt tunnel to manage the edge instance from the cloud. The tutorial uses a two-node Kubernetes cluster. The rekuiper instance runs on the edge node. Management commands run from the cloud node.
 
-<img src="./ekuiper_openyurt.png" alt="arch" width="80%"/>
+```mermaid
+flowchart TB
+    subgraph Cloud[Cloud Node]
+        Admin[Cloud Management / curl / CLI]
+        YurtServer[Yurt Tunnel Server]
+    end
+    subgraph Edge[Edge Node]
+        YurtAgent[Yurt Tunnel Agent]
+        Rek[rekuiper Engine :9081]
+    end
+    Admin -->|Request| YurtServer
+    YurtServer <-->|Reverse Tunnel| YurtAgent
+    YurtAgent -->|Proxy :9081| Rek
+```
 
 ## Prerequisites
 
@@ -211,57 +224,9 @@ Use the rekuiper Helm chart to deploy rekuiper on the edge node.
    {"version":"1.2.0","os":"linux","upTimeSeconds":81317}
    ```
 
-## Deploy the Web Dashboard on the Cloud Node
-
-Deploy the rekuiper dashboard on the cloud node by using `kubectl` with the [kmanager.yaml](https://github.com/lf-edge/ekuiper/blob/master/docs/en_US/tutorials/deploy/kmanager.yaml) manifest. The manifest defines a Deployment and a Service for the rekuiper manager web UI.
-
-1. Verify that the container image tag in `kmanager.yaml` matches the rekuiper version:
-
-   ```yaml
-   ...
-   containers:
-      - name: kmanager
-        image: ankur-paan/ekuiper-manager:latest
-   ...
-   ```
-
-2. Apply the manifest:
-
-   ```shell
-   kubectl apply -f kmanager.yaml
-   ```
-
-3. Check the service status:
-
-   ```shell
-   kubectl get svc
-   ```
-
-   Example output:
-
-   ```shell
-   NAME               TYPE        CLUSTER-IP      EXTERNAL-IP   PORT(S)              AGE
-   ekuiper            ClusterIP   10.99.57.211    <none>        9081/TCP,20498/TCP   120m
-   ekuiper-headless   ClusterIP   None            <none>        <none>               120m
-   kmanager-http      NodePort    10.99.154.153   <none>        9082:32555/TCP       15s
-   kubernetes         ClusterIP   10.96.0.1       <none>        443/TCP              33h
-   ```
-
-4. The dashboard service listens on NodePort `32555`. Open `http://34.209.219.149:32555` in your browser. Log in with the default credentials: `admin` / `public`.
-
-5. Register the edge rekuiper service in the dashboard:
-   - Click **Add Service** and complete the form.
-
-     ![add service](./add_service.png)
-
-   - Click the service name `ekuiper` and open the **system** tab.
-   - The connection fails and displays an error. The address `http://192.168.2.143:9081/` is an internal edge address that the cloud node cannot access directly.
-
-The next section configures a Yurt tunnel to enable cloud-to-edge management.
-
 ## Set Up the Yurt Tunnel
 
-OpenYurt provides a reverse tunnel for secure communication between the cloud and the edge node. Because the dashboard must reach port `9081` on the edge node, configure port forwarding in the Yurt tunnel.
+OpenYurt provides a reverse tunnel for secure communication between the cloud and the edge node. Because the cloud plane reaches port `9081` on the edge node across network boundaries, configure port forwarding in the Yurt tunnel.
 
 1. On the cloud node, open `openyurt/config/setup/yurt-tunnel-server.yaml`. Under ConfigMap `yurt-tunnel-server-cfg`, set `dnat-ports-pair`:
 
@@ -308,15 +273,21 @@ OpenYurt provides a reverse tunnel for secure communication between the cloud an
    kubectl apply -f config/setup/yurt-tunnel-agent.yaml
    ```
 
-6. After the server and agent pods run, return to the web dashboard in your browser. Click the service name `ekuiper` and open the **system** tab. The service status reports healthy:
+6. After the server and agent pods run, test reachability from the cloud node through the Yurt tunnel:
 
-   ![system](./ping.png)
+   ```shell
+   curl http://127.0.0.1:10264/ping
+   ```
 
-You can now manage the edge rekuiper instance from the cloud dashboard. Refer to the [manager UI tutorial](../../operation/manager-ui/overview.md) to manage streams, rules, and plugins.
+   Expected response:
+   ```text
+   pong
+   ```
+
+You can now manage edge streams, rules, and telemetry pipelines from the cloud node using the REST API or the `kuiper` CLI.
 
 ## Related Resources
 
-- [eKuiper GitHub Repository](https://github.com/lf-edge/ekuiper/)
-- [eKuiper Reference Guide](https://github.com/lf-edge/ekuiper/blob/edgex/docs/en_US/reference.md)
 - [OpenYurt Tutorials](https://github.com/openyurtio/openyurt/tree/master/docs/tutorial)
-- [eKuiper Manager UI Guide](../../operation/manager-ui/overview.md)
+- [REST API Reference](../../api/restapi/overview.md)
+- [CLI Reference](../../api/cli/overview.md)

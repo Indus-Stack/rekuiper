@@ -1,71 +1,140 @@
-# Step-by-Step Guide: Navigating rekuiper with the Management Console UI
+# Step-by-Step Guide: Running Cookbook Examples via CLI and REST API
 
-This document describes how to run the cookbook examples with rekuiper. Before you run the examples, [install rekuiper](../installation.md).
+This document describes how to execute cookbook examples with rekuiper using the `kuiper` CLI or the REST API. Before you begin, [install and start rekuiper](../installation.md).
 
-You can define rules with SQL in the example scenarios. You can manage and execute rules with the rekuiper manager UI, the REST API, or the command-line interface.
+---
 
 ## Data Preparation
 
-Each example includes sample input data. You can also supply custom data. If you have active data sources, you can record live data to a file through a rekuiper rule and replay that file in the examples.
+Each cookbook example includes sample input data. You can supply custom data, or record live streaming telemetry to a local file through a rekuiper rule and replay that file during development and testing.
 
-### Record Data
+### Record Live Data to a File
 
-rekuiper supports diverse source protocols and provides a File sink. You can save live stream data to a local file through a rule. For example, you can record MQTT data with the rekuiper manager UI. Before you begin, [install and configure the rekuiper manager](../installation.md#running-ekuiper-with-management-console).
+rekuiper supports diverse source protocols and provides a high-throughput File sink. You can save live MQTT stream data to a local file using the `kuiper` CLI:
 
-1. **Create Data Source**: In the navigation sidebar, click **Streams** to open the stream management page. Click **Create stream** (or select the **Visual** designer tab). Set the stream name to `mqttDemoStream`. Under **Connector & Serialization**, select connector type `mqtt` and set the topic to `demo/#`. Notice the live **Generated SQL** preview panel updates in real time: `CREATE STREAM mqttDemoStream () WITH (TYPE="mqtt", DATASOURCE="demo/#")`. Click **Create stream** to submit the stream to eKuiper.
+#### 1. Create the MQTT Stream
 
-   ![record_stream.png](./resources/record_stream.png)
+```bash
+kuiper create stream mqttDemoStream '() WITH (TYPE="mqtt", DATASOURCE="demo/#")'
+```
 
-2. **Create and Run the Rule**: In the navigation sidebar, click **Rules**, then click **Create rule**. In the multi-step rule designer:
-   - **Step 1 (Basics)**: Set the **Rule ID** to `ruleRecordToFile` (with optional description or tags).
-   - **Step 2 (Query)**: In the SQL editor, enter the query `SELECT * FROM mqttDemoStream`. The editor provides syntax validation and schema hints directly from the active eKuiper node.
+Or via the REST API:
 
-   ![record_sql.png](./resources/record_sql.png)
+```http
+POST /streams
+Content-Type: application/json
 
-   - **Step 3 (Outputs)**: Under **Add an output**, select the **File** sink card. Configure the output properties: set **File path** (`path`) to `data/mock.lines`, set **File type** (`fileType`) to `lines`, and set **Check Interval** (`checkInterval`) to `10000`. Click **Validate with eKuiper** to verify schema and engine compatibility, then click **Create rule**. The rule starts running immediately upon creation.
+{
+  "sql": "CREATE STREAM mqttDemoStream () WITH (TYPE=\"mqtt\", DATASOURCE=\"demo/#\")"
+}
+```
 
-   ![record_action.png](./resources/record_action.png)
+#### 2. Create the Recording Rule
 
-   On the rule list or details page, verify that the rule status displays **Running**. You can monitor real-time throughput metrics, inspect the execution topology, or manage the rule lifecycle (Start, Stop, Restart).
+Create a rule that writes incoming events to `data/mock.lines`:
 
-3. **Inspect Data**: The rule writes output lines to `data/mock.lines`. The file stores one JSON string per line. You can view or modify the file in any text editor.
+```bash
+kuiper create rule ruleRecordToFile '{
+  "sql": "SELECT * FROM mqttDemoStream",
+  "actions": [
+    {
+      "file": {
+        "path": "data/mock.lines",
+        "fileType": "lines",
+        "hasHeader": false
+      }
+    }
+  ]
+}'
+```
 
-## Run Examples
+Or via the REST API:
 
-For testing and debugging, use a File source as input. When the example executes successfully, replace the File source with your production source.
+```http
+POST /rules
+Content-Type: application/json
 
-Most cookbook examples follow these conventions:
+{
+  "id": "ruleRecordToFile",
+  "sql": "SELECT * FROM mqttDemoStream",
+  "actions": [
+    {
+      "file": {
+        "path": "data/mock.lines",
+        "fileType": "lines"
+      }
+    }
+  ]
+}
+```
 
-- The rule reads from a File source stream named `demoStream`. This setup lets you replay recorded test data easily.
-- The rule publishes results to an MQTT sink topic: <code v-pre>result/{{ruleId}}</code>.
+#### 3. Verify Output File
 
-Follow these steps to run an example in the management console:
+The rule writes output lines to `data/mock.lines`. The file stores one JSON payload per line. Inspect the generated lines:
 
-1. **Prepare Data**: Copy sample data from the example page into a text file, or [record live data](#record-data).
-2. **Upload Data**: In the navigation sidebar, click **Files** (or open the **Uploads** page). Upload your data file (such as `mock.lines`) to eKuiper's configuration storage by dragging and dropping or selecting the file.
-3. **Create File Stream**: In the navigation sidebar, click **Streams**, then click **Create stream**. Set the stream name to `demoStream`, select stream type `file`, and set the data source to the uploaded file name (`mock.lines`).
+```bash
+head -n 5 data/mock.lines
+```
 
-   ![replay_source.png](./resources/replay_source.png)
+---
 
-   If you require custom stream configuration keys (such as setting custom directories or formats), click **Configuration Key**, name the configuration (e.g. `linesInUpload`), and define parameters such as file path `data/uploads/` and format `lines`.
+## Run Cookbook Examples
 
-   ![replay_conf.png](./resources/replay_conf.png)
+For testing and debugging, use the recorded File source as input. When the pipeline behaves as expected, replace the File source with your production MQTT or Kafka source.
 
-   Click **Create stream** to submit the stream definition to eKuiper.
+### 1. Create the File Replay Stream
 
-4. **Subscribe to Result Topic**: Open an MQTT client such as [MQTTX](https://mqttx.app/). Subscribe to the topic <code v-pre>result/{{ruleId}}</code> to view rule output.
-5. **Create Rule**: In the navigation sidebar, click **Rules**, then click **Create rule**. Set the **Rule ID** to `ruleX`, and enter the example SQL query (e.g. `SELECT * FROM demoStream`) in the SQL query editor.
+Create a stream pointing to `mock.lines`:
 
-   ![replay_sql.png](./resources/replay_sql.png)
+```bash
+kuiper create stream demoStream '() WITH (TYPE="file", DATASOURCE="data/mock.lines", FORMAT="json")'
+```
 
-   Under **Outputs**, click **Add an output** and select the **MQTT** sink card. Set the broker address (such as `tcp://yourbroker:1883`) and target topic to <code v-pre>result/{{ruleId}}</code> (or `result/rulex`).
+### 2. Subscribe to Output Topic
 
-   ![replay_action.png](./resources/replay_action.png)
+Open an MQTT client (such as Mosquitto CLI or MQTTX) and subscribe to the output topic:
 
-   Click **Validate with eKuiper**, then click **Create rule**. In the rule list, verify that the rule status displays **Running**. You can click the status badge to inspect message throughput, latency, and processing health.
+```bash
+mosquitto_sub -h 127.0.0.1 -t "result/ruleX"
+```
 
-6. **Inspect Output**: View the rule results in your MQTT client.
+### 3. Deploy the Rule
+
+Submit the analytical rule with an MQTT sink:
+
+```bash
+kuiper create rule ruleX '{
+  "sql": "SELECT * FROM demoStream WHERE temperature > 30",
+  "actions": [
+    {
+      "mqtt": {
+        "server": "tcp://127.0.0.1:1883",
+        "topic": "result/ruleX"
+      }
+    },
+    {
+      "log": {}
+    }
+  ]
+}'
+```
+
+### 4. Check Rule Metrics and Execution Status
+
+Verify throughput and execution health:
+
+```bash
+kuiper getstatus rule ruleX
+```
+
+Or via REST:
+
+```http
+GET /rules/ruleX/status
+```
+
+---
 
 ## Summary
 
-This document describes how to execute cookbook examples with the rekuiper manager UI. You can also use the REST API or the CLI to deploy streams and rules. You can adjust the example SQL queries to test custom processing logic.
+All cookbook scenarios can be executed reproducibly through the `kuiper` CLI or REST API. Adjust the SQL filter predicates and sink destinations to test custom edge analytics pipelines.

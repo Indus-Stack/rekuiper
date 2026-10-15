@@ -2,7 +2,7 @@
 
 This benchmark measures the maximum number of concurrent SQL rules that an engine can execute on a single stream in parallel.
 
-The benchmark compares **rekuiper 0.505** and **LF Edge eKuiper 2.4.1** under identical hardware and container limits.
+The benchmark compares **rekuiper 0.505** and **eKuiper 2.4.1** under identical hardware and container limits.
 
 All test configurations, orchestration scripts, and telemetry logs are in this directory.
 

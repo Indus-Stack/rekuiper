@@ -57,39 +57,47 @@ pub(crate) fn spawn_checkpoint_ticker(
 }
 
 /// Extracts an upstream error message when the record carries an `error` or
-/// `__error` field (emitted by source decoders on malformed payloads).
+/// `__error` / `__raw_error__` field (emitted by source decoders on malformed payloads).
 #[inline]
 pub(crate) fn check_record_error(data: &HashMap<String, Value>) -> Option<String> {
     if data.is_empty() {
         return None;
     }
-    if let Some(err) = data.get("error") {
+    if let Some(err) = data
+        .get("error")
+        .or_else(|| data.get("__error"))
+        .or_else(|| data.get("__raw_error__"))
+    {
         return Some(
             err.as_str()
                 .map(|s| s.to_string())
                 .unwrap_or_else(|| err.to_string()),
         );
     }
-    if data.len() == 1 {
-        if let Some(err) = data.get("__error") {
-            return Some(
-                err.as_str()
-                    .map(|s| s.to_string())
-                    .unwrap_or_else(|| err.to_string()),
-            );
-        }
-    }
     None
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn handle_runtime_error(
     counters: &RuleCounters,
     rule_id: &str,
     send_error: bool,
     sink: &tokio::sync::mpsc::Sender<StreamRecord>,
     err_msg: String,
+    stage: Option<rekuiper_core::model::DlqStage>,
+    record_data: Option<&HashMap<String, Value>>,
+    dlq_router: Option<&crate::engine::dlq::DlqRouter>,
 ) {
-    counters.record_exception(&err_msg);
+    if let Some(dlq) = dlq_router {
+        let stg = stage.unwrap_or(rekuiper_core::model::DlqStage::SqlEval);
+        let tuple_val = record_data.and_then(|d| serde_json::to_value(d).ok());
+        let raw_str = record_data
+            .and_then(|d| d.get("__raw_payload__").and_then(|v| v.as_str()).map(|s| s.to_string()))
+            .or_else(|| record_data.and_then(|d| serde_json::to_string(d).ok()));
+        dlq.route_error(stg, err_msg.clone(), raw_str.as_deref(), tuple_val, None);
+    } else {
+        counters.record_exception(&err_msg);
+    }
     if send_error {
         let mut err_data = HashMap::new();
         err_data.insert("error".to_string(), Value::String(err_msg.clone()));
@@ -110,11 +118,22 @@ pub(crate) async fn handle_error_record(
     send_error: bool,
     sink: &tokio::sync::mpsc::Sender<StreamRecord>,
     record: &StreamRecord,
+    dlq_router: Option<&crate::engine::dlq::DlqRouter>,
 ) -> bool {
     let Some(err_msg) = check_record_error(&record.data) else {
         return false;
     };
-    handle_runtime_error(counters, rule_id, send_error, sink, err_msg).await;
+    handle_runtime_error(
+        counters,
+        rule_id,
+        send_error,
+        sink,
+        err_msg,
+        Some(rekuiper_core::model::DlqStage::CodecDecode),
+        Some(&record.data),
+        dlq_router,
+    )
+    .await;
     true
 }
 
@@ -182,6 +201,7 @@ pub(crate) async fn run_stateless_rule(
     event_time: EventTimeConfig,
     rule_manager: RuleManager,
     checkpoint_interval_ms: u64,
+    dlq_router: crate::engine::dlq::DlqRouter,
 ) {
     // Running analytic state for acc_* cumulative functions. The stateful
     // projection below runs for every input row (advancing cumulative state
@@ -252,7 +272,10 @@ pub(crate) async fn run_stateless_rule(
                         continue;
                     }
                     counters.inc_source(1);
-                    if handle_error_record(&counters, &rule_id, send_error, &sink, &record).await {
+                    if handle_error_record(&counters, &rule_id, send_error, &sink, &record, Some(&dlq_router)).await {
+                        if dlq_router.on_error == crate::engine::dlq::OnErrorPolicy::Halt {
+                            break;
+                        }
                         continue;
                     }
                     let left_ts = extract_event_timestamp(&record.data, left_ts_field.as_deref());
@@ -296,7 +319,19 @@ pub(crate) async fn run_stateless_rule(
                             counters.inc_filtered(1);
                         }
                         Err(err) => {
-                            handle_runtime_error(&counters, &rule_id, send_error, &sink, err).await;
+                            handle_runtime_error(
+                                &counters,
+                                &rule_id,
+                                send_error,
+                                &sink,
+                                err,
+                                Some(rekuiper_core::model::DlqStage::SqlEval),
+                                Some(&probed),
+                                Some(&dlq_router),
+                            ).await;
+                            if dlq_router.on_error == crate::engine::dlq::OnErrorPolicy::Halt {
+                                break;
+                            }
                         }
                     }
                 }
@@ -316,7 +351,19 @@ pub(crate) async fn run_stateless_rule(
                     counters.inc_source(1);
                     // Synchronous check: only `.await` when an error field actually exists
                     if let Some(err_msg) = check_record_error(&record.data) {
-                        handle_runtime_error(&counters, &rule_id, send_error, &sink, err_msg).await;
+                        handle_runtime_error(
+                            &counters,
+                            &rule_id,
+                            send_error,
+                            &sink,
+                            err_msg,
+                            Some(rekuiper_core::model::DlqStage::CodecDecode),
+                            Some(&record.data),
+                            Some(&dlq_router),
+                        ).await;
+                        if dlq_router.on_error == crate::engine::dlq::OnErrorPolicy::Halt {
+                            return;
+                        }
                         break 'process;
                     }
                     let eval_res = if has_lookup_joins {
@@ -356,7 +403,19 @@ pub(crate) async fn run_stateless_rule(
                         }
                         Ok(None) => counters.inc_filtered(1),
                         Err(err) => {
-                            handle_runtime_error(&counters, &rule_id, send_error, &sink, err).await;
+                            handle_runtime_error(
+                                &counters,
+                                &rule_id,
+                                send_error,
+                                &sink,
+                                err,
+                                Some(rekuiper_core::model::DlqStage::SqlEval),
+                                Some(&record.data),
+                                Some(&dlq_router),
+                            ).await;
+                            if dlq_router.on_error == crate::engine::dlq::OnErrorPolicy::Halt {
+                                return;
+                            }
                         }
                     }
                 }

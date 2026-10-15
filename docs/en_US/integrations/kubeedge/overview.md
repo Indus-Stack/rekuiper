@@ -2,7 +2,13 @@
 
 [KubeEdge](https://kubeedge.io/) is an open-source system that extends native containerized application orchestration to edge hosts.
 
-![arch](./arch.png)
+```mermaid
+flowchart TB
+    Cloud[Kubernetes Cloud Plane] -->|EdgeController| Edge[KubeEdge EdgeCore]
+    Devices[IoT Devices / Twins] -->|MQTT| Broker[Edge MQTT Broker]
+    Broker -->|Ingest Stream| Rek[rekuiper Engine]
+    Rek -->|Processed Alerts / Metrics| Cloud
+```
 
 As a Kubernetes-compliant platform, KubeEdge supports containerized deployment of rekuiper instances. Refer to the [installation guide](../../installation.md#install-via-helm--k8sk3s-) for instructions to install rekuiper in Kubernetes environments.
 

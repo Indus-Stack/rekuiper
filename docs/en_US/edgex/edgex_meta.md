@@ -35,17 +35,56 @@ rekuiper ingests EdgeX bus events and maps top-level sensor values directly to s
 
 1. Define an EdgeX stream named `events`:
 
-<img src="./create_stream.png" style="zoom:50%;" alt="Create Stream" />
+```sql
+CREATE STREAM events () WITH (TYPE="edgex", CONF_KEY="default")
+```
 
 2. When devices publish events to the message bus:
    - Metric values (`temperature`, `humidity`) become queryable columns.
    - Event and reading headers become metadata attributes.
 
-<img src="./bus_data.png" style="zoom:50%;" alt="EdgeX Bus Payload" />
+```json
+{
+  "apiVersion": "v2",
+  "id": "e4b6c310-9114-41d3-bb74-0f73b88b0a1d",
+  "deviceName": "demo2",
+  "profileName": "Random-Float-Device",
+  "sourceName": "Float",
+  "origin": 1622449767000000000,
+  "readings": [
+    {
+      "id": "5f130b0b-2da7-4e78-9b88-5183db2a450a",
+      "origin": 1622449767000000000,
+      "deviceName": "demo2",
+      "resourceName": "temperature",
+      "profileName": "Random-Float-Device",
+      "valueType": "Float64",
+      "value": 24.5
+    },
+    {
+      "id": "78c92a11-8be2-4751-bb33-728b9394fae1",
+      "origin": 1622449767000000000,
+      "deviceName": "demo2",
+      "resourceName": "humidity",
+      "profileName": "Random-Float-Device",
+      "valueType": "Float64",
+      "value": 65.2
+    }
+  ]
+}
+```
 
 3. Query columns and extract metadata attributes in SQL:
 
-<img src="./sql.png" style="zoom:50%;" alt="SQL Metadata Query" />
+```sql
+SELECT
+  temperature,
+  humidity,
+  meta(deviceName) AS device,
+  meta(origin) AS event_origin,
+  meta(temperature->id) AS temp_reading_id
+FROM events
+```
 
 ### Extracting Event-Level Metadata
 

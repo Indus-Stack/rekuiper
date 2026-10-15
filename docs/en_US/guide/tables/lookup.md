@@ -117,13 +117,9 @@ Test the rule by publishing telemetry records to `scene1/data`:
 
 Streaming records carry high-frequency telemetry, but omit static metadata to conserve network bandwidth. Applications join the stream with database records to append missing metadata, such as device models or plant locations.
 
-### Install and Configure the SQL Plugin
+### Configure the SQL Source
 
-This scenario uses MySQL as the external storage backend for the lookup table. Install the SQL source plugin before creating the rule.
-
-In the rekuiper management console, navigate to the extension management tab and install the SQL source plugin:
-
-![Install SQL source](./install_sql_source.png)
+This scenario uses MySQL as the external storage backend for the lookup table. The SQL source connector is compiled directly into the rekuiper engine binary (`sqlx`), so no external plugin installation is required.
 
 1. Start a MySQL instance.
 2. Create the `devices` table with columns `id`, `name`, and `deviceKind`. Insert sample records.

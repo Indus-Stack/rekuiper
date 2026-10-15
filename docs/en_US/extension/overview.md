@@ -1,89 +1,86 @@
 # Extension Architecture
 
-rekuiper provides a flexible extension architecture designed for high performance, portability, and safe sandboxing on resource-constrained edge hardware.
+rekuiper provides a modular extension framework designed for ultra-high throughput, predictable sub-millisecond execution, and safe sandboxing on resource-constrained edge hardware.
 
 ---
 
 ## Extension Models in rekuiper
 
-| Mechanism | Purpose | Supported Languages | Isolation and Safety | Status in rekuiper |
+| Mechanism | Purpose | Supported Technologies | Isolation Model | Documentation |
 | :--- | :--- | :--- | :--- | :--- |
-| **Built-in Connectors** | High-performance sources and sinks (Kafka, SQL, Redis, WebSocket, File, MQTT, HTTP) | Rust (compiled into binary) | Process internal | **Fully Supported** |
-| **WebAssembly (Wasm)** | Custom scalar and analytical SQL functions | Rust, C, C++, Go, Zig (compiled to `.wasm`) | Sandboxed bytecode runtime (`wasmi`) | **Fully Supported** |
-| **External Services** | Direct invocation of external RPC or HTTP services in SQL | Any language (REST or gRPC) | Separate network process | **Fully Supported** |
-| **Script Functions (UDF)** | Lightweight scalar functions defined in SQL scripts | JavaScript (ECMAScript) | Embedded Rust interpreter (`boa_engine`) | **Fully Supported** |
-| **Model Context Protocol (MCP)** | AI assistant control, query simulation, and validation | Native Rust daemon (`rekuiper-mcp`) | Standard JSON-RPC stdio | **Fully Supported** |
-| **Go Native (.so) Plugins** | Legacy C-shared dynamic libraries | Go | In-process dynamic loading | **Unsupported** |
-| **Portable Plugins** | Legacy out-of-process IPC plugins | Go, Python | nanomsg IPC sockets | **Unsupported (Returns 501)** |
+| **Built-in Connectors** | Core streaming sources and sinks (MQTT, Kafka, SQL, Redis, WebSocket, File, RabbitMQ) | Compiled into Rust binary | In-process native | [Connectors Guide](../guide/connector.md) |
+| **WebAssembly (Wasm)** | High-performance, sandboxed analytical functions and scalar UDFs | Rust, C, C++, Zig compiled to `.wasm` | Isolated bytecode sandbox (`wasmi`) | [WebAssembly Guide](./wasm/overview.md) |
+| **In-Process Rust UDFs** | Native scalar handlers registered into the engine runtime | Rust closures (`UdfFn`) | In-process native | [Native Guide](./native/overview.md) |
+| **External Services** | Remote microservice or AI inference endpoints (REST / gRPC) | Any language (FastAPI, Triton, etc.) | Independent network process | [External Services Guide](./external/external_func.md) |
+| **Model Context Protocol (MCP)** | AI assistant control, offline SQL AST validation, pipeline inspection | Rust JSON-RPC stdio daemon | Isolated tool process | [MCP Overview](../mcp/overview.md) |
 
-::: danger Legacy Plugin Support Notice
-1. **Go Native (.so) Plugins**: Unsupported. rekuiper is implemented in Rust and does not load Go dynamic shared objects. All high-demand connectors (Kafka, SQL, WebSocket, etc.) are compiled directly into the rekuiper engine binary.
-2. **Portable Plugins (`/plugins/portables`)**: Unsupported. The portable plugin endpoints return `501 Not Implemented`. For out-of-process multi-language logic, use [External Services (gRPC/REST)](external/external_func.md).
+::: info Architecture Note
+Legacy Go C-shared dynamic plugins (`.so`) and out-of-process IPC portable plugins from upstream eKuiper are unsupported. All high-demand streaming connectors are compiled directly into the rekuiper binary, eliminating external toolchain dependencies and glibc/musl version drift.
 :::
 
 ---
 
-## 1. Built-in Connectors
+## 1. WebAssembly (Wasm) Functions
 
-High-demand data sources and sinks are compiled directly into the rekuiper Rust engine. They deliver zero-copy throughput and zero garbage collection overhead without requiring external plugin compilation:
-- **Sources**: MQTT, HTTP (`httppull`, `httppush`), File (JSON, CSV, Parquet), WebSocket, Redis, Kafka (`rskafka`), SQL (`sqlx`: PostgreSQL, SQLite), Simulator, RabbitMQ, EdgeX, Neuron.
-- **Sinks**: MQTT, REST/HTTP, File, WebSocket, Redis, Kafka, SQL, RabbitMQ, EdgeX, Neuron, Log, Memory, Nop.
+[WebAssembly (Wasm)](./wasm/overview.md) provides sandboxed, high-performance function extensions. You can write algorithms in Rust, C, C++, or Zig and compile them into portable `.wasm` binaries targeting `wasm32-unknown-unknown`:
 
----
-
-## 2. WebAssembly (Wasm) Functions
-
-[WebAssembly (Wasm)](./wasm/overview.md) provides sandboxed, high-performance function extensions. You can write algorithms in Rust, C, C++, or Go and compile them into portable `.wasm` binaries:
-
-- **Safe Execution**: Sandboxed memory space prevents memory corruption and engine panics.
-- **Embedded Engine**: Uses the lightweight embedded `wasmi` interpreter without external runtime dependencies.
-- **Portability**: The same `.wasm` binary runs across x86_64, ARMv7, and AArch64 architectures without recompilation.
-- **Dynamic Deployment**: Install and register Wasm modules dynamically at runtime through the REST API or the CLI.
+- **Safe Execution**: Linear memory sandboxing protects the core streaming engine from memory corruption and segfaults.
+- **Embedded Engine**: Built-in `wasmi` interpreter requires zero external runtimes or system libraries.
+- **Dynamic Deployment**: Register modules at runtime via `POST /plugins/wasm` with base64 bytecode or local file paths.
 
 ```sql
 SELECT
   deviceId,
-  custom_filter(raw_reading) AS filtered_value
+  scale_temperature(temperature) AS temp_fahrenheit
 FROM
   sensor_stream;
 ```
 
-For instructions, refer to the [WebAssembly Extension Guide](./wasm/overview.md).
+Refer to the [WebAssembly Extension Guide](./wasm/overview.md).
 
 ---
 
-## 3. External Services (gRPC and REST)
+## 2. In-Process Rust UDFs
 
-If you maintain an external microservice, such as a Python AI inference server or a proprietary protocol gateway, rekuiper can invoke it directly from SQL:
+For users embedding rekuiper or compiling custom engine distributions, `rekuiper-core` provides the [`PluginManager`](./native/overview.md) and global UDF registry.
+
+Custom scalar functions can be registered directly as Rust closures (`Arc<dyn Fn(&[Value]) -> Value + Send + Sync>`) offering maximum execution performance with zero serialization overhead:
+
+```rust
+use rekuiper_core::plugin::get_global_udf_registry;
+use serde_json::json;
+use std::sync::Arc;
+
+let registry = get_global_udf_registry();
+registry.register_udf("scale", Arc::new(|args| {
+    let v = args.first().and_then(|x| x.as_f64()).unwrap_or(0.0);
+    json!(v * 100.0)
+}));
+```
+
+Refer to the [Native Extension Guide](./native/overview.md).
+
+---
+
+## 3. External Services (REST and gRPC)
+
+To invoke machine learning models (such as ONNX Runtime, PyTorch, or TensorFlow Lite) or query remote databases, configure an external service interface. rekuiper handles serializing SQL inputs and mapping the response back to stream columns:
 
 ```sql
 SELECT
   deviceId,
-  inference(image_payload)->label AS defect_class
+  predict_defect(vibration, temperature)->score AS defect_risk
 FROM
-  camera_stream;
+  telemetry_stream;
 ```
 
-- **Protocols**: Supports standard gRPC and HTTP REST endpoints.
-- **Direct Configuration**: Point rekuiper to the service configuration and invoke functions immediately without custom plugin code.
-
-For instructions, refer to the [External Services Guide](external/external_func.md).
+Refer to the [External Services Guide](./external/external_func.md).
 
 ---
 
-## 4. JavaScript Script Functions (UDF)
+## 4. Model Context Protocol (MCP)
 
-For quick transformations that do not require separate compilation, rekuiper supports JavaScript functions registered through the REST API or the CLI.
-
-The engine executes these scripts using an embedded 100% Rust ECMAScript interpreter (`boa_engine`). They are suitable for string formatting, mathematical conversions, and lightweight payload transformations.
-
-For instructions, refer to the [Script Functions Guide](script/overview.md).
-
----
-
-## 5. Model Context Protocol (MCP)
-
-For developer productivity and automated operational pipelines, rekuiper includes a native [Model Context Protocol (MCP)](../mcp/overview.md) server (`rekuiper-mcp`).
+For developer productivity and AI-assisted workflow automation, rekuiper includes a native [Model Context Protocol (MCP)](../mcp/overview.md) server (`rekuiper-mcp`).
 
 It allows AI assistants (Cursor, Claude Desktop, Antigravity) to:
 - Parse and validate streaming SQL ASTs offline without network overhead.

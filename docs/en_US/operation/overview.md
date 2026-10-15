@@ -9,5 +9,4 @@ This guide describes operational administration, monitoring, maintenance, and vi
 - **[Monitoring with Prometheus](./usage/monitor_with_prometheus.md):** Guides setup and visualization of runtime metrics using Prometheus and Grafana.
 - **[Error Codes](./usage/error_code.md):** References system error codes and troubleshooting actions.
 - **[Data Tracing](./usage/trace_data.md):** Guides OpenTelemetry tracing configuration and span inspection.
-- **[Management Console](./manager-ui/overview.md):** Introduces web-based visual management for streams, rules, and plugins.
 - **[Reliability & Stable Scope](../reliability/qualification_and_scope.md):** References MQTT delivery guarantees, broker outage caching, engine recovery, backup, and rollback procedures.

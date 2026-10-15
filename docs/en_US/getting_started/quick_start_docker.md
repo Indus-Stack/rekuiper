@@ -14,7 +14,7 @@ docker run -d \
   -p 9081:9081 \
   -p 20498:20498 \
   -p 20499:20499 \
-  ankurkrp/rekuiper:1.0.0-rc2
+  ankurkrp/rekuiper:1.0.0-rc3
 ```
 
 Verify that the engine operates and responds:
@@ -129,21 +129,16 @@ docker logs rekuiper | grep "LOG SINK"
 
 ---
 
-## 6. Optional: Visual Management with eKuiper Manager
+## 6. Interactive OpenAPI / Swagger UI
 
-You can use a web-based dashboard to configure rules and monitor visual topologies.
+rekuiper embeds an interactive OpenAPI Swagger UI directly inside the engine daemon.
 
-Start eKuiper Manager:
-
-```shell
-docker run -d \
-  --name ekuiper-manager \
-  -p 9082:9082 \
-  -e DEFAULT_EKUIPER_ENDPOINT="http://localhost:9081" \
-  ankur-paan/ekuiper-manager:latest
+Open your browser to:
+```text
+http://localhost:9081/
 ```
 
-Open `http://localhost:9082` in your browser. From this interface, you can inspect streams, edit rules visually, and monitor real-time execution graphs.
+From this interface, you can test REST endpoints, inspect stream schemas, create rules, and query runtime status interactively.
 
 ---
 

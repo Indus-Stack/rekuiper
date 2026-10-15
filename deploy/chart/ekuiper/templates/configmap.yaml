@@ -9,3 +9,18 @@ data:
   "kuiper.yaml": |
     {{ $kuiper := index .Values "kuiperConfig" "kuiper.yaml" }}
     {{- toYaml $kuiper | nindent 6 }}
+{{- if and .Values.declarative.enabled .Values.declarative.pipelines }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "ekuiper.fullname" . }}-pipelines
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ekuiper.labels" . | nindent 4 }}
+data:
+  {{- range $key, $value := .Values.declarative.pipelines }}
+  {{ $key | quote }}: |
+    {{- $value | nindent 4 }}
+  {{- end }}
+{{- end }}

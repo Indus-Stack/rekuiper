@@ -407,6 +407,11 @@ pub struct AppState {
     /// Embedded KV handle for config persistence across daemon restarts
     /// (`None` in unit tests, which never restart the process).
     pub kv: Option<Arc<dyn KvStore>>,
+    pub declarative_mode: bool,
+    pub declarative_path: Option<std::path::PathBuf>,
+    pub declarative_watch: bool,
+    pub active_rule_hashes: Arc<RwLock<HashMap<String, u64>>>,
+    pub declarative_reload_failures: Arc<std::sync::atomic::AtomicU64>,
 }
 
 pub fn default_import_status() -> Value {
@@ -512,6 +517,11 @@ impl AppState {
             js_udfs: create_default_js_udfs(),
             latest_import_status: Arc::new(RwLock::new(default_import_status())),
             kv: None,
+            declarative_mode: false,
+            declarative_path: None,
+            declarative_watch: false,
+            active_rule_hashes: Arc::new(RwLock::new(HashMap::new())),
+            declarative_reload_failures: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         }
     }
 }

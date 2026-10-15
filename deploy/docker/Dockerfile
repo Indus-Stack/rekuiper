@@ -1,5 +1,5 @@
 # Copyright (c) 2024-2026 I-Dacs Labs (https://i-dacs.com)
-# Copyright 2024-2026 LF Edge eKuiper Authors
+# Copyright 2024-2026 rekuiper Authors
 #
 # Licensed under the MIT License or Apache License, Version 2.0 at your option.
 # See LICENSE and LICENSE-APACHE for details.

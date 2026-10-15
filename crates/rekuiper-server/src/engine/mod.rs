@@ -1,8 +1,10 @@
+pub mod dlq;
 pub mod joins;
 pub mod runtime;
 pub mod sinks;
 pub mod windows;
 
+pub(crate) use dlq::*;
 pub(crate) use joins::*;
 pub(crate) use runtime::*;
 pub(crate) use sinks::*;
@@ -16,9 +18,9 @@ use rekuiper_conf::KuiperConfig;
 use rekuiper_connectors::codec::extract_required_fields_from_expr_names;
 use rekuiper_connectors::{
     FileSource, FileSourceConfig, HttpPullConfig, HttpPullSource, JsonFieldMask, KafkaConfig,
-    KafkaSource, MqttConfig, MqttSource, PayloadFormat, RabbitMqConfig, RabbitMqSource,
-    RedisSubSource, SimulatorConfig, SimulatorSource, SqlConnectorConfig, SqlSource, VideoSource,
-    VideoSourceConfig, WebSocketConfig, WebSocketSource, ZmqSource, ZmqSourceConfig,
+    KafkaSource, ModbusSource, MqttConfig, MqttSource, OpcUaSource, PayloadFormat, RabbitMqConfig,
+    RabbitMqSource, RedisSubSource, SimulatorConfig, SimulatorSource, SqlConnectorConfig, SqlSource,
+    VideoSource, VideoSourceConfig, WebSocketConfig, WebSocketSource, ZmqSource, ZmqSourceConfig,
 };
 use rekuiper_core::model::{RuleStatus, StreamField, StreamRecord};
 use rekuiper_core::{
@@ -998,6 +1000,39 @@ pub(crate) fn bootstrap_stream_sources(
         return;
     }
 
+    // Modbus source streams poll industrial PLCs over TCP or RTU-over-TCP into the stream bus.
+    if let Some(config) =
+        resolve_modbus_source(&state.stream_manager, &state.source_configs, stream_name)
+    {
+        let stream_tx = state.stream_bus.get_or_create(stream_name);
+        let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
+        register_rule_stream_source(state, stream_name, rule_id, cancel_tx);
+        ModbusSource::new(config, stream_tx).spawn(cancel_rx);
+        return;
+    }
+
+    // OPC-UA source streams poll OPC-UA servers over opc.tcp into the stream bus.
+    if let Some(config) =
+        resolve_opcua_source(&state.stream_manager, &state.source_configs, stream_name)
+    {
+        let stream_tx = state.stream_bus.get_or_create(stream_name);
+        let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
+        register_rule_stream_source(state, stream_name, rule_id, cancel_tx);
+        OpcUaSource::new(config, stream_tx).spawn(cancel_rx);
+        return;
+    }
+
+    // OTLP source streams receive or poll OpenTelemetry metrics/logs/traces into the stream bus.
+    if let Some(config) =
+        resolve_otlp_source(&state.stream_manager, &state.source_configs, stream_name)
+    {
+        let stream_tx = state.stream_bus.get_or_create(stream_name);
+        let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
+        register_rule_stream_source(state, stream_name, rule_id, cancel_tx);
+        rekuiper_connectors::OtlpSource::new(config, stream_tx).spawn(cancel_rx);
+        return;
+    }
+
     // Simulator / Random source streams replay configured data into the stream bus.
     if let Some(conf) = resolve_simulator_source(
         &state.stream_manager,
@@ -1640,6 +1675,18 @@ pub(crate) fn spawn_rule_task(
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
 
+    let enable_private_net = config.read().basic.enable_private_net;
+    let dlq_router = DlqRouter::build(
+        &rule_id,
+        rule_options.as_ref(),
+        loop_counters.clone(),
+        rule_manager.clone(),
+        stream_bus.clone(),
+        http_client.clone(),
+        enable_private_net,
+        source_configs,
+    );
+
     let bus_pred = if !rekuiper_sql::Evaluator::stmt_has_analytic(&select_stmt)
         && !is_event_time
         && !send_error
@@ -1666,12 +1713,36 @@ pub(crate) fn spawn_rule_task(
     let rx = if !from_fields.is_empty() {
         let (tx, coerced_rx) = tokio::sync::mpsc::channel(buffer_len);
         let fields = from_fields;
+        let schema_dlq = dlq_router.clone();
         tokio::spawn(async move {
             let mut rx = rx;
             while let Some(mut record) = rx.recv().await {
-                rekuiper_core::model::enforce_stream_schema(&mut record.data, &fields);
-                if tx.send(record).await.is_err() {
-                    break;
+                if schema_dlq.on_error == OnErrorPolicy::Dlq || schema_dlq.on_error == OnErrorPolicy::Halt {
+                    match rekuiper_core::model::enforce_stream_schema_checked(&mut record.data, &fields) {
+                        Ok(()) => {
+                            if tx.send(record).await.is_err() {
+                                break;
+                            }
+                        }
+                        Err(err) => {
+                            let payload_str = serde_json::to_string(&record.data).ok();
+                            schema_dlq.route_error(
+                                rekuiper_core::model::DlqStage::SchemaValidation,
+                                err.to_string(),
+                                payload_str.as_deref(),
+                                Some(serde_json::to_value(&record.data).unwrap_or(Value::Null)),
+                                None,
+                            );
+                            if schema_dlq.on_error == OnErrorPolicy::Halt {
+                                break;
+                            }
+                        }
+                    }
+                } else {
+                    rekuiper_core::model::enforce_stream_schema(&mut record.data, &fields);
+                    if tx.send(record).await.is_err() {
+                        break;
+                    }
                 }
             }
         });
@@ -1700,12 +1771,36 @@ pub(crate) fn spawn_rule_task(
                 .unwrap_or_default();
             let jrx = if !join_fields.is_empty() {
                 let (tx, coerced_jrx) = tokio::sync::mpsc::channel(buffer_len);
+                let join_dlq = dlq_router.clone();
                 tokio::spawn(async move {
                     let mut rx = jrx;
                     while let Some(mut record) = rx.recv().await {
-                        rekuiper_core::model::enforce_stream_schema(&mut record.data, &join_fields);
-                        if tx.send(record).await.is_err() {
-                            break;
+                        if join_dlq.on_error == OnErrorPolicy::Dlq || join_dlq.on_error == OnErrorPolicy::Halt {
+                            match rekuiper_core::model::enforce_stream_schema_checked(&mut record.data, &join_fields) {
+                                Ok(()) => {
+                                    if tx.send(record).await.is_err() {
+                                        break;
+                                    }
+                                }
+                                Err(err) => {
+                                    let payload_str = serde_json::to_string(&record.data).ok();
+                                    join_dlq.route_error(
+                                        rekuiper_core::model::DlqStage::SchemaValidation,
+                                        err.to_string(),
+                                        payload_str.as_deref(),
+                                        Some(serde_json::to_value(&record.data).unwrap_or(Value::Null)),
+                                        None,
+                                    );
+                                    if join_dlq.on_error == OnErrorPolicy::Halt {
+                                        break;
+                                    }
+                                }
+                            }
+                        } else {
+                            rekuiper_core::model::enforce_stream_schema(&mut record.data, &join_fields);
+                            if tx.send(record).await.is_err() {
+                                break;
+                            }
                         }
                     }
                 });
@@ -1729,6 +1824,7 @@ pub(crate) fn spawn_rule_task(
     let sink_http_client = http_client.clone();
     let sink_trace_mgr = trace_manager.clone();
     let sink_config = config.clone();
+    let sink_dlq_router = dlq_router.clone();
     let sink_counters = rule_manager
         .rule_counters(&rule_id)
         .unwrap_or_else(|| Arc::new(RuleCounters::default()));
@@ -1779,6 +1875,7 @@ pub(crate) fn spawn_rule_task(
                                     stream_bus: &sink_stream_bus,
                                     http_client: &sink_http_client,
                                     enable_private_net,
+                                    dlq_router: Some(&sink_dlq_router),
                                 };
                                 let _ = send_action(rt, &batch_record, None, &ctx, &mut files).await;
                             }
@@ -1825,6 +1922,7 @@ pub(crate) fn spawn_rule_task(
                         stream_bus: &sink_stream_bus,
                         http_client: &sink_http_client,
                         enable_private_net,
+                        dlq_router: Some(&sink_dlq_router),
                     };
 
                     let mut cur_output = output_record;
@@ -1916,6 +2014,7 @@ pub(crate) fn spawn_rule_task(
                         stream_bus: &sink_stream_bus,
                         http_client: &sink_http_client,
                         enable_private_net,
+                        dlq_router: Some(&sink_dlq_router),
                     };
                     let now = tokio::time::Instant::now();
                     for rt in runtimes.iter_mut() {
@@ -2011,6 +2110,7 @@ pub(crate) fn spawn_rule_task(
             event_time,
             rule_manager.clone(),
             checkpoint_interval_ms,
+            dlq_router.clone(),
         )),
         Some(WindowDef::Count { size, interval }) => tokio::spawn(run_count_window_rule(
             loop_counters,
@@ -2025,6 +2125,7 @@ pub(crate) fn spawn_rule_task(
             join_rxs,
             tables.clone(),
             confs.clone(),
+            dlq_router.clone(),
         )),
         Some(WindowDef::TumblingTime { unit, length }) => {
             if length == 0 {
@@ -2052,6 +2153,7 @@ pub(crate) fn spawn_rule_task(
                     join_rxs,
                     tables.clone(),
                     confs.clone(),
+                    dlq_router.clone(),
                 ))
             }
         }
@@ -2076,6 +2178,7 @@ pub(crate) fn spawn_rule_task(
                 join_rxs,
                 tables.clone(),
                 confs.clone(),
+                dlq_router.clone(),
             ))
         }
         Some(WindowDef::SlidingTime {
@@ -2099,6 +2202,7 @@ pub(crate) fn spawn_rule_task(
                 join_rxs,
                 tables.clone(),
                 confs.clone(),
+                dlq_router.clone(),
             ))
         }
         Some(WindowDef::Session {
@@ -2119,6 +2223,7 @@ pub(crate) fn spawn_rule_task(
             join_rxs,
             tables.clone(),
             confs.clone(),
+            dlq_router.clone(),
         )),
         Some(WindowDef::State {
             start_condition,
@@ -2137,6 +2242,7 @@ pub(crate) fn spawn_rule_task(
             join_rxs,
             tables.clone(),
             confs.clone(),
+            dlq_router.clone(),
         )),
     };
     rule_manager.set_rule_handle(&rule_id, handle);
@@ -2600,6 +2706,327 @@ pub(crate) fn resolve_simulator_source(
         }
     }
     Some(config)
+}
+
+pub(crate) fn resolve_modbus_options(
+    options: &HashMap<String, String>,
+    source_configs: &Arc<RwLock<HashMap<String, Value>>>,
+) -> Option<rekuiper_connectors::ModbusConfig> {
+    let is_modbus = options
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("TYPE"))
+        .map(|(_, v)| v.trim())
+        .is_some_and(|t| t.eq_ignore_ascii_case("modbus"));
+    if !is_modbus {
+        return None;
+    }
+    let mut config = rekuiper_connectors::ModbusConfig::default();
+    if let Some(key) = options
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("CONF_KEY") || k.eq_ignore_ascii_case("confKey"))
+        .map(|(_, v)| v.trim())
+        .filter(|s| !s.is_empty())
+    {
+        let lookup = format!("modbus/{}", key);
+        let lookup_src = format!("sources/modbus/{}", key);
+        let guard = source_configs.read();
+        let conf_val = guard
+            .get(&lookup)
+            .or_else(|| guard.get(&lookup_src))
+            .or_else(|| guard.get(key))
+            .cloned();
+        drop(guard);
+        if let Some(val) = conf_val {
+            if let Ok(c) = serde_json::from_value::<rekuiper_connectors::ModbusConfig>(val) {
+                config = c;
+            }
+        }
+    }
+    if let Some(ep) = options
+        .iter()
+        .find(|(k, _)| {
+            k.eq_ignore_ascii_case("ENDPOINT")
+                || k.eq_ignore_ascii_case("URL")
+                || k.eq_ignore_ascii_case("SERVER")
+                || k.eq_ignore_ascii_case("DATASOURCE")
+        })
+        .map(|(_, v)| v.trim())
+        .filter(|s| !s.is_empty())
+    {
+        config.endpoint = ep.to_string();
+    }
+    if let Some(tp) = options
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("TRANSPORT"))
+        .map(|(_, v)| v.trim())
+        .filter(|s| !s.is_empty())
+    {
+        config.transport = tp.to_string();
+    }
+    if let Some(u) = options
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("UNIT_ID") || k.eq_ignore_ascii_case("SLAVE_ID"))
+        .and_then(|(_, v)| v.trim().parse::<u8>().ok())
+    {
+        config.unit_id = u;
+    }
+    if let Some(iv) = options
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("INTERVAL"))
+        .map(|(_, v)| v.trim())
+        .filter(|s| !s.is_empty())
+    {
+        config.interval_ms = rekuiper_connectors::simulator::parse_interval_ms(&Value::String(iv.to_string())).as_millis().max(1) as u64;
+    }
+    if let Some(to) = options
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("TIMEOUT"))
+        .and_then(|(_, v)| v.trim().parse::<u64>().ok())
+    {
+        config.timeout_ms = to;
+    }
+    if let Some(ab) = options
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("ADDRESS_BASE") || k.eq_ignore_ascii_case("ADDRESSBASE"))
+        .and_then(|(_, v)| v.trim().parse::<u16>().ok())
+    {
+        config.address_base = Some(ab);
+    }
+    if let Some(plc) = options
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("PLC_ADDRESSING") || k.eq_ignore_ascii_case("PLCADDRESSING"))
+        .map(|(_, v)| v.trim().eq_ignore_ascii_case("true") || v.trim() == "1")
+    {
+        config.plc_addressing = plc;
+    }
+    if let Some(mg) = options
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("MAX_GAP") || k.eq_ignore_ascii_case("MAXGAP"))
+        .and_then(|(_, v)| v.trim().parse::<u16>().ok())
+    {
+        config.max_gap = mg;
+    }
+    if let Some(regs) = options
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("REGISTERS"))
+        .map(|(_, v)| v.trim())
+        .filter(|s| !s.is_empty())
+    {
+        if let Ok(r) = serde_json::from_str::<Vec<rekuiper_connectors::ModbusRegister>>(regs) {
+            config.registers = r;
+        }
+    }
+    Some(config)
+}
+
+pub(crate) fn resolve_modbus_source(
+    stream_manager: &StreamManager,
+    source_configs: &Arc<RwLock<HashMap<String, Value>>>,
+    stream_name: &str,
+) -> Option<rekuiper_connectors::ModbusConfig> {
+    let def = stream_manager.get_stream(stream_name)?;
+    resolve_modbus_options(&def.options, source_configs)
+}
+
+pub(crate) fn resolve_modbus_table_config(
+    table_manager: &TableManager,
+    source_configs: &Arc<RwLock<HashMap<String, Value>>>,
+    table_name: &str,
+) -> Option<rekuiper_connectors::ModbusConfig> {
+    let def = table_manager.get_table(table_name)?;
+    resolve_modbus_options(&def.options, source_configs)
+}
+
+pub(crate) fn resolve_opcua_options(
+    options: &HashMap<String, String>,
+    source_configs: &Arc<RwLock<HashMap<String, Value>>>,
+) -> Option<rekuiper_connectors::OpcUaConfig> {
+    let is_opcua = options
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("TYPE"))
+        .map(|(_, v)| v.trim())
+        .is_some_and(|t| {
+            t.eq_ignore_ascii_case("opcua")
+                || t.eq_ignore_ascii_case("opc_ua")
+                || t.eq_ignore_ascii_case("opc-ua")
+        });
+    if !is_opcua {
+        return None;
+    }
+    let mut config = rekuiper_connectors::OpcUaConfig::default();
+    if let Some(key) = options
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("CONF_KEY") || k.eq_ignore_ascii_case("confKey"))
+        .map(|(_, v)| v.trim())
+        .filter(|s| !s.is_empty())
+    {
+        let lookup = format!("opcua/{}", key);
+        let lookup_src = format!("sources/opcua/{}", key);
+        let guard = source_configs.read();
+        let conf_val = guard
+            .get(&lookup)
+            .or_else(|| guard.get(&lookup_src))
+            .or_else(|| guard.get(key))
+            .cloned();
+        drop(guard);
+        if let Some(val) = conf_val {
+            if let Ok(c) = serde_json::from_value::<rekuiper_connectors::OpcUaConfig>(val) {
+                config = c;
+            }
+        }
+    }
+    if let Some(ep) = options
+        .iter()
+        .find(|(k, _)| {
+            k.eq_ignore_ascii_case("ENDPOINT")
+                || k.eq_ignore_ascii_case("URL")
+                || k.eq_ignore_ascii_case("SERVER")
+                || k.eq_ignore_ascii_case("DATASOURCE")
+        })
+        .map(|(_, v)| v.trim())
+        .filter(|s| !s.is_empty())
+    {
+        config.endpoint = ep.to_string();
+    }
+    if let Some(iv) = options
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("INTERVAL"))
+        .map(|(_, v)| v.trim())
+        .filter(|s| !s.is_empty())
+    {
+        config.interval_ms = rekuiper_connectors::simulator::parse_interval_ms(&Value::String(iv.to_string())).as_millis().max(1) as u64;
+    }
+    if let Some(to) = options
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("TIMEOUT"))
+        .and_then(|(_, v)| v.trim().parse::<u64>().ok())
+    {
+        config.timeout_ms = to;
+    }
+    if let Some(sp) = options
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("SECURITY_POLICY") || k.eq_ignore_ascii_case("SECURITYPOLICY"))
+        .map(|(_, v)| v.trim())
+        .filter(|s| !s.is_empty())
+    {
+        config.security_policy = sp.to_string();
+    }
+    if let Some(u) = options
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("USERNAME") || k.eq_ignore_ascii_case("USER"))
+        .map(|(_, v)| v.trim().to_string())
+        .filter(|s| !s.is_empty())
+    {
+        config.username = Some(u);
+    }
+    if let Some(p) = options
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("PASSWORD") || k.eq_ignore_ascii_case("PASS"))
+        .map(|(_, v)| v.trim().to_string())
+        .filter(|s| !s.is_empty())
+    {
+        config.password = Some(p);
+    }
+    if let Some(nodes) = options
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("NODES"))
+        .map(|(_, v)| v.trim())
+        .filter(|s| !s.is_empty())
+    {
+        if let Ok(n) = serde_json::from_str::<Vec<rekuiper_connectors::OpcUaNodeMapping>>(nodes) {
+            config.nodes = n;
+        }
+    }
+    Some(config)
+}
+
+pub(crate) fn resolve_opcua_source(
+    stream_manager: &StreamManager,
+    source_configs: &Arc<RwLock<HashMap<String, Value>>>,
+    stream_name: &str,
+) -> Option<rekuiper_connectors::OpcUaConfig> {
+    let def = stream_manager.get_stream(stream_name)?;
+    resolve_opcua_options(&def.options, source_configs)
+}
+
+pub(crate) fn resolve_opcua_table_config(
+    table_manager: &TableManager,
+    source_configs: &Arc<RwLock<HashMap<String, Value>>>,
+    table_name: &str,
+) -> Option<rekuiper_connectors::OpcUaConfig> {
+    let def = table_manager.get_table(table_name)?;
+    resolve_opcua_options(&def.options, source_configs)
+}
+
+pub(crate) fn resolve_otlp_options(
+    options: &HashMap<String, String>,
+    source_configs: &Arc<RwLock<HashMap<String, Value>>>,
+) -> Option<rekuiper_connectors::OtlpSourceConfig> {
+    let is_otlp = options
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("TYPE"))
+        .map(|(_, v)| v.trim())
+        .is_some_and(|t| {
+            t.eq_ignore_ascii_case("otlp")
+                || t.eq_ignore_ascii_case("opentelemetry")
+                || t.eq_ignore_ascii_case("otel")
+        });
+    if !is_otlp {
+        return None;
+    }
+    let mut config = rekuiper_connectors::OtlpSourceConfig {
+        bind: None,
+        endpoint: None,
+        interval: None,
+    };
+    if let Some(key) = options
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("CONF_KEY") || k.eq_ignore_ascii_case("confKey"))
+        .map(|(_, v)| v.trim())
+        .filter(|s| !s.is_empty())
+    {
+        let lookup = format!("otlp/{}", key);
+        let lookup_src = format!("sources/otlp/{}", key);
+        let guard = source_configs.read();
+        let conf_val = guard
+            .get(&lookup)
+            .or_else(|| guard.get(&lookup_src))
+            .or_else(|| guard.get(key))
+            .cloned();
+        drop(guard);
+        if let Some(v) = conf_val {
+            if let Ok(c) = serde_json::from_value::<rekuiper_connectors::OtlpSourceConfig>(v) {
+                config = c;
+            }
+        }
+    }
+    if let Some(ep) = options
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("ENDPOINT") || k.eq_ignore_ascii_case("BIND") || k.eq_ignore_ascii_case("SERVER"))
+        .map(|(_, v)| v.trim().to_string())
+        .filter(|s| !s.is_empty())
+    {
+        config.bind = Some(ep.clone());
+        config.endpoint = Some(ep);
+    }
+    if let Some(iv) = options
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("INTERVAL"))
+        .map(|(_, v)| v.trim().to_string())
+        .filter(|s| !s.is_empty())
+    {
+        config.interval = Some(iv);
+    }
+    Some(config)
+}
+
+pub(crate) fn resolve_otlp_source(
+    stream_manager: &StreamManager,
+    source_configs: &Arc<RwLock<HashMap<String, Value>>>,
+    stream_name: &str,
+) -> Option<rekuiper_connectors::OtlpSourceConfig> {
+    let def = stream_manager.get_stream(stream_name)?;
+    resolve_otlp_options(&def.options, source_configs)
 }
 
 #[cfg(test)]

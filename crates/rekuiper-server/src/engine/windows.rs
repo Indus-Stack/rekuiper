@@ -224,6 +224,7 @@ pub(crate) async fn run_count_window_rule(
     join_rxs: Vec<(String, StreamReceiver)>,
     table_manager: TableManager,
     source_configs: Arc<RwLock<HashMap<String, Value>>>,
+    dlq_router: crate::engine::dlq::DlqRouter,
 ) {
     let count = size.max(1);
     let hop = interval.unwrap_or(count).max(1);
@@ -253,7 +254,10 @@ pub(crate) async fn run_count_window_rule(
                     continue;
                 }
                 counters.inc_source(1);
-                if handle_error_record(&counters, &rule_id, send_error, &sink, &record).await {
+                if handle_error_record(&counters, &rule_id, send_error, &sink, &record, Some(&dlq_router)).await {
+                    if dlq_router.on_error == crate::engine::dlq::OnErrorPolicy::Halt {
+                        break;
+                    }
                     continue;
                 }
                 if !window_ingest_passes(&select_stmt, &record.data) {
@@ -301,7 +305,10 @@ pub(crate) async fn run_count_window_rule(
                         }
                         counters.inc_source(1);
                         let probe = StreamRecord::from_shared(tagged.data.clone());
-                        if handle_error_record(&counters, &rule_id, send_error, &sink, &probe).await {
+                        if handle_error_record(&counters, &rule_id, send_error, &sink, &probe, Some(&dlq_router)).await {
+                            if dlq_router.on_error == crate::engine::dlq::OnErrorPolicy::Halt {
+                                break;
+                            }
                             continue;
                         }
                         if !window_ingest_passes(&select_stmt, &tagged.data) {
@@ -374,6 +381,7 @@ pub(crate) async fn run_tumbling_window_rule(
     join_rxs: Vec<(String, StreamReceiver)>,
     table_manager: TableManager,
     source_configs: Arc<RwLock<HashMap<String, Value>>>,
+    dlq_router: crate::engine::dlq::DlqRouter,
 ) {
     let rule_state = RuleState::default();
     let start_time_ms = chrono::Utc::now().timestamp_millis();
@@ -505,9 +513,12 @@ pub(crate) async fn run_tumbling_window_rule(
                             continue;
                         }
                         counters.inc_source(1);
-                        if handle_error_record(&counters, &rule_id, send_error, &sink, &record)
+                        if handle_error_record(&counters, &rule_id, send_error, &sink, &record, Some(&dlq_router))
                             .await
                         {
+                            if dlq_router.on_error == crate::engine::dlq::OnErrorPolicy::Halt {
+                                break;
+                            }
                             continue;
                         }
                         ingest!(TaggedRow { source: from_source.clone(), data: record.data });
@@ -523,7 +534,10 @@ pub(crate) async fn run_tumbling_window_rule(
                         }
                         counters.inc_source(1);
                         let probe = StreamRecord::from_shared(tagged.data.clone());
-                        if handle_error_record(&counters, &rule_id, send_error, &sink, &probe).await {
+                        if handle_error_record(&counters, &rule_id, send_error, &sink, &probe, Some(&dlq_router)).await {
+                            if dlq_router.on_error == crate::engine::dlq::OnErrorPolicy::Halt {
+                                break;
+                            }
                             continue;
                         }
                         ingest!(tagged);
@@ -571,6 +585,7 @@ pub(crate) async fn run_session_window_rule(
     join_rxs: Vec<(String, StreamReceiver)>,
     table_manager: TableManager,
     source_configs: Arc<RwLock<HashMap<String, Value>>>,
+    dlq_router: crate::engine::dlq::DlqRouter,
 ) {
     let rule_state = RuleState::default();
     let start_time_ms = chrono::Utc::now().timestamp_millis();
@@ -731,9 +746,12 @@ pub(crate) async fn run_session_window_rule(
                             continue;
                         }
                         counters.inc_source(1);
-                        if handle_error_record(&counters, &rule_id, send_error, &sink, &record)
+                        if handle_error_record(&counters, &rule_id, send_error, &sink, &record, Some(&dlq_router))
                             .await
                         {
+                            if dlq_router.on_error == crate::engine::dlq::OnErrorPolicy::Halt {
+                                break;
+                            }
                             continue;
                         }
                         ingest_session!(TaggedRow { source: from_source.clone(), data: record.data });
@@ -749,7 +767,10 @@ pub(crate) async fn run_session_window_rule(
                         }
                         counters.inc_source(1);
                         let probe = StreamRecord::from_shared(tagged.data.clone());
-                        if handle_error_record(&counters, &rule_id, send_error, &sink, &probe).await {
+                        if handle_error_record(&counters, &rule_id, send_error, &sink, &probe, Some(&dlq_router)).await {
+                            if dlq_router.on_error == crate::engine::dlq::OnErrorPolicy::Halt {
+                                break;
+                            }
                             continue;
                         }
                         ingest_session!(tagged);
@@ -813,6 +834,7 @@ pub(crate) async fn run_hopping_window_rule(
     join_rxs: Vec<(String, StreamReceiver)>,
     table_manager: TableManager,
     source_configs: Arc<RwLock<HashMap<String, Value>>>,
+    dlq_router: crate::engine::dlq::DlqRouter,
 ) {
     let rule_state = RuleState::default();
     let start_time_ms = chrono::Utc::now().timestamp_millis();
@@ -942,9 +964,12 @@ pub(crate) async fn run_hopping_window_rule(
                             continue;
                         }
                         counters.inc_source(1);
-                        if handle_error_record(&counters, &rule_id, send_error, &sink, &record)
+                        if handle_error_record(&counters, &rule_id, send_error, &sink, &record, Some(&dlq_router))
                             .await
                         {
+                            if dlq_router.on_error == crate::engine::dlq::OnErrorPolicy::Halt {
+                                break;
+                            }
                             continue;
                         }
                         ingest_hop!(TaggedRow { source: from_source.clone(), data: record.data });
@@ -960,7 +985,10 @@ pub(crate) async fn run_hopping_window_rule(
                         }
                         counters.inc_source(1);
                         let probe = StreamRecord::from_shared(tagged.data.clone());
-                        if handle_error_record(&counters, &rule_id, send_error, &sink, &probe).await {
+                        if handle_error_record(&counters, &rule_id, send_error, &sink, &probe, Some(&dlq_router)).await {
+                            if dlq_router.on_error == crate::engine::dlq::OnErrorPolicy::Halt {
+                                break;
+                            }
                             continue;
                         }
                         ingest_hop!(tagged);
@@ -1009,6 +1037,7 @@ pub(crate) async fn run_sliding_window_rule(
     join_rxs: Vec<(String, StreamReceiver)>,
     table_manager: TableManager,
     source_configs: Arc<RwLock<HashMap<String, Value>>>,
+    dlq_router: crate::engine::dlq::DlqRouter,
 ) {
     let rule_state = RuleState::default();
     let start_time_ms = chrono::Utc::now().timestamp_millis();
@@ -1206,7 +1235,10 @@ pub(crate) async fn run_sliding_window_rule(
                     continue;
                 }
                 counters.inc_source(1);
-                if handle_error_record(&counters, &rule_id, send_error, &sink, &record).await {
+                if handle_error_record(&counters, &rule_id, send_error, &sink, &record, Some(&dlq_router)).await {
+                    if dlq_router.on_error == crate::engine::dlq::OnErrorPolicy::Halt {
+                        break;
+                    }
                     continue;
                 }
                 ingest_slide!(TaggedRow { source: from_source.clone(), data: record.data });
@@ -1222,7 +1254,10 @@ pub(crate) async fn run_sliding_window_rule(
                         }
                         counters.inc_source(1);
                         let probe = StreamRecord::from_shared(tagged.data.clone());
-                        if handle_error_record(&counters, &rule_id, send_error, &sink, &probe).await {
+                        if handle_error_record(&counters, &rule_id, send_error, &sink, &probe, Some(&dlq_router)).await {
+                            if dlq_router.on_error == crate::engine::dlq::OnErrorPolicy::Halt {
+                                break;
+                            }
                             continue;
                         }
                         ingest_slide!(tagged);
@@ -1257,6 +1292,7 @@ pub(crate) async fn run_state_window_rule(
     join_rxs: Vec<(String, StreamReceiver)>,
     table_manager: TableManager,
     source_configs: Arc<RwLock<HashMap<String, Value>>>,
+    dlq_router: crate::engine::dlq::DlqRouter,
 ) {
     struct StateWindowState {
         on_begin: bool,
@@ -1392,7 +1428,10 @@ pub(crate) async fn run_state_window_rule(
                             continue;
                         }
                         counters.inc_source(1);
-                        if handle_error_record(&counters, &rule_id, send_error, &sink, &record).await {
+                        if handle_error_record(&counters, &rule_id, send_error, &sink, &record, Some(&dlq_router)).await {
+                            if dlq_router.on_error == crate::engine::dlq::OnErrorPolicy::Halt {
+                                break;
+                            }
                             continue;
                         }
                         ingest_state!(TaggedRow { source: from_source.clone(), data: record.data });
@@ -1408,7 +1447,10 @@ pub(crate) async fn run_state_window_rule(
                         }
                         counters.inc_source(1);
                         let probe = StreamRecord::from_shared(tagged.data.clone());
-                        if handle_error_record(&counters, &rule_id, send_error, &sink, &probe).await {
+                        if handle_error_record(&counters, &rule_id, send_error, &sink, &probe, Some(&dlq_router)).await {
+                            if dlq_router.on_error == crate::engine::dlq::OnErrorPolicy::Halt {
+                                break;
+                            }
                             continue;
                         }
                         ingest_state!(tagged);

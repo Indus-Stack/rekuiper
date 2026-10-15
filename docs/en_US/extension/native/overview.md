@@ -1,33 +1,97 @@
-# Native Plugins (Status in rekuiper)
+# Native Extensions and In-Process Rust UDFs
 
-::: danger Status: Unsupported in rekuiper (Legacy eKuiper Reference Only)
-Go C-shared (`.so`) dynamic plugins from legacy eKuiper are unsupported in rekuiper. **rekuiper is implemented in Rust and does not load Go dynamic plugins.**
-:::
-
-## Status and Rationale
-
-Legacy eKuiper used the Go `plugin` package to load dynamic `.so` libraries at runtime. That mechanism has several critical operational limitations:
-
-1. **Toolchain Coupling**: Go dynamic plugins require the exact compiler version, operating system, and dependency module paths of the host binary.
-2. **Platform Incompatibility**: Dynamic Go plugins are unreliable or unsupported on Alpine Linux (musl libc), macOS, Windows, and embedded ARM distributions.
-3. **Rust Runtime Architecture**: rekuiper is implemented in Rust to deliver high throughput and zero garbage collection pauses. It does not run a Go runtime and does not load Go `.so` shared objects.
+rekuiper provides an extensible user-defined function (UDF) and plugin subsystem implemented in `rekuiper-core` (`crates/rekuiper-core/src/plugin.rs`).
 
 ---
 
-## Supported Extensibility Options in rekuiper
+## Architectural Principles
 
-To extend rekuiper with custom sources, sinks, or analytical functions, use these supported mechanisms:
+Legacy eKuiper used Go C-shared dynamic plugins (`.so`). rekuiper is implemented in 100% Rust to achieve zero garbage-collection jitter and sub-millisecond tail latency. **rekuiper does not load legacy Go dynamic plugins.**
 
-| Mechanism | Supported Languages | Use Case |
-| :--- | :--- | :--- |
-| **[Built-in Connectors](../../guide/sources/overview.md)** | Rust (embedded in binary) | Pre-compiled connectors for Kafka, SQL, Redis, WebSocket, File, MQTT, HTTP. |
-| **[WebAssembly (Wasm)](../wasm/overview.md)** | Rust, C, C++, Go (TinyGo), Zig | Sandboxed, high-performance in-process functions and analytical logic. |
-| **[External Services](../external/external_func.md)** | Any language (Python, Node.js, Go, Java, Rust) | Invoking external microservices and machine learning models over **gRPC** or **REST**. |
-| **[Script Functions (UDF)](../script/overview.md)** | JavaScript | Lightweight runtime functions executed by the embedded `boa_engine` interpreter. |
-| **[Model Context Protocol (MCP)](../../mcp/overview.md)** | AI Assistants and JSON-RPC clients | Managing rules, validating SQL ASTs, and testing pipelines through AI tools. |
+Instead, native extensions in rekuiper operate on two distinct levels:
+1. **In-Process Rust Scalar Handlers (`UdfFn`)**: Pure Rust closures registered directly into the engine runtime.
+2. **Plugin Catalog Metadata (`PluginDefinition`)**: Persistent metadata tracking installed plugins, schemas, and function lists across node restarts.
 
 ---
 
-## Legacy Documentation Notice
+## In-Process Rust UDF Interface
 
-The child pages in this section describe the legacy Go plugin architecture as a technical reference for migrating from older eKuiper deployments. For new extensions, use WebAssembly, External Services, or Script Functions.
+The primary mechanism for executing custom native code is the `PluginManager` scalar UDF registry:
+
+```rust
+use serde_json::Value;
+use std::sync::Arc;
+
+/// A scalar UDF handler: pure function from evaluated arguments to a value.
+pub type UdfFn = Arc<dyn Fn(&[Value]) -> Value + Send + Sync>;
+```
+
+### Registering Custom Functions in Rust
+
+When embedding rekuiper or extending the engine binary, register custom functions with `get_global_udf_registry()`:
+
+```rust
+use rekuiper_core::plugin::get_global_udf_registry;
+use serde_json::{json, Value};
+use std::sync::Arc;
+
+fn setup_custom_udfs() {
+    let registry = get_global_udf_registry();
+
+    // Register a custom scalar multiplier
+    registry.register_udf("my_multiply", Arc::new(|args: &[Value]| {
+        if args.len() < 2 {
+            return Value::Null;
+        }
+        let a = args[0].as_f64().unwrap_or(0.0);
+        let b = args[1].as_f64().unwrap_or(0.0);
+        json!(a * b)
+    }));
+
+    // Register a string formatter
+    registry.register_udf("device_tag", Arc::new(|args: &[Value]| {
+        let id = args.get(0).and_then(|v| v.as_str()).unwrap_or("unknown");
+        json!(format!("edge-device:{}", id))
+    }));
+}
+```
+
+### Case-Insensitive Function Resolution
+
+The SQL evaluator resolves function names case-insensitively. A function registered as `my_multiply` can be invoked in SQL as `MY_MULTIPLY(...)` or `my_multiply(...)`.
+
+---
+
+## Plugin Definition and Metadata Persistence
+
+The `PluginManager` persists plugin declarations across engine restarts using the pluggable KV storage layer (under the `"plugins"` namespace):
+
+```rust
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginDefinition {
+    pub name: String,
+    pub plugin_type: String, // "function", "source", "sink", "udf"
+    pub file: Option<String>,
+    pub description: Option<String>,
+    pub functions: Vec<String>,
+}
+```
+
+### Persistence Guarantees
+
+- **Definitions Persist**: Plugin definitions registered via REST or configuration are serialized to SQLite/KV storage and reloaded upon engine bootstrap via `load_from_kv`.
+- **Code Handlers Must Be Bootstrapped**: Because closures (`UdfFn`) and native symbols represent compiled code, the host process re-registers the executable handlers during application startup.
+
+---
+
+## Comparison of Extensibility Models
+
+| Feature | In-Process Rust UDFs | WebAssembly (Wasm) | External Services |
+| :--- | :--- | :--- | :--- |
+| **Implementation** | Pure Rust closure (`UdfFn`) | Bytecode module (`wasmi`) | Remote HTTP / gRPC process |
+| **Execution Speed** | Native machine speed (zero IPC) | Near-native interpreted Wasm | Network / Unix domain socket RPC |
+| **Isolation** | Runs inside host process space | Sandboxed linear memory | Separate OS process |
+| **Hot Reloading** | Process restart / re-registration | REST API dynamic registration | Independent service deployment |
+| **Language Support** | Rust | Rust, C, C++, Zig | Any (Python, Go, Node.js, etc.) |
+
+For sandboxed dynamic deployment without rebuilding the binary, use **[WebAssembly (Wasm)](../wasm/overview.md)** or **[External Services](../external/external_func.md)**.

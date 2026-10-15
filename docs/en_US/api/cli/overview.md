@@ -4,9 +4,12 @@ The rekuiper Command Line Interface (CLI) tool manages streams, tables, rules, a
 
 The rekuiper CLI acts as a client to the rekuiper server daemon. The server runs the core engine that processes stream and rule definitions, manages execution state, and performs I/O operations.
 
-*rekuiper CLI Architecture*
-
-![CLI Arch](./resources/arch.png)
+```mermaid
+flowchart LR
+    CLI[kuiper CLI client] -->|REST API :9081| Daemon[rekuiper daemon]
+    Daemon --> Storage[(SQLite KV Store)]
+    Daemon --> Engine[Stream Engine]
+```
 
 ## Available CLI Management Guides
 
@@ -17,7 +20,6 @@ The rekuiper CLI acts as a client to the rekuiper server daemon. The server runs
 - [Data Import and Export](data.md)
 - [Plugins](plugins.md)
 - [Schemas](schemas.md)
-- [Scripts](scripts.md)
 - [Services](services.md)
 
 ## Process Exit Codes & Scripting Automation

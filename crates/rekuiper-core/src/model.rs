@@ -171,7 +171,7 @@ impl StreamField {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StreamDefinition {
     pub name: String,
     #[serde(default)]
@@ -182,7 +182,7 @@ pub struct StreamDefinition {
     pub options: HashMap<String, String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SchemaDefinition {
     pub name: String,
     pub kind: String, // e.g. "protobuf"
@@ -192,7 +192,7 @@ pub struct SchemaDefinition {
     pub file: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TableDefinition {
     pub name: String,
     #[serde(default)]
@@ -203,7 +203,7 @@ pub struct TableDefinition {
     pub options: HashMap<String, String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct RuleDefinition {
     #[serde(default)]
     pub id: String,
@@ -570,6 +570,9 @@ pub struct RuleStatus {
     /// backpressure (awaiting capacity).
     #[serde(default)]
     pub sink_blocked_micros_total: u64,
+    /// Total records routed to the dead-letter queue (poison pills / errors).
+    #[serde(default)]
+    pub dlq_records_total: u64,
 }
 
 impl Default for RuleStatus {
@@ -590,6 +593,7 @@ impl Default for RuleStatus {
             dropped_by_policy_total: 0,
             sink_queue_high_water: 0,
             sink_blocked_micros_total: 0,
+            dlq_records_total: 0,
         }
     }
 }
@@ -843,6 +847,675 @@ pub fn enforce_stream_schema(data: &mut HashMap<String, Value>, fields: &[Stream
     }
 }
 
+// ---------------------------------------------------------------------------
+// Dead-Letter Queue (DLQ) & Poison-Pill Models
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum DlqStage {
+    CodecDecode = 0,
+    SchemaValidation = 1,
+    SqlEval = 2,
+    DataTemplate = 3,
+    SinkDelivery = 4,
+}
+
+impl DlqStage {
+    pub const ALL: [DlqStage; 5] = [
+        DlqStage::CodecDecode,
+        DlqStage::SchemaValidation,
+        DlqStage::SqlEval,
+        DlqStage::DataTemplate,
+        DlqStage::SinkDelivery,
+    ];
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            DlqStage::CodecDecode => "CodecDecode",
+            DlqStage::SchemaValidation => "SchemaValidation",
+            DlqStage::SqlEval => "SqlEval",
+            DlqStage::DataTemplate => "DataTemplate",
+            DlqStage::SinkDelivery => "SinkDelivery",
+        }
+    }
+
+    pub fn label_str(&self) -> &'static str {
+        match self {
+            DlqStage::CodecDecode => "codec_decode",
+            DlqStage::SchemaValidation => "schema_validation",
+            DlqStage::SqlEval => "sql_eval",
+            DlqStage::DataTemplate => "data_template",
+            DlqStage::SinkDelivery => "sink_delivery",
+        }
+    }
+
+    pub fn from_index(idx: usize) -> Option<Self> {
+        match idx {
+            0 => Some(DlqStage::CodecDecode),
+            1 => Some(DlqStage::SchemaValidation),
+            2 => Some(DlqStage::SqlEval),
+            3 => Some(DlqStage::DataTemplate),
+            4 => Some(DlqStage::SinkDelivery),
+            _ => None,
+        }
+    }
+}
+
+impl std::fmt::Display for DlqStage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+pub const MAX_DLQ_RAW_PAYLOAD_BYTES: usize = 4096;
+
+/// Safely truncates a raw payload string to strictly at most `max_bytes` without slicing inside a UTF-8 character.
+pub fn truncate_raw_payload(payload: &str, max_bytes: usize) -> String {
+    if payload.len() <= max_bytes {
+        return payload.to_string();
+    }
+    let suffix = "…[truncated]";
+    let target = max_bytes.saturating_sub(suffix.len());
+    let mut boundary = target;
+    while boundary > 0 && !payload.is_char_boundary(boundary) {
+        boundary -= 1;
+    }
+    let truncated = &payload[..boundary];
+    format!("{}{}", truncated, suffix)
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DlqEnvelope {
+    pub rule_id: String,
+    pub timestamp: i64,
+    pub stage: DlqStage,
+    pub error: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub raw_payload: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tuple: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sink_type: Option<String>,
+}
+
+impl DlqEnvelope {
+    pub fn new(rule_id: impl Into<String>, stage: DlqStage, error: impl Into<String>) -> Self {
+        Self {
+            rule_id: rule_id.into(),
+            timestamp: chrono::Utc::now().timestamp_millis(),
+            stage,
+            error: error.into(),
+            raw_payload: None,
+            tuple: None,
+            sink_type: None,
+        }
+    }
+
+    pub fn with_raw_payload(mut self, raw: &str) -> Self {
+        self.raw_payload = Some(truncate_raw_payload(raw, MAX_DLQ_RAW_PAYLOAD_BYTES));
+        self
+    }
+
+    pub fn with_tuple(mut self, tuple: Value) -> Self {
+        self.tuple = Some(tuple);
+        self
+    }
+
+    pub fn with_sink_type(mut self, sink: impl Into<String>) -> Self {
+        self.sink_type = Some(sink.into());
+        self
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DlqStats {
+    pub rule_id: String,
+    pub total_errors: u64,
+    pub codec_decode: u64,
+    pub schema_validation: u64,
+    pub sql_eval: u64,
+    pub data_template: u64,
+    pub sink_delivery: u64,
+    pub sink_failures: u64,
+    pub recent_errors: Vec<DlqEnvelope>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SchemaMismatchError {
+    pub field: String,
+    pub expected: String,
+    pub actual_value: String,
+}
+
+impl std::fmt::Display for SchemaMismatchError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Field '{}' expected type '{}', got: {}",
+            self.field, self.expected, self.actual_value
+        )
+    }
+}
+
+impl std::error::Error for SchemaMismatchError {}
+
+/// Strict schema validator: validates and coerces declared fields, returning an error
+/// if any non-null present value cannot be coerced into the declared type.
+pub fn enforce_stream_schema_checked(
+    data: &mut HashMap<String, Value>,
+    fields: &[StreamField],
+) -> Result<(), SchemaMismatchError> {
+    if fields.is_empty() {
+        return Ok(());
+    }
+    for field in fields {
+        let existing_key = if data.contains_key(&field.name) {
+            Some(field.name.clone())
+        } else {
+            data.keys()
+                .find(|k| k.eq_ignore_ascii_case(&field.name))
+                .cloned()
+        };
+
+        if let Some(key) = existing_key {
+            let val = data.remove(&key).unwrap_or(Value::Null);
+            if val.is_null() {
+                if let Some(ref def_str) = field.default_value {
+                    let default_val = parse_default_value(def_str, &field.field_type);
+                    data.insert(field.name.clone(), default_val);
+                } else {
+                    data.insert(field.name.clone(), Value::Null);
+                }
+            } else {
+                let coerced = coerce_value_to_type(val.clone(), &field.field_type);
+                if coerced.is_null() {
+                    return Err(SchemaMismatchError {
+                        field: field.name.clone(),
+                        expected: field.field_type.clone(),
+                        actual_value: val.to_string(),
+                    });
+                }
+                data.insert(field.name.clone(), coerced);
+            }
+        } else if let Some(ref def_str) = field.default_value {
+            let default_val = parse_default_value(def_str, &field.field_type);
+            data.insert(field.name.clone(), default_val);
+        } else if (field.field_type.eq_ignore_ascii_case("bytea")
+            || field.field_type.eq_ignore_ascii_case("binary"))
+            && data.contains_key("self")
+        {
+            if let Some(val) = data.get("self").cloned() {
+                data.insert(field.name.clone(), val);
+            }
+        }
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Declarative GitOps / Config-as-Code Manifest Models
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum DiagnosticLevel {
+    Error,
+    Warning,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ValidationDiagnostic {
+    pub level: DiagnosticLevel,
+    pub entity_type: String, // "stream", "table", "rule", "connection", "schema", "manifest"
+    pub entity_id: String,
+    pub message: String,
+}
+
+impl std::fmt::Display for ValidationDiagnostic {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let prefix = match self.level {
+            DiagnosticLevel::Error => "✗",
+            DiagnosticLevel::Warning => "⚠",
+        };
+        write!(
+            f,
+            "{} {} '{}': {}",
+            prefix, self.entity_type, self.entity_id, self.message
+        )
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct ValidationSummary {
+    pub streams_count: usize,
+    pub tables_count: usize,
+    pub rules_count: usize,
+    pub connections_count: usize,
+    pub schemas_count: usize,
+    pub errors_count: usize,
+    pub warnings_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(untagged)]
+#[allow(clippy::large_enum_variant)]
+pub enum DeclarativeRuleValue {
+    Structured(RuleDefinition),
+    Stringified(String),
+}
+
+impl DeclarativeRuleValue {
+    pub fn to_rule_definition(&self, fallback_id: &str) -> Result<RuleDefinition, String> {
+        match self {
+            DeclarativeRuleValue::Structured(r) => {
+                let mut rule = r.clone();
+                if rule.id.is_empty() {
+                    rule.id = fallback_id.to_string();
+                }
+                Ok(rule)
+            }
+            DeclarativeRuleValue::Stringified(s) => {
+                let mut rule: RuleDefinition = serde_json::from_str(s).map_err(|e| {
+                    format!(
+                        "Failed to parse rule '{}' stringified JSON: {}",
+                        fallback_id, e
+                    )
+                })?;
+                if rule.id.is_empty() {
+                    rule.id = fallback_id.to_string();
+                }
+                Ok(rule)
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(untagged)]
+pub enum DeclarativeRules {
+    Map(std::collections::BTreeMap<String, DeclarativeRuleValue>),
+    List(Vec<RuleDefinition>),
+}
+
+impl Default for DeclarativeRules {
+    fn default() -> Self {
+        DeclarativeRules::Map(std::collections::BTreeMap::new())
+    }
+}
+
+impl DeclarativeRules {
+    pub fn into_rules_map(
+        self,
+    ) -> Result<std::collections::BTreeMap<String, RuleDefinition>, String> {
+        let mut map = std::collections::BTreeMap::new();
+        match self {
+            DeclarativeRules::Map(m) => {
+                for (id, val) in m {
+                    let rule = val.to_rule_definition(&id)?;
+                    map.insert(id, rule);
+                }
+            }
+            DeclarativeRules::List(list) => {
+                for rule in list {
+                    if rule.id.is_empty() {
+                        return Err("Rule in list missing 'id' field".to_string());
+                    }
+                    map.insert(rule.id.clone(), rule);
+                }
+            }
+        }
+        Ok(map)
+    }
+
+    pub fn to_rules_vec(&self) -> Result<Vec<RuleDefinition>, String> {
+        let mut vec = Vec::new();
+        match self {
+            DeclarativeRules::Map(m) => {
+                for (id, val) in m {
+                    vec.push(val.to_rule_definition(id)?);
+                }
+            }
+            DeclarativeRules::List(list) => {
+                vec.extend(list.clone());
+            }
+        }
+        Ok(vec)
+    }
+}
+
+pub fn interpolate_env_vars(raw: &str, allow_unresolved: bool) -> Result<String, Vec<String>> {
+    let re = match regex::Regex::new(r"\$\{([a-zA-Z_][a-zA-Z0-9_]*)(?::-([^}]*))?\}") {
+        Ok(r) => r,
+        Err(_) => return Ok(raw.to_string()),
+    };
+    let mut unresolved = Vec::new();
+    let mut result = String::with_capacity(raw.len());
+    let mut last_idx = 0;
+
+    for cap in re.captures_iter(raw) {
+        let mat = cap.get(0).unwrap();
+        result.push_str(&raw[last_idx..mat.start()]);
+        last_idx = mat.end();
+
+        let var_name = &cap[1];
+        let default_opt = cap.get(2).map(|m| m.as_str());
+
+        match std::env::var(var_name) {
+            Ok(val) => {
+                result.push_str(&val);
+            }
+            Err(_) => {
+                if let Some(def) = default_opt {
+                    result.push_str(def);
+                } else if allow_unresolved {
+                    result.push_str(mat.as_str());
+                } else {
+                    unresolved.push(format!("Unresolved environment variable: ${{{}}}", var_name));
+                    result.push_str(mat.as_str());
+                }
+            }
+        }
+    }
+    result.push_str(&raw[last_idx..]);
+
+    if !unresolved.is_empty() {
+        Err(unresolved)
+    } else {
+        Ok(result)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+pub struct DeclarativeManifest {
+    #[serde(default = "default_manifest_version")]
+    pub version: String,
+    #[serde(default)]
+    pub connections: std::collections::BTreeMap<String, Value>,
+    #[serde(default)]
+    pub schemas: std::collections::BTreeMap<String, SchemaDefinition>,
+    #[serde(default)]
+    pub streams: std::collections::BTreeMap<String, String>,
+    #[serde(default)]
+    pub tables: std::collections::BTreeMap<String, String>,
+    #[serde(default)]
+    pub rules: DeclarativeRules,
+}
+
+fn default_manifest_version() -> String {
+    "v1".to_string()
+}
+
+impl DeclarativeManifest {
+    pub fn from_str(
+        content: &str,
+        ext_or_format: &str,
+        allow_unresolved_env: bool,
+    ) -> Result<Self, String> {
+        let interpolated = interpolate_env_vars(content, allow_unresolved_env)
+            .map_err(|errs| errs.join("; "))?;
+        let format_lower = ext_or_format.trim_start_matches('.').to_lowercase();
+        if format_lower == "toml" {
+            toml::from_str::<DeclarativeManifest>(&interpolated)
+                .map_err(|e| format!("TOML deserialization error: {}", e))
+        } else if format_lower == "json" {
+            serde_json::from_str::<DeclarativeManifest>(&interpolated)
+                .map_err(|e| format!("JSON deserialization error: {}", e))
+        } else {
+            // Default to YAML (YAML is a superset of JSON)
+            serde_yaml::from_str::<DeclarativeManifest>(&interpolated)
+                .map_err(|e| format!("YAML deserialization error: {}", e))
+        }
+    }
+
+    pub fn load_from_path(
+        path: &std::path::Path,
+        allow_unresolved_env: bool,
+    ) -> Result<Self, Vec<ValidationDiagnostic>> {
+        if !path.exists() {
+            return Err(vec![ValidationDiagnostic {
+                level: DiagnosticLevel::Error,
+                entity_type: "manifest".to_string(),
+                entity_id: path.to_string_lossy().to_string(),
+                message: format!("Manifest path does not exist: {}", path.display()),
+            }]);
+        }
+
+        if path.is_file() {
+            let content = match std::fs::read_to_string(path) {
+                Ok(c) => c,
+                Err(e) => {
+                    return Err(vec![ValidationDiagnostic {
+                        level: DiagnosticLevel::Error,
+                        entity_type: "manifest".to_string(),
+                        entity_id: path.to_string_lossy().to_string(),
+                        message: format!("Failed to read manifest file: {}", e),
+                    }]);
+                }
+            };
+            let ext = path
+                .extension()
+                .and_then(|s| s.to_str())
+                .unwrap_or("yaml");
+            match Self::from_str(&content, ext, allow_unresolved_env) {
+                Ok(m) => Ok(m),
+                Err(err) => Err(vec![ValidationDiagnostic {
+                    level: DiagnosticLevel::Error,
+                    entity_type: "manifest".to_string(),
+                    entity_id: path.to_string_lossy().to_string(),
+                    message: err,
+                }]),
+            }
+        } else if path.is_dir() {
+            Self::load_from_dir(path, allow_unresolved_env)
+        } else {
+            Err(vec![ValidationDiagnostic {
+                level: DiagnosticLevel::Error,
+                entity_type: "manifest".to_string(),
+                entity_id: path.to_string_lossy().to_string(),
+                message: format!("Manifest path is neither file nor directory: {}", path.display()),
+            }])
+        }
+    }
+
+    pub fn load_from_dir(
+        dir: &std::path::Path,
+        allow_unresolved_env: bool,
+    ) -> Result<Self, Vec<ValidationDiagnostic>> {
+        let mut entries = match std::fs::read_dir(dir) {
+            Ok(it) => it.filter_map(|e| e.ok()).collect::<Vec<_>>(),
+            Err(e) => {
+                return Err(vec![ValidationDiagnostic {
+                    level: DiagnosticLevel::Error,
+                    entity_type: "manifest".to_string(),
+                    entity_id: dir.to_string_lossy().to_string(),
+                    message: format!("Failed to read directory {}: {}", dir.display(), e),
+                }]);
+            }
+        };
+
+        // Filter valid manifest file extensions
+        entries.retain(|e| {
+            if let Some(ext) = e.path().extension().and_then(|s| s.to_str()) {
+                let lower = ext.to_lowercase();
+                lower == "yaml" || lower == "yml" || lower == "json" || lower == "toml"
+            } else {
+                false
+            }
+        });
+
+        // Sort lexicographically by file name
+        entries.sort_by_key(|e| e.file_name());
+
+        if entries.is_empty() {
+            return Ok(DeclarativeManifest::default());
+        }
+
+        let mut combined = DeclarativeManifest::default();
+        let mut diagnostics = Vec::new();
+
+        let mut seen_connections: std::collections::HashMap<String, String> =
+            std::collections::HashMap::new();
+        let mut seen_schemas: std::collections::HashMap<String, String> =
+            std::collections::HashMap::new();
+        let mut seen_streams: std::collections::HashMap<String, String> =
+            std::collections::HashMap::new();
+        let mut seen_tables: std::collections::HashMap<String, String> =
+            std::collections::HashMap::new();
+        let mut seen_rules: std::collections::HashMap<String, String> =
+            std::collections::HashMap::new();
+
+        let mut combined_rules_map = std::collections::BTreeMap::new();
+
+        for entry in entries {
+            let file_path = entry.path();
+            let file_display = file_path
+                .file_name()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| file_path.to_string_lossy().to_string());
+
+            let content = match std::fs::read_to_string(&file_path) {
+                Ok(c) => c,
+                Err(e) => {
+                    diagnostics.push(ValidationDiagnostic {
+                        level: DiagnosticLevel::Error,
+                        entity_type: "manifest".to_string(),
+                        entity_id: file_display,
+                        message: format!("Failed to read file: {}", e),
+                    });
+                    continue;
+                }
+            };
+
+            let ext = file_path
+                .extension()
+                .and_then(|s| s.to_str())
+                .unwrap_or("yaml");
+
+            let manifest = match Self::from_str(&content, ext, allow_unresolved_env) {
+                Ok(m) => m,
+                Err(e) => {
+                    diagnostics.push(ValidationDiagnostic {
+                        level: DiagnosticLevel::Error,
+                        entity_type: "manifest".to_string(),
+                        entity_id: file_display,
+                        message: e,
+                    });
+                    continue;
+                }
+            };
+
+            if combined.version == "v1" && manifest.version != "v1" {
+                combined.version = manifest.version;
+            }
+
+            for (conn_name, conn_val) in manifest.connections {
+                if let Some(prev) = seen_connections.get(&conn_name) {
+                    diagnostics.push(ValidationDiagnostic {
+                        level: DiagnosticLevel::Error,
+                        entity_type: "connection".to_string(),
+                        entity_id: conn_name.clone(),
+                        message: format!(
+                            "Duplicate connection '{}' defined in both '{}' and '{}'",
+                            conn_name, prev, file_display
+                        ),
+                    });
+                } else {
+                    seen_connections.insert(conn_name.clone(), file_display.clone());
+                    combined.connections.insert(conn_name, conn_val);
+                }
+            }
+
+            for (schema_name, schema_val) in manifest.schemas {
+                if let Some(prev) = seen_schemas.get(&schema_name) {
+                    diagnostics.push(ValidationDiagnostic {
+                        level: DiagnosticLevel::Error,
+                        entity_type: "schema".to_string(),
+                        entity_id: schema_name.clone(),
+                        message: format!(
+                            "Duplicate schema '{}' defined in both '{}' and '{}'",
+                            schema_name, prev, file_display
+                        ),
+                    });
+                } else {
+                    seen_schemas.insert(schema_name.clone(), file_display.clone());
+                    combined.schemas.insert(schema_name, schema_val);
+                }
+            }
+
+            for (stream_name, stream_ddl) in manifest.streams {
+                if let Some(prev) = seen_streams.get(&stream_name) {
+                    diagnostics.push(ValidationDiagnostic {
+                        level: DiagnosticLevel::Error,
+                        entity_type: "stream".to_string(),
+                        entity_id: stream_name.clone(),
+                        message: format!(
+                            "Duplicate stream '{}' defined in both '{}' and '{}'",
+                            stream_name, prev, file_display
+                        ),
+                    });
+                } else {
+                    seen_streams.insert(stream_name.clone(), file_display.clone());
+                    combined.streams.insert(stream_name, stream_ddl);
+                }
+            }
+
+            for (table_name, table_ddl) in manifest.tables {
+                if let Some(prev) = seen_tables.get(&table_name) {
+                    diagnostics.push(ValidationDiagnostic {
+                        level: DiagnosticLevel::Error,
+                        entity_type: "table".to_string(),
+                        entity_id: table_name.clone(),
+                        message: format!(
+                            "Duplicate table '{}' defined in both '{}' and '{}'",
+                            table_name, prev, file_display
+                        ),
+                    });
+                } else {
+                    seen_tables.insert(table_name.clone(), file_display.clone());
+                    combined.tables.insert(table_name, table_ddl);
+                }
+            }
+
+            match manifest.rules.into_rules_map() {
+                Ok(rules_map) => {
+                    for (rule_id, rule_def) in rules_map {
+                        if let Some(prev) = seen_rules.get(&rule_id) {
+                            diagnostics.push(ValidationDiagnostic {
+                                level: DiagnosticLevel::Error,
+                                entity_type: "rule".to_string(),
+                                entity_id: rule_id.clone(),
+                                message: format!(
+                                    "Duplicate rule ID '{}' defined in both '{}' and '{}'",
+                                    rule_id, prev, file_display
+                                ),
+                            });
+                        } else {
+                            seen_rules.insert(rule_id.clone(), file_display.clone());
+                            combined_rules_map
+                                .insert(rule_id, DeclarativeRuleValue::Structured(rule_def));
+                        }
+                    }
+                }
+                Err(err) => {
+                    diagnostics.push(ValidationDiagnostic {
+                        level: DiagnosticLevel::Error,
+                        entity_type: "rule".to_string(),
+                        entity_id: file_display,
+                        message: err,
+                    });
+                }
+            }
+        }
+
+        combined.rules = DeclarativeRules::Map(combined_rules_map);
+
+        if diagnostics.iter().any(|d| d.level == DiagnosticLevel::Error) {
+            Err(diagnostics)
+        } else {
+            Ok(combined)
+        }
+    }
+}
+
 #[cfg(test)]
 mod schema_tests {
     use super::*;
@@ -937,10 +1610,59 @@ mod schema_tests {
         data_null.insert("temp".to_string(), Value::from(35.0f64));
         enforce_stream_schema(&mut data_null, &fields);
         assert_eq!(data_null.get("id"), Some(&Value::from(999i64)));
-        assert_eq!(
-            data_null.get("status"),
-            Some(&Value::String("idle".to_string()))
-        );
+        assert_eq!(data_null.get("status"), Some(&Value::String("idle".to_string())));
         assert_eq!(data_null.get("temp"), Some(&Value::from(35.0f64)));
     }
+
+    #[test]
+    fn test_declarative_manifest_env_interpolation() {
+        std::env::set_var("TEST_BROKER_HOST", "192.168.1.100");
+        let raw = "server: \"tcp://${TEST_BROKER_HOST}:${TEST_PORT:-1883}\"";
+        let res = interpolate_env_vars(raw, false).unwrap();
+        assert_eq!(res, "server: \"tcp://192.168.1.100:1883\"");
+
+        let unresolved = "token: \"${UNRESOLVED_SECRET}\"";
+        assert!(interpolate_env_vars(unresolved, false).is_err());
+        assert_eq!(
+            interpolate_env_vars(unresolved, true).unwrap(),
+            "token: \"${UNRESOLVED_SECRET}\""
+        );
+    }
+
+    #[test]
+    fn test_declarative_manifest_yaml_and_json_parsing() {
+        let yaml_content = r#"
+version: v1
+streams:
+  demo_stream: "CREATE STREAM demo_stream () WITH (TYPE=\"demo\")"
+rules:
+  - id: rule1
+    sql: "SELECT * FROM demo_stream"
+    actions:
+      - log: {}
+"#;
+        let manifest = DeclarativeManifest::from_str(yaml_content, "yaml", false).unwrap();
+        assert_eq!(manifest.version, "v1");
+        assert_eq!(manifest.streams.len(), 1);
+        let rules_vec = manifest.rules.to_rules_vec().unwrap();
+        assert_eq!(rules_vec.len(), 1);
+        assert_eq!(rules_vec[0].id, "rule1");
+
+        // Stringified JSON rule map format (as in /ruleset/export)
+        let json_export = r#"{
+  "version": "v1",
+  "streams": {
+    "s1": "CREATE STREAM s1 () WITH (TYPE=\"demo\")"
+  },
+  "rules": {
+    "r1": "{\"id\":\"r1\",\"sql\":\"SELECT * FROM s1\",\"actions\":[{\"log\":{}}]}"
+  }
+}"#;
+        let manifest_json = DeclarativeManifest::from_str(json_export, "json", false).unwrap();
+        assert_eq!(manifest_json.streams.len(), 1);
+        let rules_map = manifest_json.rules.into_rules_map().unwrap();
+        assert_eq!(rules_map.len(), 1);
+        assert_eq!(rules_map["r1"].sql, "SELECT * FROM s1");
+    }
 }
+

@@ -131,7 +131,7 @@ docker run -d \
   -p 9081:9081 \
   -p 20499:20499 \
   -e KUIPER__BASIC__PROMETHEUS=true \
-  ankurkrp/rekuiper:1.0.0-rc2
+  ankurkrp/rekuiper:1.0.0-rc3
 ```
 
 The server exposes raw Prometheus metrics on `http://localhost:20499/metrics`.
@@ -167,9 +167,8 @@ Open `http://localhost:9090` to query metrics and generate line graphs:
 
 rekuiper provides preconfigured Grafana dashboard templates.
 
-1. Verify that Grafana has Prometheus configured as an active data source.
-2. Download the dashboard schema from the [Metrics Dashboard Template](https://github.com/lf-edge/ekuiper/blob/master/metrics/metrics.json).
-3. In Grafana, select **Dashboards > Import**.
+1. In Grafana, configure Prometheus as an active data source targeting `http://<rekuiper-host>:9081/metrics` (or port `20499`).
+2. In Grafana, select **Dashboards > Import**.
 
 ![Import Dashboard in Grafana](./resources/import.png)
 

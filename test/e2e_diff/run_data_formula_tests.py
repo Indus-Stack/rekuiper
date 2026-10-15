@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Comprehensive End-to-End Data Processing, SQL Transformation & Formula Evaluation
-Differential Test Suite: rekuiper (0.501.0-beta Rust) vs lfedge/ekuiper (2.4.1 Go)
+Differential Test Suite: rekuiper (0.501.0-beta Rust) vs upstream eKuiper (2.4.1 Go)
 """
 
 import sys
@@ -473,7 +473,7 @@ def generate_data_formula_report():
     with open(md_path, "w", encoding="utf-8") as md:
         md.write("# Comprehensive Data Processing, SQL Transformation & Formula Evaluation Report\n\n")
         md.write(f"**Target System**: `rekuiper` (`0.501.0-beta` Rust)  \n")
-        md.write(f"**Reference Benchmark**: LF Edge `ekuiper` (`2.4.1` Go)  \n")
+        md.write(f"**Reference Benchmark**: Upstream `ekuiper` (`2.4.1` Go)  \n")
         md.write(f"**Dataset Size**: 100 Rich Telemetry Data Points (Mixed numeric, string, bool, array, nested json, timestamps)  \n")
         md.write(f"**Transport**: Real-time MQTT Ingestion & Sink via Mosquitto 2.0  \n")
         md.write(f"**Date Executed**: {time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime())}  \n\n")
@@ -503,7 +503,7 @@ def generate_data_formula_report():
             md.write(f"- **Verdict**: `{r['verdict']}` ({r['match_rate']:.1f}% value match)\n")
             md.write(f"- **Records Emitted**: eKuiper: `{r['ek_received']}`, rekuiper: `{r['rk_received']}`\n\n")
             md.write("**Sample Output Comparison (Record #1)**:\n\n")
-            md.write("```json\n// LF Edge eKuiper (Go Reference):\n" + json.dumps(r["sample_ek"], indent=2) + "\n```\n\n")
+            md.write("```json\n// Upstream eKuiper (Go Reference):\n" + json.dumps(r["sample_ek"], indent=2) + "\n```\n\n")
             md.write("```json\n// rekuiper (Rust Target):\n" + json.dumps(r["sample_rk"], indent=2) + "\n```\n\n")
             md.write("---\n\n")
 

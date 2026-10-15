@@ -9,7 +9,18 @@ There are two primary data flow architectures between EdgeX and rekuiper:
 1. **Ingestion via EdgeX Application Service**: Downstream of Core Data, an application service transforms, filters, and formats records before publishing them to rekuiper.
 2. **Direct Ingestion via EdgeX Message Bus**: rekuiper subscribes directly to the EdgeX message bus to process raw telemetry with minimum latency.
 
-![Data Flow Models](./flow.png)
+```mermaid
+flowchart TD
+    subgraph Model1[Model 1: Ingestion via EdgeX App Service]
+        CoreData1[Core Data] --> AppService[EdgeX App Service]
+        AppService -->|Enriched Events| Bus1[MQTT Message Bus]
+        Bus1 --> Rek1[rekuiper Engine]
+    end
+    subgraph Model2[Model 2: Direct Bus Ingestion]
+        CoreData2[Core Data] -->|Raw Events| Bus2[MQTT Message Bus]
+        Bus2 --> Rek2[rekuiper Engine]
+    end
+```
 
 Both architectures exchange data through the message bus. The application service model enables upstream data enrichment and compression. The direct bus model bypasses intermediary services to minimize CPU overhead.
 

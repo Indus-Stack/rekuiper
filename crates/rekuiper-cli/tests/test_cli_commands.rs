@@ -347,7 +347,11 @@ fn test_cli_issue31_subcommands_and_defaults() {
         "{\"id\":\"r1\",\"sql\":\"SELECT 1\"}",
     ]);
     match cli.command {
-        Commands::Validate { entity_type, args } => {
+        Commands::Validate {
+            entity_type,
+            args,
+            ..
+        } => {
             assert_eq!(entity_type, "rule");
             assert_eq!(args, vec!["{\"id\":\"r1\",\"sql\":\"SELECT 1\"}"]);
         }
@@ -379,4 +383,121 @@ fn test_cli_issue31_subcommands_and_defaults() {
     assert_eq!(cli.output, "json");
     let cli = parse(&["kuiper", "--json", "show", "streams"]);
     assert!(cli.json);
+}
+
+#[test]
+fn test_cli_validate_declarative_manifest_parsing() {
+    // 1. Single manifest file
+    let cli = parse(&["rekuiper", "validate", "pipelines.yaml"]);
+    match cli.command {
+        Commands::Validate {
+            entity_type,
+            allow_unresolved_env,
+            ..
+        } => {
+            assert_eq!(entity_type, "pipelines.yaml");
+            assert!(!allow_unresolved_env);
+        }
+        other => panic!("unexpected command: {:?}", other),
+    }
+
+    // 2. Directory with --allow-unresolved-env
+    let cli = parse(&[
+        "rekuiper",
+        "validate",
+        "--allow-unresolved-env",
+        "/etc/rekuiper/pipelines.d",
+    ]);
+    match cli.command {
+        Commands::Validate {
+            entity_type,
+            allow_unresolved_env,
+            ..
+        } => {
+            assert_eq!(entity_type, "/etc/rekuiper/pipelines.d");
+            assert!(allow_unresolved_env);
+        }
+        other => panic!("unexpected command: {:?}", other),
+    }
+}
+
+#[test]
+fn test_offline_manifest_validation_workflow() {
+    use std::fs;
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let temp_dir = std::env::temp_dir().join(format!("rekuiper_cli_test_{}", now));
+    fs::create_dir_all(&temp_dir).unwrap();
+
+    let manifest_file = temp_dir.join("pipeline.yaml");
+    let yaml_content = r#"
+version: "1.0"
+streams:
+  metrics: "CREATE STREAM metrics (host string, cpu float) WITH (FORMAT=\"json\");"
+rules:
+  cpu_alert:
+    sql: "SELECT host, avg(cpu) FROM metrics GROUP BY host, TUMBLINGWINDOW(ss, 10) HAVING avg(cpu) > 90.0"
+    actions:
+      - log: {}
+"#;
+    fs::write(&manifest_file, yaml_content).unwrap();
+
+    // Load and validate offline
+    let manifest = rekuiper_core::model::DeclarativeManifest::load_from_path(&manifest_file, false)
+        .expect("Manifest should parse cleanly");
+    let summary = rekuiper_sql::validator::validate_manifest(&manifest)
+        .expect("Manifest should pass semantic validation");
+
+    assert_eq!(summary.streams_count, 1);
+    assert_eq!(summary.rules_count, 1);
+    assert_eq!(summary.errors_count, 0);
+
+    let _ = fs::remove_dir_all(&temp_dir);
+}
+
+#[test]
+fn test_cli_errors_and_dlq_alias() {
+    let cli = parse(&["rekuiper", "errors", "rule_temp"]);
+    match cli.command {
+        Commands::Errors { rule_id, clear } => {
+            assert_eq!(rule_id, "rule_temp");
+            assert!(!clear);
+        }
+        other => panic!("unexpected command: {:?}", other),
+    }
+
+    let cli = parse(&["rekuiper", "dlq", "rule_temp", "--clear"]);
+    match cli.command {
+        Commands::Errors { rule_id, clear } => {
+            assert_eq!(rule_id, "rule_temp");
+            assert!(clear);
+        }
+        other => panic!("unexpected command: {:?}", other),
+    }
+}
+
+#[test]
+fn test_cli_top_command_parsing() {
+    let cli = parse(&["rekuiper", "top", "--once"]);
+    match cli.command {
+        Commands::Top { interval, once, rule } => {
+            assert_eq!(interval, 1000);
+            assert!(once);
+            assert!(rule.is_none());
+        }
+        other => panic!("unexpected command: {:?}", other),
+    }
+
+    let cli = parse(&["rekuiper", "top", "--interval", "500", "--rule", "rule_cpu"]);
+    match cli.command {
+        Commands::Top { interval, once, rule } => {
+            assert_eq!(interval, 500);
+            assert!(!once);
+            assert_eq!(rule.as_deref(), Some("rule_cpu"));
+        }
+        other => panic!("unexpected command: {:?}", other),
+    }
 }

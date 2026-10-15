@@ -7,9 +7,9 @@ rekuiper provenance notice (factual, not legal advice)
   externalDocs: https://github.com/lf-edge/ekuiper/tree/v2.4.1/docs/en_US/api/restapi
   Verification: file header inspected 2026-09-12; derivation from upstream
   eKuiper v2.4.1 REST reference is stated in-file. Upstream project:
-  https://github.com/lf-edge/ekuiper (LF Edge, Apache-2.0).
+  https://github.com/lf-edge/ekuiper (Apache-2.0).
   Existing LICENSE / LICENSE-MIT already retain
-  "Copyright (c) LF Edge eKuiper Contributors".
+  upstream contributor copyright notices.
 
 - docs/en_US, docs/zh_CN, deploy/, and test/ JMeter/txt fixtures were introduced
   in initial commit de1952c alongside engine code and resemble upstream eKuiper

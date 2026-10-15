@@ -1,7 +1,7 @@
 # Differential Verification & Reliability Qualification Report
 
 **Target System**: `rekuiper` (`0.501.0-beta` Rust)  
-**Reference Benchmark**: LF Edge `ekuiper` (`2.4.1` Go)  
+**Reference Benchmark**: Upstream `ekuiper` (`2.4.1` Go)  
 **Date Executed**: 2026-09-30 17:58:08 UTC  
 **Test Environment**: WSL2 (Ubuntu Linux x86_64, Docker Bridge Network, Mosquitto 2.0, Redis 7)
 

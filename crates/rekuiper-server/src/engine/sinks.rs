@@ -367,6 +367,18 @@ pub(crate) enum PreparedAction {
         template: Option<String>,
         opts: CommonSinkOpts,
     },
+    Modbus {
+        config: Box<rekuiper_connectors::ModbusSinkConfig>,
+        opts: CommonSinkOpts,
+    },
+    OpcUa {
+        config: Box<rekuiper_connectors::OpcUaSinkConfig>,
+        opts: CommonSinkOpts,
+    },
+    Otlp {
+        config: Box<rekuiper_connectors::OtlpSinkConfig>,
+        opts: CommonSinkOpts,
+    },
     Unknown {
         kind: String,
     },
@@ -388,7 +400,37 @@ impl PreparedAction {
             PreparedAction::Iotdb { opts, .. } => Some(opts),
             PreparedAction::Image { opts, .. } => Some(opts),
             PreparedAction::Zmq { opts, .. } => Some(opts),
+            PreparedAction::Modbus { opts, .. } => Some(opts),
+            PreparedAction::OpcUa { opts, .. } => Some(opts),
+            PreparedAction::Otlp { opts, .. } => Some(opts),
             _ => None,
+        }
+    }
+
+    pub(crate) fn sink_type_name(&self) -> &str {
+        match self {
+            PreparedAction::Log => "log",
+            PreparedAction::Nop => "nop",
+            PreparedAction::File { .. } => "file",
+            PreparedAction::Rest { .. } => "rest",
+            PreparedAction::Mqtt { .. } => "mqtt",
+            PreparedAction::WebSocket { .. } => "websocket",
+            PreparedAction::Redis { .. } => "redis",
+            PreparedAction::Kafka { .. } => "kafka",
+            PreparedAction::Sql { .. } => "sql",
+            PreparedAction::Memory { .. } => "memory",
+            PreparedAction::RabbitMq { .. } => "rabbitmq",
+            PreparedAction::EdgeX { .. } => "edgex",
+            PreparedAction::Influx { .. } => "influx",
+            PreparedAction::Influx2 { .. } => "influx2",
+            PreparedAction::Tdengine { .. } => "tdengine",
+            PreparedAction::Iotdb { .. } => "iotdb",
+            PreparedAction::Image { .. } => "image",
+            PreparedAction::Zmq { .. } => "zmq",
+            PreparedAction::Modbus { .. } => "modbus",
+            PreparedAction::OpcUa { .. } => "opcua",
+            PreparedAction::Otlp { .. } => "otlp",
+            PreparedAction::Unknown { kind } => kind.as_str(),
         }
     }
 }
@@ -834,6 +876,51 @@ pub(crate) fn prepare_actions(
                         }),
                     }
                 }
+                "modbus" => {
+                    match serde_json::from_value::<rekuiper_connectors::ModbusSinkConfig>(opts.clone())
+                    {
+                        Ok(config) => {
+                            let common_opts = parse_common_opts(opts, rule_send_nil_field, true);
+                            out.push(PreparedAction::Modbus {
+                                config: Box::new(config),
+                                opts: common_opts,
+                            });
+                        }
+                        Err(_) => out.push(PreparedAction::Unknown {
+                            kind: "modbus".to_string(),
+                        }),
+                    }
+                }
+                "opcua" | "opc_ua" | "opc-ua" => {
+                    match serde_json::from_value::<rekuiper_connectors::OpcUaSinkConfig>(opts.clone())
+                    {
+                        Ok(config) => {
+                            let common_opts = parse_common_opts(opts, rule_send_nil_field, true);
+                            out.push(PreparedAction::OpcUa {
+                                config: Box::new(config),
+                                opts: common_opts,
+                            });
+                        }
+                        Err(_) => out.push(PreparedAction::Unknown {
+                            kind: "opcua".to_string(),
+                        }),
+                    }
+                }
+                "otlp" => {
+                    match serde_json::from_value::<rekuiper_connectors::OtlpSinkConfig>(opts.clone())
+                    {
+                        Ok(config) => {
+                            let common_opts = parse_common_opts(opts, rule_send_nil_field, true);
+                            out.push(PreparedAction::Otlp {
+                                config: Box::new(config),
+                                opts: common_opts,
+                            });
+                        }
+                        Err(_) => out.push(PreparedAction::Unknown {
+                            kind: "otlp".to_string(),
+                        }),
+                    }
+                }
                 other => out.push(PreparedAction::Unknown {
                     kind: other.to_string(),
                 }),
@@ -1078,6 +1165,9 @@ pub(crate) struct ActionRuntime {
     pub(crate) sql: Option<SqlSink>,
     pub(crate) rabbitmq: Option<RabbitMqSink>,
     pub(crate) zmq: Option<rekuiper_connectors::ZmqSink>,
+    pub(crate) modbus: Option<rekuiper_connectors::ModbusSink>,
+    pub(crate) opcua: Option<rekuiper_connectors::OpcUaSink>,
+    pub(crate) otlp: Option<rekuiper_connectors::OtlpSink>,
     pub(crate) cache: Option<SinkCache>,
     /// Earliest time the next resend may be attempted.
     pub(crate) retry_at: tokio::time::Instant,
@@ -1095,6 +1185,9 @@ impl ActionRuntime {
             sql: None,
             rabbitmq: None,
             zmq: None,
+            modbus: None,
+            opcua: None,
+            otlp: None,
             cache,
             retry_at: tokio::time::Instant::now(),
             last_warn: None,
@@ -1112,6 +1205,7 @@ pub(crate) struct SinkContext<'a> {
     pub(crate) stream_bus: &'a StreamBus,
     pub(crate) http_client: &'a reqwest::Client,
     pub(crate) enable_private_net: bool,
+    pub(crate) dlq_router: Option<&'a crate::engine::dlq::DlqRouter>,
 }
 
 /// Why an action did not deliver a record.
@@ -1211,8 +1305,25 @@ async fn execute_rest_request(
         req_builder = req_builder.body(body.to_string());
     }
     let res = req_builder.send().await;
-    res.map(|_| ())
-        .map_err(|e| SendError::Retry(format!("rest action failed: {}", e)))
+    match res {
+        Ok(resp) => {
+            let status = resp.status();
+            if status.is_success() {
+                Ok(())
+            } else if status.as_u16() == 408 || status.as_u16() == 429 || status.is_server_error() {
+                Err(SendError::Retry(format!(
+                    "rest action HTTP transient error {}: {}",
+                    status, final_url
+                )))
+            } else {
+                Err(SendError::Permanent(format!(
+                    "rest action HTTP client error {}: {}",
+                    status, final_url
+                )))
+            }
+        }
+        Err(e) => Err(SendError::Retry(format!("rest action failed: {}", e))),
+    }
 }
 
 /// Send one record through one action. File actions buffer into the rule's
@@ -2318,6 +2429,105 @@ pub(crate) async fn send_action(
                     .map_err(|e| SendError::Retry(format!("zmq action failed: {}", e)))
             }
         }
+        PreparedAction::Modbus { config, opts } => {
+            if rt.modbus.is_none() {
+                rt.modbus = Some(rekuiper_connectors::ModbusSink::new((**config).clone()));
+            }
+            let sink = rt.modbus.as_ref().unwrap();
+            if let Some(Value::Array(arr)) = output.data.get(BATCH_ROWS_KEY) {
+                for row in arr {
+                    if let Value::Object(m) = format_record_for_sink_val(row, opts) {
+                        let map: HashMap<String, Value> = m.into_iter().collect();
+                        sink.write_record(&map).await.map_err(|(is_perm, err_str)| {
+                            if is_perm {
+                                SendError::Permanent(err_str)
+                            } else {
+                                SendError::Retry(err_str)
+                            }
+                        })?;
+                    }
+                }
+                Ok(())
+            } else {
+                let map = match format_record_for_sink(&output.data, opts) {
+                    Value::Object(m) => m.into_iter().collect(),
+                    _ => output.data.clone(),
+                };
+                sink.write_record(&map).await.map_err(|(is_perm, err_str)| {
+                    if is_perm {
+                        SendError::Permanent(err_str)
+                    } else {
+                        SendError::Retry(err_str)
+                    }
+                })
+            }
+        }
+        PreparedAction::OpcUa { config, opts } => {
+            if rt.opcua.is_none() {
+                rt.opcua = Some(rekuiper_connectors::OpcUaSink::new((**config).clone()));
+            }
+            let sink = rt.opcua.as_ref().unwrap();
+            if let Some(Value::Array(arr)) = output.data.get(BATCH_ROWS_KEY) {
+                for row in arr {
+                    if let Value::Object(m) = format_record_for_sink_val(row, opts) {
+                        let map: HashMap<String, Value> = m.into_iter().collect();
+                        sink.write_record(&map).await.map_err(|(is_perm, err_str)| {
+                            if is_perm {
+                                SendError::Permanent(err_str)
+                            } else {
+                                SendError::Retry(err_str)
+                            }
+                        })?;
+                    }
+                }
+                Ok(())
+            } else {
+                let map = match format_record_for_sink(&output.data, opts) {
+                    Value::Object(m) => m.into_iter().collect(),
+                    _ => output.data.clone(),
+                };
+                sink.write_record(&map).await.map_err(|(is_perm, err_str)| {
+                    if is_perm {
+                        SendError::Permanent(err_str)
+                    } else {
+                        SendError::Retry(err_str)
+                    }
+                })
+            }
+        }
+        PreparedAction::Otlp { config, opts } => {
+            if rt.otlp.is_none() {
+                rt.otlp = Some(rekuiper_connectors::OtlpSink::new((**config).clone()));
+            }
+            let sink = rt.otlp.as_ref().unwrap();
+            if let Some(Value::Array(arr)) = output.data.get(BATCH_ROWS_KEY) {
+                for row in arr {
+                    if let Value::Object(m) = format_record_for_sink_val(row, opts) {
+                        let map: HashMap<String, Value> = m.into_iter().collect();
+                        sink.write_record(&map).await.map_err(|(is_perm, err_str)| {
+                            if is_perm {
+                                SendError::Permanent(err_str)
+                            } else {
+                                SendError::Retry(err_str)
+                            }
+                        })?;
+                    }
+                }
+                Ok(())
+            } else {
+                let map = match format_record_for_sink(&output.data, opts) {
+                    Value::Object(m) => m.into_iter().collect(),
+                    _ => output.data.clone(),
+                };
+                sink.write_record(&map).await.map_err(|(is_perm, err_str)| {
+                    if is_perm {
+                        SendError::Permanent(err_str)
+                    } else {
+                        SendError::Retry(err_str)
+                    }
+                })
+            }
+        }
         PreparedAction::Unknown { kind } => {
             tracing::debug!("[RULE {}] unknown action '{}', ignoring", ctx.rule_id, kind);
             Ok(())
@@ -2414,7 +2624,7 @@ pub(crate) async fn deliver_record(
                     if let Err(err) = send_action(rt, &batch_record, None, ctx, files).await {
                         let cacheable = matches!(err, SendError::Retry(_)) && rt.cache.is_some();
                         if let (true, Some(cache)) = (cacheable, rt.cache.as_mut()) {
-                            cache.push(batch_record);
+                            cache.push(batch_record.clone());
                         }
                         report_send_error(rt, ctx, &err, cacheable);
                         if cacheable {
@@ -2422,6 +2632,26 @@ pub(crate) async fn deliver_record(
                             delivery = delivery.max(Delivery::Cached);
                         } else {
                             delivery = Delivery::Failed;
+                            if let Some(dlq) = ctx.dlq_router {
+                                let err_msg = match &err {
+                                    SendError::Permanent(m) | SendError::Retry(m) => m.clone(),
+                                    SendError::Dropped => "dropped".to_string(),
+                                };
+                                let sink_type = rt.action.sink_type_name();
+                                let stage = if err_msg.contains("template") {
+                                    rekuiper_core::model::DlqStage::DataTemplate
+                                } else {
+                                    rekuiper_core::model::DlqStage::SinkDelivery
+                                };
+                                let payload_str = serde_json::to_string(&batch_record.data).ok();
+                                dlq.route_error(
+                                    stage,
+                                    err_msg,
+                                    payload_str.as_deref(),
+                                    Some(serde_json::to_value(&batch_record.data).unwrap_or(Value::Null)),
+                                    Some(sink_type),
+                                );
+                            }
                         }
                     }
                 }
@@ -2440,6 +2670,26 @@ pub(crate) async fn deliver_record(
                 delivery = delivery.max(Delivery::Cached);
             } else {
                 delivery = Delivery::Failed;
+                if let Some(dlq) = ctx.dlq_router {
+                    let err_msg = match &err {
+                        SendError::Permanent(m) | SendError::Retry(m) => m.clone(),
+                        SendError::Dropped => "dropped".to_string(),
+                    };
+                    let sink_type = rt.action.sink_type_name();
+                    let stage = if err_msg.contains("template") {
+                        rekuiper_core::model::DlqStage::DataTemplate
+                    } else {
+                        rekuiper_core::model::DlqStage::SinkDelivery
+                    };
+                    let payload_str = serde_json::to_string(&output.data).ok();
+                    dlq.route_error(
+                        stage,
+                        err_msg,
+                        payload_str.as_deref(),
+                        Some(serde_json::to_value(&output.data).unwrap_or(Value::Null)),
+                        Some(sink_type),
+                    );
+                }
             }
         }
     }
@@ -2505,6 +2755,26 @@ pub(crate) async fn resend_cached(
                     cache.pop_front();
                 }
                 ctx.rule_mgr.inc_sink_failed(ctx.rule_id, 1);
+                if let Some(dlq) = ctx.dlq_router {
+                    let err_msg = match &err {
+                        SendError::Permanent(m) | SendError::Retry(m) => m.clone(),
+                        SendError::Dropped => "dropped".to_string(),
+                    };
+                    let sink_type = rt.action.sink_type_name();
+                    let stage = if err_msg.contains("template") {
+                        rekuiper_core::model::DlqStage::DataTemplate
+                    } else {
+                        rekuiper_core::model::DlqStage::SinkDelivery
+                    };
+                    let payload_str = serde_json::to_string(&copy.data).ok();
+                    dlq.route_error(
+                        stage,
+                        err_msg,
+                        payload_str.as_deref(),
+                        Some(serde_json::to_value(&copy.data).unwrap_or(Value::Null)),
+                        Some(sink_type),
+                    );
+                }
             }
         }
     }

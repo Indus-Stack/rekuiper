@@ -40,3 +40,9 @@ bytes = "1"
 
 [dev-dependencies]
 tokio-rustls = { workspace = true }
+
+[features]
+default = ["modbus", "opcua", "otlp"]
+modbus = []
+opcua = []
+otlp = []

@@ -1,169 +1,189 @@
-# WebAssembly (Wasm) Plugins
+# WebAssembly (Wasm) Functions
 
-WebAssembly (Wasm) plugins provide safe, sandboxed function extensions for `rekuiper`.
-
-You can write plugins in any language that compiles to WebAssembly bytecode. Supported languages include Rust, C, C++, and Go.
-
-`rekuiper` contains an embedded WebAssembly interpreter. You do not need to install external runtimes or system libraries.
-
-## Development Workflow
-
-Follow these steps to create a Wasm plugin:
-1. Write your function logic in Rust, C, or Go.
-2. Compile the source code to a WebAssembly module (`.wasm`).
-3. Place or register the module in `rekuiper`.
-4. Call your function in SQL rules.
+rekuiper embeds a lightweight WebAssembly execution runtime built on [`wasmi`](https://github.com/wasmi-labs/wasmi). WebAssembly plugins provide sandboxed, in-process user-defined functions (UDFs) that execute with memory isolation on resource-constrained edge hardware.
 
 ---
 
-## 1. Implement the Function
+## Architecture and Execution Model
 
-### Example in Rust
+The WebAssembly engine in `rekuiper-core` (`crates/rekuiper-core/src/wasm.rs`) pre-validates and instantiates Wasm bytecode at registration time.
 
-Create a simple Rust library project:
+### Calling Conventions and Type Conversions
+
+Wasm functions export standard C-ABI scalar signatures. The runtime handles conversion between SQL JSON values (`serde_json::Value`) and Wasm value types:
+
+| SQL / JSON Type | Wasm ValType | Coercion Rules |
+| :--- | :--- | :--- |
+| `BIGINT`, `INTEGER` | `i64` / `i32` | Cast directly to integer width. |
+| `FLOAT` | `f64` / `f32` | Cast directly to floating-point width. |
+| Return Value | `i32`, `i64`, `f32`, `f64` | Converted back to standard JSON numeric scalar. |
+
+Functions returning `void` (no return value) produce `Value::Null` in the SQL stream.
+
+---
+
+## Developing a Guest Wasm Plugin in Rust
+
+Any programming language that compiles to `wasm32-unknown-unknown` without host dependencies can be used. Rust is recommended.
+
+### 1. Create the Library Project
 
 ```bash
-cargo new --lib fibonacci_wasm
+cargo new --lib math_udf
+cd math_udf
 ```
 
-In `Cargo.toml`, set the crate type to `cdylib`:
+### 2. Configure `Cargo.toml`
+
+Configure the library crate type as a C-compatible dynamic library (`cdylib`):
 
 ```toml
+[package]
+name = "math_udf"
+version = "0.1.0"
+edition = "2021"
+
 [lib]
 crate-type = ["cdylib"]
+
+[dependencies]
 ```
 
-Implement the calculation in `src/lib.rs`:
+### 3. Implement Exported Functions in `src/lib.rs`
+
+Export functions using standard `extern "C"` linkage and disable symbol name mangling:
 
 ```rust
+#[no_mangle]
+pub extern "C" fn add_numbers(a: i64, b: i64) -> i64 {
+    a + b
+}
+
+#[no_mangle]
+pub extern "C" fn scale_temperature(celsius: f64) -> f64 {
+    celsius * 1.8 + 32.0
+}
+
 #[no_mangle]
 pub extern "C" fn fib(n: i32) -> i32 {
     if n <= 1 {
         return n;
     }
-    fib(n - 1) + fib(n - 2)
+    let mut a = 0;
+    let mut b = 1;
+    for _ in 2..=n {
+        let temp = a + b;
+        a = b;
+        b = temp;
+    }
+    b
 }
 ```
 
-Compile the project to the WebAssembly target:
+### 4. Compile to `wasm32-unknown-unknown`
 
 ```bash
+rustup target add wasm32-unknown-unknown
 cargo build --target wasm32-unknown-unknown --release
 ```
 
-The output file is at `target/wasm32-unknown-unknown/release/fibonacci_wasm.wasm`.
-
-### Example in Go (TinyGo)
-
-Create `fibonacci.go`:
-
-```go
-package main
-
-func main() {}
-
-//export fib
-func fib(n int32) int32 {
-    if n <= 1 {
-        return n
-    }
-    return fib(n-1) + fib(n-2)
-}
-```
-
-Compile using TinyGo:
-
-```bash
-tinygo build -o fibonacci.wasm -target wasm fibonacci.go
-```
+The compiled bytecode is located at `target/wasm32-unknown-unknown/release/math_udf.wasm`.
 
 ---
 
-## 2. Plugin Installation
+## Registering and Managing Wasm Plugins
 
-Install the plugin with the REST API using a file path or base64 bytecode:
+rekuiper provides both filesystem autoloading and REST API management.
+
+### Filesystem Autoloading
+
+Place `.wasm` files in one of the scanned plugin directories. When a SQL query references an unknown function, rekuiper automatically inspects and loads matching modules:
+- `plugins/wasm/<module_name>.wasm`
+- `etc/plugins/wasm/<module_name>.wasm`
+- `data/<module_name>.wasm`
+
+### REST API Management
+
+#### 1. Register via Base64 Bytecode
 
 ```http
-POST http://localhost:9081/plugins/wasm
+POST /plugins/wasm
 Content-Type: application/json
 
 {
-  "name": "fibonacci",
-  "file": "file:///plugins/wasm/fibonacci.wasm"
-}
-```
-
-Or provide raw bytecode encoded with base64:
-
-```http
-POST http://localhost:9081/plugins/wasm
-Content-Type: application/json
-
-{
-  "name": "fibonacci",
+  "name": "math_udf",
   "bytecode": "AGFzbQEAAAA..."
 }
 ```
 
-The engine registers all exported functions as SQL functions automatically.
-
-### List WebAssembly Plugins
-
-Send a `GET` request to list all installed WebAssembly plugins:
+#### 2. Register via File Path
 
 ```http
-GET http://localhost:9081/plugins/wasm
+POST /plugins/wasm
+Content-Type: application/json
+
+{
+  "name": "math_udf",
+  "file": "file:///kuiper/plugins/wasm/math_udf.wasm"
+}
 ```
 
-Response sample:
+**Response (`201 Created`):**
+```json
+{
+  "name": "math_udf",
+  "functions": ["add_numbers", "fib", "scale_temperature"]
+}
+```
 
+All exported functions are immediately registered in the global SQL UDF catalog.
+
+#### 3. List Registered Wasm Modules
+
+```http
+GET /plugins/wasm
+```
+
+**Response (`200 OK`):**
 ```json
 [
-  {
-    "name": "fibonacci",
-    "functions": ["fib"]
-  }
+  "math_udf"
 ]
 ```
 
-### Delete a WebAssembly Plugin
-
-Send a `DELETE` request to remove an installed WebAssembly plugin:
+#### 4. Delete a Wasm Module
 
 ```http
-DELETE http://localhost:9081/plugins/wasm/fibonacci
+DELETE /plugins/wasm/math_udf
 ```
 
-The engine unloads the module and removes all registered functions immediately.
+**Response (`200 OK`)**
 
-You can also place `.wasm` files directly into the `plugins/wasm` directory. `rekuiper` loads them on startup.
+Unloads the module and removes all its exported functions from the active SQL catalog.
 
 ---
 
-## 3. Query Execution
+## Invoking Wasm Functions in SQL
 
-You can execute WebAssembly functions in SQL rules in two ways:
+Once registered, you can invoke exported functions directly in SQL rules or through the `wasm_run` helper function:
 
-### Method A: Direct Function Call
-
-When a plugin is registered, its exported functions become available directly:
+### Direct Invocation
 
 ```sql
-SELECT fib(num) AS fib_result FROM sensor_stream;
+SELECT
+  deviceId,
+  scale_temperature(temperature) AS temp_fahrenheit,
+  add_numbers(counter, 10) AS incremented_counter
+FROM
+  sensor_stream;
 ```
 
-### Method B: Generic `wasm_run` Function
-
-You can also call the generic `wasm_run` scalar function:
+### Generic `wasm_run` Invocation
 
 ```sql
-SELECT wasm_run('fib', num) AS fib_result FROM sensor_stream;
+SELECT
+  deviceId,
+  wasm_run("scale_temperature", temperature) AS temp_fahrenheit
+FROM
+  sensor_stream;
 ```
-
----
-
-## Performance and Isolation
-
-The embedded Wasm engine offers strong operational guarantees:
-- **Memory Safety**: Each module runs in an isolated linear memory space. A crash in a plugin cannot corrupt the `rekuiper` process.
-- **Portability**: The same `.wasm` binary runs identically on x86_64, ARMv7, and AArch64 edge hardware.

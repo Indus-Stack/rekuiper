@@ -1,3 +1,20 @@
+# Release Notes - rekuiper v1.0.0-rc3
+
+`rekuiper` v1.0.0-rc3 adds industrial connectors, declarative GitOps management, error queues, OpenTelemetry support, and built-in inspection tools.
+
+Key highlights:
+- **Modbus and OPC-UA Connectors**: The engine connects directly to Modbus TCP, Modbus RTU, and OPC-UA servers. It reads sensor values and writes control setpoints. The connectors run in pure Rust without external C libraries or separate gateway containers.
+- **Declarative GitOps Configuration**: You can configure streams, tables, connections, and rules in YAML or JSON files with the `--manifest` option. The engine watches files for changes and reloads rules automatically. A read-only mode prevents REST API changes when GitOps is active.
+- **Dead-Letter Queues (DLQ)**: The engine captures invalid records across all execution stages (`codec_decode`, `schema_validation`, `sql_eval`, `data_template`, and `sink_delivery`). It stores error records in memory buffers. You can view errors with `GET /rules/:id/errors` and delete errors with `DELETE /rules/:id/errors`.
+- **OpenTelemetry (OTLP) Ingest and Export**: The engine receives OTLP metrics, logs, and traces over HTTP at `/v1/metrics`, `/v1/logs`, and `/v1/traces`. It converts OTLP data into SQL records. It supports both JSON numbers and string numbers. The OTLP sink sends query results to external OTel collectors.
+- **Built-in Inspection Tools**: The new `rekuiper top` command displays live engine throughput and rule status in the terminal. An embedded web console is available at `GET /ui`. The console uses no external fonts or CDN scripts and runs on isolated networks.
+- **No New Dependencies**: All new features use existing Rust libraries in `Cargo.lock`.
+
+- Docker image: `ankurkrp/rekuiper:1.0.0-rc3` (plus `latest`)
+- Helm chart: `deploy/chart/ekuiper` (`AppVersion: 1.0.0-rc3`)
+
+---
+
 # Release Notes - rekuiper v1.0.0-rc2
 
 `rekuiper` v1.0.0-rc2 delivers full SQL catalog parity across documentation, published in-process engine performance benchmarks exceeding 2,144,000 EPS, zero-vulnerability control plane dependencies, and expanded Model Context Protocol (MCP) server intelligence.
@@ -48,7 +65,7 @@ Key highlights:
 
 # Release Notes - rekuiper v0.508-beta
 
-`rekuiper` v0.508-beta achieves upstream LF Edge eKuiper parity across sink options, dynamic templates, DDL validation, built-in SQL functions, HTTPPush listeners, REST API envelopes, CLI tools, and Prometheus metrics.
+`rekuiper` v0.508-beta achieves upstream eKuiper parity across sink options, dynamic templates, DDL validation, built-in SQL functions, HTTPPush listeners, REST API envelopes, CLI tools, and Prometheus metrics.
 
 Key highlights:
 - **Sink Options Parity**: Added `sendSingle`, `fields`, `excludeFields`, `dataField`, `batchSize`, and `lingerInterval` options to ActionRuntime. Supported delimited formatting with custom delimiters. Added upfront sink configuration validation for format and MQTT topics.
@@ -74,7 +91,7 @@ Key highlights:
 
 # Release Notes - rekuiper v0.507-beta
 
-`rekuiper` v0.507-beta delivers upstream LF Edge eKuiper REST API and rule metadata parity, enhanced daemon qualification discovery, and GitHub Actions CI runner workflow optimizations.
+`rekuiper` v0.507-beta delivers upstream eKuiper REST API and rule metadata parity, enhanced daemon qualification discovery, and GitHub Actions CI runner workflow optimizations.
 
 Key highlights:
 - **eKuiper REST Parity for Rule Status**: `GET /rules/:id/status` returns structured status objects containing top-level `status` (`"running"`, `"stopped"`), `message`, `source_statuses`, and execution metrics matching the eKuiper REST contract.
@@ -262,7 +279,7 @@ under identical limits, with configs, raw evidence and reproduction steps.
 # Release Notes - rekuiper v0.424-beta
 
 `rekuiper` v0.424-beta fixes every documented compatibility defect found in the
-0.423 evaluation against official LF Edge eKuiper 2.4.1: PostgreSQL float
+0.423 evaluation against official eKuiper 2.4.1: PostgreSQL float
 sinks, SQL polling sources and lookup joins, windowed stream-stream joins,
 array index/slice syntax, `json_path_query` wildcards, ruletest SSE on the
 documented port 10081 with lossless replay, process-restart delivery resume,
