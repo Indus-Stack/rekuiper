@@ -85,7 +85,7 @@ This demo requires Docker. A built-in simulator generates sensor readings.
 **1. Start the engine.**
 
 ```shell
-docker run -d --name rekuiper -p 9081:9081 indramqtt/rekuiper:latest
+docker run -d --name rekuiper -p 9081:9081 ankurkrp/rekuiper:1.0.0-rc4
 ```
 
 ::: tip Built-in Web Observability UI

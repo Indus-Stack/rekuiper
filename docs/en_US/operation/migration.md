@@ -56,9 +56,10 @@ docker run -d \
   --name rekuiper-instance \
   -p 9081:9081 \
   -p 20498:20498 \
-  -v $(pwd)/data:/rekuiper/data \
-  -v $(pwd)/etc:/rekuiper/etc \
-  indramqtt/rekuiper:latest
+  -p 20499:20499 \
+  -v $(pwd)/data:/kuiper/data \
+  -v $(pwd)/etc:/kuiper/etc \
+  ankurkrp/rekuiper:1.0.0-rc4
 ```
 
 ```bash [Native Systemd Service]

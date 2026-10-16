@@ -127,7 +127,7 @@ When running in Docker, enable metrics using environment variables:
 
 ```shell
 docker run -d \
-  --name ekuiper \
+  --name rekuiper \
   -p 9081:9081 \
   -p 20499:20499 \
   -e KUIPER__BASIC__PROMETHEUS=true \
