@@ -18,7 +18,7 @@ import urllib.request
 import urllib.error
 
 # Configuration
-ENGINE_IMAGE = os.environ.get("REK_IMAGE", "ankurkrp/rekuiper:latest")
+ENGINE_IMAGE = os.environ.get("REK_IMAGE", "indusstack/rekuiper:latest")
 ENGINE_NAME = "rekuiper-bench"
 MGMT_PORT = 9081
 STREAM_NAME = "rawdata"

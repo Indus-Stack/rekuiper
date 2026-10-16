@@ -30,7 +30,7 @@ docker run -d \
   -p 9081:9081 \
   -p 20498:20498 \
   -p 20499:20499 \
-  ankurkrp/rekuiper:1.0.0-rc4
+  indusstack/rekuiper:1.0.0-rc4
 ```
 
 ### Production Deployment with Persistent Storage
@@ -49,7 +49,7 @@ docker run -d \
   -v /var/log/rekuiper:/kuiper/log \
   -e KUIPER__BASIC__PROMETHEUS="true" \
   -e LOG_LEVEL="info" \
-  ankurkrp/rekuiper:1.0.0-rc4
+  indusstack/rekuiper:1.0.0-rc4
 ```
 
 Verify service availability:
@@ -72,7 +72,7 @@ version: '3.8'
 
 services:
   rekuiper:
-    image: ankurkrp/rekuiper:1.0.0-rc4
+    image: indusstack/rekuiper:1.0.0-rc4
     container_name: rekuiper
     restart: unless-stopped
     ports:

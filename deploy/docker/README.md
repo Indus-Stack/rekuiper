@@ -1,6 +1,6 @@
-# ankurkrp/rekuiper
+# indusstack/rekuiper
 
-[![Docker Pulls](https://img.shields.io/docker/pulls/ankurkrp/rekuiper?color=blue&logo=docker)](https://hub.docker.com/r/ankurkrp/rekuiper)
+[![Docker Pulls](https://img.shields.io/docker/pulls/indusstack/rekuiper?color=blue&logo=docker)](https://hub.docker.com/r/indusstack/rekuiper)
 [![Release](https://img.shields.io/badge/release-v1.0.0--rc4-blue.svg)](https://github.com/Indus-Stack/rekuiper/releases)
 [![License: MIT or Apache-2.0](https://img.shields.io/badge/license-MIT%20%2F%20Apache--2.0-yellow.svg)](https://github.com/Indus-Stack/rekuiper/blob/main/LICENSE)
 
@@ -21,7 +21,7 @@ docker run -d --name rekuiper \
   -p 9081:9081 -p 59720:59720 -p 20499:20499 \
   -e KUIPER__BASIC__CONSOLELOG=true \
   -e KUIPER__BASIC__PROMETHEUS=true \
-  ankurkrp/rekuiper:1.0.0-rc4
+  indusstack/rekuiper:1.0.0-rc4
 ```
 
 Check engine status:
@@ -143,7 +143,7 @@ docker run -d --name rekuiper \
   -p 9081:9081 -p 59720:59720 -p 20499:20499 \
   -v rekuiper-data:/kuiper/data \
   -v rekuiper-etc:/kuiper/etc \
-  ankurkrp/rekuiper:1.0.0-rc4
+  indusstack/rekuiper:1.0.0-rc4
 ```
 
 ---

@@ -7,7 +7,7 @@ rekuiper is a small SQL engine that sits between your devices and your cloud. It
 [![Release](https://img.shields.io/badge/release-v1.0.0--rc4-blue.svg)](https://github.com/Indus-Stack/rekuiper/releases)
 [![Rust CI](https://img.shields.io/badge/Rust%20CI-passing-brightgreen.svg)](https://github.com/Indus-Stack/rekuiper/actions/workflows/ci.yml)
 [![License: MIT or Apache-2.0](https://img.shields.io/badge/license-MIT%20%2F%20Apache--2.0-yellow.svg)](LICENSE)
-[![Docker Pulls](https://img.shields.io/docker/pulls/ankurkrp/rekuiper?color=blue&logo=docker)](https://hub.docker.com/r/ankurkrp/rekuiper)
+[![Docker Pulls](https://img.shields.io/docker/pulls/indusstack/rekuiper?color=blue&logo=docker)](https://hub.docker.com/r/indusstack/rekuiper)
 
 [Documentation](https://rekuiper.indramqtt.com) · [Run the demo](#try-it-in-60-seconds) · [Is it a fit?](#is-it-a-fit) · [Coming from eKuiper?](#coming-from-ekuiper)
 
@@ -34,7 +34,7 @@ This demo needs only Docker. A built-in simulator makes the data.
 **1. Start the engine.**
 
 ```bash
-docker run -d --name rekuiper -p 9081:9081 ankurkrp/rekuiper:1.0.0-rc4
+docker run -d --name rekuiper -p 9081:9081 indusstack/rekuiper:1.0.0-rc4
 ```
 
 **2. Register simulated sensor readings, ten per second.**
@@ -184,7 +184,7 @@ rekuiper implements the eKuiper REST API, SQL dialect, rule format, and `kuiper`
 
 | Method | Command or link |
 | :--- | :--- |
-| Docker | `docker run -d -p 9081:9081 ankurkrp/rekuiper:1.0.0-rc4` |
+| Docker | `docker run -d -p 9081:9081 indusstack/rekuiper:1.0.0-rc4` |
 | Docker Compose | `docker compose -f deploy/docker/docker-compose.yml up -d` |
 | Kubernetes | `helm install rekuiper deploy/chart/ekuiper` ([chart docs](deploy/chart/ekuiper/README.md)) |
 | Binaries | [Releases](https://github.com/Indus-Stack/rekuiper/releases) |
@@ -194,7 +194,7 @@ The Docker image listens on all interfaces. A binary that you run directly liste
 
 ---
 
-[![Docker Pulls Tracker](docs/docker-pulls.svg)](https://hub.docker.com/r/ankurkrp/rekuiper)
+[![Docker Pulls Tracker](docs/docker-pulls.svg)](https://hub.docker.com/r/indusstack/rekuiper)
 
 ---
 

@@ -15,7 +15,7 @@ helm install rekuiper deploy/chart/rekuiper
 
 ```bash
 helm install rekuiper deploy/chart/rekuiper \
-  --set image.repository=ankurkrp/rekuiper \
+  --set image.repository=indusstack/rekuiper \
   --set image.tag=1.0.0-rc4
 ```
 
@@ -33,7 +33,7 @@ helm uninstall rekuiper
 | clusterDomain | string | `"cluster.local"` | clusterDomain Kubernetes Cluster Domain |
 | ekuiperEnv | object | `{"enabled":true,"key":{"mqttDefaultServer":"MQTT_SOURCE__DEFAULT__SERVER"},"value":{"mqttDefaultServer":"tcp://127.0.0.1:1883"}}` | remove this when the mqtt_source configmap is available |
 | image.pullPolicy | string | `"IfNotPresent"` |  |
-| image.repository | string | `"ankurkrp/rekuiper"` |  |
+| image.repository | string | `"indusstack/rekuiper"` |  |
 | image.tag | string | `""` | Overrides the image tag whose default is the chart appVersion. |
 | nodeSelector | object | `{}` |  |
 | persistence.enabled | bool | `false` | Enable persistent storage for data and plugins |

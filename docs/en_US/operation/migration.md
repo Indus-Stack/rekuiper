@@ -59,7 +59,7 @@ docker run -d \
   -p 20499:20499 \
   -v $(pwd)/data:/kuiper/data \
   -v $(pwd)/etc:/kuiper/etc \
-  ankurkrp/rekuiper:1.0.0-rc4
+  indusstack/rekuiper:1.0.0-rc4
 ```
 
 ```bash [Native Systemd Service]

@@ -11,7 +11,7 @@ import json
 import urllib.request
 from datetime import datetime, timezone
 
-DOCKER_HUB_REPO = "ankurkrp/rekuiper"
+DOCKER_HUB_REPO = "indusstack/rekuiper"
 
 def fetch_current_pulls():
     url = f"https://hub.docker.com/v2/repositories/{DOCKER_HUB_REPO}/"
