@@ -8,6 +8,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: docker-pull-tracker
+  cancel-in-progress: false
+
 jobs:
   track-pulls:
     name: Update Docker Pull Statistics

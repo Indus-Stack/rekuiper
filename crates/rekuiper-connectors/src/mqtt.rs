@@ -236,7 +236,7 @@ fn generate_client_id() -> String {
 /// Extract `(host, port)` from an eKuiper MQTT server URL.
 ///
 /// Accepts forms like `tcp://127.0.0.1:1883`, `127.0.0.1:1883`,
-/// `ssl://broker.emqx.io:8883` or a bare hostname. The port defaults to
+/// `ssl://mqtt.example.com:8883` or a bare hostname. The port defaults to
 /// 1883, or 8883 for `ssl`/`tls`/`tcps`/`mqtts` schemes.
 pub fn parse_mqtt_server_url(server: &str) -> Result<(String, u16)> {
     let (_scheme, host, port) = parse_mqtt_server_url_ext(server)?;

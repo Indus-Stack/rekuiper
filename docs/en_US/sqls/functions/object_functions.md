@@ -159,7 +159,7 @@ Removes specified keys from an object. If `k` is a string, the function removes 
 Example:
 
 ```sql
-erase({"baz": [1, 2, 3], "bar": 'hello world',"foo":'emq'}, 'foo')
+erase({"baz": [1, 2, 3], "bar": 'hello world',"foo":'val'}, 'foo')
 ```
 
 Result:
@@ -179,13 +179,13 @@ Extracts only the specified keys from an object. If `k` is a string, the functio
 Example:
 
 ```sql
-object_pick({"baz": [1, 2, 3], "bar": 'hello world',"foo":'emq'}, 'foo')
+object_pick({"baz": [1, 2, 3], "bar": 'hello world',"foo":'val'}, 'foo')
 ```
 
 Result:
 
 ```sql
-{"foo":'emq'}
+{"foo":'val'}
 ```
 
 ## OBJ_TO_KVPAIR_ARRAY

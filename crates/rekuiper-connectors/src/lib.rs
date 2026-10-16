@@ -339,8 +339,8 @@ mod tests {
             ("127.0.0.1".to_string(), 1883)
         );
         assert_eq!(
-            super::parse_mqtt_server_url("ssl://broker.emqx.io:8883").unwrap(),
-            ("broker.emqx.io".to_string(), 8883)
+            super::parse_mqtt_server_url("ssl://mqtt.example.com:8883").unwrap(),
+            ("mqtt.example.com".to_string(), 8883)
         );
         // Scheme defaults.
         assert_eq!(
@@ -348,8 +348,8 @@ mod tests {
             ("127.0.0.1".to_string(), 1883)
         );
         assert_eq!(
-            super::parse_mqtt_server_url("ssl://broker.emqx.io").unwrap(),
-            ("broker.emqx.io".to_string(), 8883)
+            super::parse_mqtt_server_url("ssl://mqtt.example.com").unwrap(),
+            ("mqtt.example.com".to_string(), 8883)
         );
     }
 

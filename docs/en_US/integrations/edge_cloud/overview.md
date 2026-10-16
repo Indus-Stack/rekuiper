@@ -18,5 +18,5 @@ An edge-to-cloud topology contains these stages:
 rekuiper connects to standard MQTT 3.1.1 and MQTT 5.0 brokers and message systems:
 
 - **Local Edge Brokers**: Mosquitto, NanoMQ, or local IPC sockets.
-- **Central Cloud Brokers**: Open-source brokers (such as Mosquitto and EMQX), managed cloud IoT brokers (such as AWS IoT Core and Azure IoT Hub), or Apache Kafka clusters.
+- **Central Cloud Brokers**: Open-source brokers (such as Mosquitto and RabbitMQ), managed cloud IoT brokers (such as AWS IoT Core and Azure IoT Hub), or Apache Kafka clusters.
 - **Industrial Gateways**: Protocol translators such as EdgeX Foundry for PLC and Modbus connectivity.

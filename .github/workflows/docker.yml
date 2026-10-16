@@ -2,24 +2,53 @@ name: Publish Docker Image
 
 on:
   workflow_dispatch:
-  push:
-    tags: [ 'v*', '[0-9]+.*' ]
+    inputs:
+      update_description_only:
+        description: 'Only update Docker Hub description/README (skip build & tests)'
+        type: boolean
+        required: false
+        default: false
+      tag:
+        description: 'Docker image tag (leave blank to infer from Cargo.toml)'
+        type: string
+        required: false
+        default: ''
+      skip_tests:
+        description: 'Skip quality gates and broker tests before building'
+        type: boolean
+        required: false
+        default: false
 
 jobs:
-  gate-checks:
-    name: Mandatory Release Gates & Real-Broker Tests
+  update-description-only:
+    name: Sync Docker Hub Description
+    if: inputs.update_description_only == true
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository at exact revision
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Update Docker Hub Description
+        uses: peter-evans/dockerhub-description@v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          repository: ${{ secrets.DOCKERHUB_USERNAME }}/rekuiper
+          readme-filepath: ./deploy/docker/README.md
+          short-description: "Lightweight, ultra-fast streaming SQL engine for edge & IoT in Rust"
+
+  gate-checks:
+    name: Docker Quality Gates & Tests
+    if: inputs.update_description_only != true && inputs.skip_tests != true
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: ./.github/actions/setup-rust
         with:
           components: clippy, rustfmt
-
-      - name: Rust Cache
-        uses: Swatinem/rust-cache@v2
 
       - name: Formatting & Lint Checks
         run: |
@@ -32,38 +61,13 @@ jobs:
       - name: Workspace Tests
         run: cargo test --workspace
 
-      - name: Validate Docker Compose Configuration
-        run: |
-          docker compose -f deploy/docker/docker-compose.yml config
+      - name: Validate Docker Configuration
+        run: docker compose -f deploy/docker/docker-compose.yml config
 
       - name: Provision Isolated Mosquitto Broker (Plaintext & TLS)
-        run: |
-          mkdir -p /tmp/mosquitto_cfg
-          cp crates/rekuiper-connectors/tests/tls_fixtures/ca1.crt /tmp/mosquitto_cfg/
-          cp crates/rekuiper-connectors/tests/tls_fixtures/server_localhost.crt /tmp/mosquitto_cfg/
-          cp crates/rekuiper-connectors/tests/tls_fixtures/server_localhost.key /tmp/mosquitto_cfg/
-          chmod 644 /tmp/mosquitto_cfg/*
-          cat << 'EOF' > /tmp/mosquitto_cfg/mosquitto.conf
-          listener 1883
-          allow_anonymous true
-
-          listener 8883
-          allow_anonymous true
-          cafile /mosquitto/config/ca1.crt
-          certfile /mosquitto/config/server_localhost.crt
-          keyfile /mosquitto/config/server_localhost.key
-          EOF
-          docker run -d --name mosquitto-docker-broker \
-            -p 1883:1883 -p 8883:8883 \
-            -v /tmp/mosquitto_cfg:/mosquitto/config \
-            eclipse-mosquitto:2
-          for i in $(seq 1 30); do
-            if nc -z 127.0.0.1 1883 && nc -z 127.0.0.1 8883; then
-              echo "Mosquitto broker ready on 1883 and 8883"
-              break
-            fi
-            sleep 1
-          done
+        uses: ./.github/actions/setup-mosquitto
+        with:
+          container-name: mosquitto-docker-broker
 
       - name: Run Required Real-Broker Integration Tests
         env:
@@ -79,13 +83,17 @@ jobs:
 
       - name: Teardown Isolated Broker
         if: always()
-        run: |
-          docker rm -f mosquitto-docker-broker || true
-          rm -rf /tmp/mosquitto_cfg
+        uses: ./.github/actions/teardown-mosquitto
+        with:
+          container-name: mosquitto-docker-broker
 
-  docker:
+  build-and-push:
     name: Build & Push Docker Image
-    needs: gate-checks
+    needs: [gate-checks]
+    if: |
+      always() &&
+      inputs.update_description_only != true &&
+      (needs.gate-checks.result == 'success' || needs.gate-checks.result == 'skipped')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -108,8 +116,8 @@ jobs:
         shell: bash
         run: |
           DOCKER_USER="${{ secrets.DOCKERHUB_USERNAME }}"
-          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
-            RAW_TAG="${GITHUB_REF#refs/tags/}"
+          if [ -n "${{ inputs.tag }}" ]; then
+            RAW_TAG="${{ inputs.tag }}"
             VERSION_TAG="${RAW_TAG#v}"
             echo "tags=${DOCKER_USER}/rekuiper:${VERSION_TAG},${DOCKER_USER}/rekuiper:${RAW_TAG},${DOCKER_USER}/rekuiper:latest" >> $GITHUB_OUTPUT
           else

@@ -1,0 +1,17 @@
+name: 'Teardown Mosquitto Broker'
+description: 'Stop and remove the isolated Mosquitto test container'
+
+inputs:
+  container-name:
+    description: 'Name of the Mosquitto Docker container to remove'
+    required: false
+    default: 'mosquitto-test-broker'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Teardown Mosquitto Container
+      shell: bash
+      run: |
+        docker rm -f ${{ inputs.container-name }} || true
+        rm -rf /tmp/mosquitto_cfg

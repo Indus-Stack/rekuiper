@@ -180,8 +180,8 @@ kuiperConfig:
       pprof: true
       pprofIp: 127.0.0.1
       pprofPort: 6060
-      # The URL where hosts all of pre-build plugins. By default, it's at packages.emqx.net
-      pluginHosts: https://packages.emqx.net
+      # The URL where hosts all of pre-build plugins.
+      pluginHosts: https://packages.indramqtt.com
       # Whether to ignore case in SQL processing. Note that, the name of customized function by plugins are case-sensitive.
       ignoreCase: false
       sql:
@@ -294,7 +294,7 @@ ekuiperEnv:
   key:
     mqttDefaultServer: MQTT_SOURCE__DEFAULT__SERVER
   value:
-    mqttDefaultServer: "tcp://broker.emqx.io:1883"
+    mqttDefaultServer: "tcp://127.0.0.1:1883"
 
 # Declarative GitOps pipeline management
 declarative:

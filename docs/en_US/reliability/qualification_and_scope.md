@@ -28,7 +28,7 @@ The engineering team requires the following test completions before declaring GA
 
 1. **Continuous Endurance Soak**: The qualification harness has verified short runs (5s to 10s). A continuous 24h to 72h endurance soak run remains pending.
 2. **Multi-Binary Upgrade and Rollback Qualification**: Verification across separate compilation binaries via `REKUIPER_OLD_BIN` and `REKUIPER_NEW_BIN` remains pending.
-3. **Multi-Broker Interoperability**: Testing against cloud brokers (AWS IoT Core, HiveMQ, EMQX) beyond local Mosquitto instances remains pending.
+3. **Multi-Broker Interoperability**: Testing against cloud brokers (AWS IoT Core, HiveMQ, Azure IoT Hub) beyond local Mosquitto instances remains pending.
 
 ### 1.3 Experimental Features
 

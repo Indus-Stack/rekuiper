@@ -1,0 +1,41 @@
+name: 'Setup Mosquitto Broker'
+description: 'Provision an isolated Mosquitto broker with TLS in Docker'
+
+inputs:
+  container-name:
+    description: 'Name for the Mosquitto Docker container'
+    required: false
+    default: 'mosquitto-test-broker'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Provision Mosquitto Broker Container
+      shell: bash
+      run: |
+        mkdir -p /tmp/mosquitto_cfg
+        cp crates/rekuiper-connectors/tests/tls_fixtures/ca1.crt /tmp/mosquitto_cfg/
+        cp crates/rekuiper-connectors/tests/tls_fixtures/server_localhost.crt /tmp/mosquitto_cfg/
+        cp crates/rekuiper-connectors/tests/tls_fixtures/server_localhost.key /tmp/mosquitto_cfg/
+        chmod 644 /tmp/mosquitto_cfg/*
+        cat << 'EOF' > /tmp/mosquitto_cfg/mosquitto.conf
+        listener 1883
+        allow_anonymous true
+
+        listener 8883
+        allow_anonymous true
+        cafile /mosquitto/config/ca1.crt
+        certfile /mosquitto/config/server_localhost.crt
+        keyfile /mosquitto/config/server_localhost.key
+        EOF
+        docker run -d --name ${{ inputs.container-name }} \
+          -p 1883:1883 -p 8883:8883 \
+          -v /tmp/mosquitto_cfg:/mosquitto/config \
+          eclipse-mosquitto:2
+        for i in $(seq 1 30); do
+          if nc -z 127.0.0.1 1883 && nc -z 127.0.0.1 8883; then
+            echo "Mosquitto broker ready on 1883 and 8883"
+            break
+          fi
+          sleep 1
+        done

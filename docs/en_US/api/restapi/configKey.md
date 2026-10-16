@@ -45,7 +45,7 @@ Response sample:
     },
     "default": {
         "qos": 2,
-        "server": "tcp://emqx:1883"
+        "server": "tcp://127.0.0.1:1883"
     },
     "demo_conf": {
         "qos": 0,

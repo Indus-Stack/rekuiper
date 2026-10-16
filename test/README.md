@@ -104,7 +104,7 @@ For most of scripts, you can just start JMeter by default way, such as ``bin/jme
 
 - [Aggregation rule](select_aggr_rule.jmx)
 
-  The script automated steps described in [this blog](https://www.emqx.io/blog/lightweight-edge-computing-emqx-kuiper-and-aws-iot-hub-integration-solution), except for the sink target changes to local EMQ broker (not AWS IoT Hub). 
+  The script automates aggregation over tumbling windows, with results sent to a local MQTT broker. 
 
   - The processing SQL is as following.
 
