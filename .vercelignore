@@ -1,0 +1,12 @@
+crates/
+test/
+deploy/
+etc/
+.git/
+target/
+*.zip
+*.tar.gz
+*.mp4
+docs/node_modules/
+docs/.vitepress/dist/
+docs/.vitepress/cache/
