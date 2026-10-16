@@ -162,7 +162,7 @@ Use the rekuiper Helm chart to deploy rekuiper on the edge node.
 
    ```shell
    git clone https://github.com/Indus-Stack/rekuiper.git
-   cd rekuiper/deploy/chart/ekuiper
+   cd rekuiper/deploy/chart/rekuiper
    ```
 
 2. Modify `template/StatefulSet.yaml` around line 38 to add `nodeName` and `hostNetwork`:

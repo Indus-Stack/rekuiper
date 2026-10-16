@@ -186,7 +186,7 @@ rekuiper implements the eKuiper REST API, SQL dialect, rule format, and `kuiper`
 | :--- | :--- |
 | Docker | `docker run -d -p 9081:9081 indusstack/rekuiper:1.0.0-rc4` |
 | Docker Compose | `docker compose -f deploy/docker/docker-compose.yml up -d` |
-| Kubernetes | `helm install rekuiper deploy/chart/ekuiper` ([chart docs](deploy/chart/ekuiper/README.md)) |
+| Kubernetes | `helm install rekuiper deploy/chart/rekuiper` ([chart docs](deploy/chart/rekuiper/README.md)) |
 | Binaries | [Releases](https://github.com/Indus-Stack/rekuiper/releases) |
 | Source | `cargo build --release -p kuiperd` |
 
