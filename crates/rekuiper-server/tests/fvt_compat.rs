@@ -28,6 +28,28 @@ async fn spawn_test_server_with_state() -> (String, tokio::task::JoinHandle<()>,
         stream_bus,
     );
 
+    // Seed OpenAPI smoke-test fixtures in test harness state (not production).
+    let now = chrono::Utc::now();
+    state.trace_manager.record_trace(
+        "rule_openapi",
+        rekuiper_server::state::TraceSpan {
+            name: "rule_openapi".to_string(),
+            trace_id: "trace_1".to_string(),
+            span_id: "0000000000000001".to_string(),
+            parent_span_id: "0000000000000000".to_string(),
+            attribute: None,
+            links: None,
+            start_time: now.to_rfc3339(),
+            end_time: (now + chrono::Duration::microseconds(150)).to_rfc3339(),
+            rule_id: Some("rule_openapi".to_string()),
+            child_span: vec![],
+        },
+    );
+    let _ = state.task_manager.register_task("task_1".to_string());
+    state
+        .task_manager
+        .update_status("task_1", "completed", "seeded task");
+
     let app = create_router(state.clone());
     let handle = tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap();

@@ -11,9 +11,36 @@ use tokio::sync::watch;
 use tokio::task::JoinHandle;
 use tracing::{error, info};
 
-// ---------------------------------------------------------------------------
-// OTLP Flattening & Protocol Payload Decoding
-// ---------------------------------------------------------------------------
+pub const MAX_OTLP_BODY_BYTES: usize = 10 * 1024 * 1024; // 10 MiB cap
+
+/// Encodes a JSON primitive/array/object into an OTLP AnyValue JSON envelope.
+pub fn value_to_otlp_any_value(v: &Value) -> Value {
+    match v {
+        Value::String(s) => json!({ "stringValue": s }),
+        Value::Bool(b) => json!({ "boolValue": b }),
+        Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                json!({ "intValue": i })
+            } else if let Some(f) = n.as_f64() {
+                json!({ "doubleValue": f })
+            } else {
+                json!({ "stringValue": n.to_string() })
+            }
+        }
+        Value::Array(arr) => {
+            let values: Vec<Value> = arr.iter().map(value_to_otlp_any_value).collect();
+            json!({ "arrayValue": { "values": values } })
+        }
+        Value::Object(obj) => {
+            let values: Vec<Value> = obj
+                .iter()
+                .map(|(k, val)| json!({ "key": k, "value": value_to_otlp_any_value(val) }))
+                .collect();
+            json!({ "kvlistValue": { "values": values } })
+        }
+        Value::Null => json!({ "stringValue": "" }),
+    }
+}
 
 /// Converts OTLP KeyValue array: `[{"key": "service.name", "value": {"stringValue": "edge"}}]`
 /// into a flat JSON map: `{"service.name": "edge"}`.
@@ -495,28 +522,55 @@ impl OtlpSource {
 
                         tokio::spawn(async move {
                             let mut buf = Vec::with_capacity(4096);
-                            let mut temp = [0u8; 2048];
+                            let mut temp = [0u8; 4096];
                             let mut content_length: Option<usize> = None;
                             let mut body_start: Option<usize> = None;
 
                             loop {
-                                let n = match socket.read(&mut temp).await {
-                                    Ok(0) => break,
-                                    Ok(n) => n,
-                                    Err(_) => break,
+                                let read_res = tokio::time::timeout(
+                                    Duration::from_secs(10),
+                                    socket.read(&mut temp),
+                                )
+                                .await;
+                                let n = match read_res {
+                                    Ok(Ok(0)) | Ok(Err(_)) | Err(_) => break,
+                                    Ok(Ok(n)) => n,
                                 };
                                 buf.extend_from_slice(&temp[..n]);
 
+                                if buf.len() > MAX_OTLP_BODY_BYTES + 8192 {
+                                    let resp = b"HTTP/1.1 413 Payload Too Large\r\nContent-Type: application/json\r\nContent-Length: 36\r\nConnection: close\r\n\r\n{\"error\":\"OTLP payload exceeds 10MB\"}";
+                                    let _ = socket.write_all(resp).await;
+                                    break;
+                                }
+
                                 if body_start.is_none() {
-                                    if let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                                    if let Some(pos) =
+                                        buf.windows(4).position(|w| w == b"\r\n\r\n")
+                                    {
                                         let headers_str = String::from_utf8_lossy(&buf[..pos]);
                                         body_start = Some(pos + 4);
-                                        for line in headers_str.lines() {
+                                        for line in headers_str.lines().skip(1) {
                                             if let Some((k, v)) = line.split_once(':') {
-                                                if k.trim().eq_ignore_ascii_case("content-length") {
-                                                    content_length = v.trim().parse::<usize>().ok();
+                                                if k.trim().eq_ignore_ascii_case("content-length")
+                                                {
+                                                    content_length =
+                                                        v.trim().parse::<usize>().ok();
                                                 }
                                             }
+                                        }
+                                        match content_length {
+                                            Some(len) if len > MAX_OTLP_BODY_BYTES => {
+                                                let resp = b"HTTP/1.1 413 Payload Too Large\r\nContent-Type: application/json\r\nContent-Length: 36\r\nConnection: close\r\n\r\n{\"error\":\"OTLP payload exceeds 10MB\"}";
+                                                let _ = socket.write_all(resp).await;
+                                                break;
+                                            }
+                                            None | Some(0) => {
+                                                let resp = b"HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\nContent-Length: 43\r\nConnection: close\r\n\r\n{\"error\":\"Missing or empty Content-Length\"}";
+                                                let _ = socket.write_all(resp).await;
+                                                break;
+                                            }
+                                            _ => {}
                                         }
                                     }
                                 }
@@ -534,11 +588,21 @@ impl OtlpSource {
                                             }
                                             Err(e) => {
                                                 let mut err_data = HashMap::new();
-                                                err_data.insert("__raw_error__".to_string(), json!(e.to_string()));
-                                                err_data.insert("__raw_payload__".to_string(), json!(String::from_utf8_lossy(body_bytes).to_string()));
-                                                let _ = tx_clone.send(StreamRecord::new(err_data)).await;
+                                                err_data.insert(
+                                                    "__raw_error__".to_string(),
+                                                    json!(e.to_string()),
+                                                );
+                                                err_data.insert(
+                                                    "__raw_payload__".to_string(),
+                                                    json!(String::from_utf8_lossy(body_bytes)
+                                                        .to_string()),
+                                                );
+                                                let _ = tx_clone
+                                                    .send(StreamRecord::new(err_data))
+                                                    .await;
 
-                                                let err_body = format!("{{\"error\":\"{}\"}}", e);
+                                                let err_body =
+                                                    json!({ "error": e.to_string() }).to_string();
                                                 let resp = format!(
                                                     "HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
                                                     err_body.len(),
@@ -604,8 +668,47 @@ impl OtlpSink {
         &self,
         records: &[HashMap<String, Value>],
     ) -> Result<(), (bool, String)> {
+        if records.is_empty() {
+            return Ok(());
+        }
+        if records.len() == 1 {
+            return self.write_record(&records[0]).await;
+        }
+        let mut resource_metrics = Vec::new();
+        let mut resource_logs = Vec::new();
+        let mut resource_spans = Vec::new();
+
         for record in records {
-            self.write_record(record).await?;
+            let mut single = self.format_otlp_payload(record);
+            if let Some(arr) = single
+                .get_mut("resourceMetrics")
+                .and_then(|v| v.as_array_mut())
+            {
+                resource_metrics.append(arr);
+            } else if let Some(arr) = single
+                .get_mut("resourceLogs")
+                .and_then(|v| v.as_array_mut())
+            {
+                resource_logs.append(arr);
+            } else if let Some(arr) = single
+                .get_mut("resourceSpans")
+                .and_then(|v| v.as_array_mut())
+            {
+                resource_spans.append(arr);
+            }
+        }
+
+        if !resource_metrics.is_empty() {
+            self.dispatch_otlp_http(&json!({ "resourceMetrics": resource_metrics }))
+                .await?;
+        }
+        if !resource_logs.is_empty() {
+            self.dispatch_otlp_http(&json!({ "resourceLogs": resource_logs }))
+                .await?;
+        }
+        if !resource_spans.is_empty() {
+            self.dispatch_otlp_http(&json!({ "resourceSpans": resource_spans }))
+                .await?;
         }
         Ok(())
     }
@@ -630,7 +733,7 @@ impl OtlpSink {
         let mut resource_kv = Vec::new();
         if let Some(obj) = resource_attrs.as_object() {
             for (k, v) in obj {
-                resource_kv.push(json!({ "key": k, "value": { "stringValue": v.to_string().trim_matches('"') } }));
+                resource_kv.push(json!({ "key": k, "value": value_to_otlp_any_value(v) }));
             }
         }
 
@@ -641,7 +744,7 @@ impl OtlpSink {
         let mut attrs_kv = Vec::new();
         if let Some(obj) = custom_attrs.as_object() {
             for (k, v) in obj {
-                attrs_kv.push(json!({ "key": k, "value": { "stringValue": v.to_string().trim_matches('"') } }));
+                attrs_kv.push(json!({ "key": k, "value": value_to_otlp_any_value(v) }));
             }
         }
 
@@ -810,5 +913,109 @@ impl OtlpSink {
 
             Err((is_permanent, err_msg))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_value_to_otlp_any_value_types() {
+        assert_eq!(
+            value_to_otlp_any_value(&json!("hello")),
+            json!({ "stringValue": "hello" })
+        );
+        assert_eq!(
+            value_to_otlp_any_value(&json!(true)),
+            json!({ "boolValue": true })
+        );
+        assert_eq!(
+            value_to_otlp_any_value(&json!(123)),
+            json!({ "intValue": 123 })
+        );
+        assert_eq!(
+            value_to_otlp_any_value(&json!(45.67)),
+            json!({ "doubleValue": 45.67 })
+        );
+        assert_eq!(
+            value_to_otlp_any_value(&json!(["a", 1])),
+            json!({ "arrayValue": { "values": [
+                { "stringValue": "a" },
+                { "intValue": 1 }
+            ] } })
+        );
+        assert_eq!(
+            value_to_otlp_any_value(&json!({ "host": "srv1" })),
+            json!({ "kvlistValue": { "values": [
+                { "key": "host", "value": { "stringValue": "srv1" } }
+            ] } })
+        );
+        assert_eq!(
+            value_to_otlp_any_value(&Value::Null),
+            json!({ "stringValue": "" })
+        );
+    }
+
+    #[test]
+    fn test_format_otlp_payload_typed_attributes() {
+        let sink = OtlpSink::new(OtlpSinkConfig {
+            endpoint: "http://localhost:4318/v1/metrics".to_string(),
+            signal: Some("metric".to_string()),
+            headers: None,
+            timeout: None,
+        });
+
+        let mut record = HashMap::new();
+        record.insert("name".to_string(), json!("cpu_usage"));
+        record.insert("value".to_string(), json!(78.5));
+        let mut attrs = serde_json::Map::new();
+        attrs.insert("is_active".to_string(), json!(true));
+        attrs.insert("cores".to_string(), json!(8));
+        attrs.insert("load".to_string(), json!(1.25));
+        record.insert("attributes".to_string(), Value::Object(attrs));
+
+        let payload = sink.format_otlp_payload(&record);
+        let resource_metrics = payload.get("resourceMetrics").unwrap().as_array().unwrap();
+        let scope_metrics = resource_metrics[0]
+            .get("scopeMetrics")
+            .unwrap()
+            .as_array()
+            .unwrap();
+        let metrics = scope_metrics[0].get("metrics").unwrap().as_array().unwrap();
+        let gauge = metrics[0].get("gauge").unwrap();
+        let data_points = gauge.get("dataPoints").unwrap().as_array().unwrap();
+        let attrs_list = data_points[0]
+            .get("attributes")
+            .unwrap()
+            .as_array()
+            .unwrap();
+
+        let mut found_bool = false;
+        let mut found_int = false;
+        let mut found_double = false;
+
+        for item in attrs_list {
+            let key = item.get("key").unwrap().as_str().unwrap();
+            let val = item.get("value").unwrap();
+            match key {
+                "is_active" => {
+                    assert_eq!(val, &json!({ "boolValue": true }));
+                    found_bool = true;
+                }
+                "cores" => {
+                    assert_eq!(val, &json!({ "intValue": 8 }));
+                    found_int = true;
+                }
+                "load" => {
+                    assert_eq!(val, &json!({ "doubleValue": 1.25 }));
+                    found_double = true;
+                }
+                _ => {}
+            }
+        }
+        assert!(found_bool);
+        assert!(found_int);
+        assert!(found_double);
     }
 }

@@ -4,7 +4,7 @@
 
 rekuiper is a small SQL engine that sits between your devices and your cloud. It filters, aggregates, and routes live data on the gateway itself, so you send upstream only what matters.
 
-[![Release](https://img.shields.io/badge/release-v1.0.0--rc3-blue.svg)](https://github.com/ankur-paan/rekuiper/releases)
+[![Release](https://img.shields.io/badge/release-v1.0.0--rc4-blue.svg)](https://github.com/ankur-paan/rekuiper/releases)
 [![Rust CI](https://img.shields.io/badge/Rust%20CI-passing-brightgreen.svg)](https://github.com/ankur-paan/rekuiper/actions/workflows/ci.yml)
 [![License: MIT or Apache-2.0](https://img.shields.io/badge/license-MIT%20%2F%20Apache--2.0-yellow.svg)](LICENSE)
 [![Docker Pulls](https://img.shields.io/docker/pulls/ankurkrp/rekuiper?color=blue&logo=docker)](https://hub.docker.com/r/ankurkrp/rekuiper)
@@ -34,7 +34,7 @@ This demo needs only Docker. A built-in simulator makes the data.
 **1. Start the engine.**
 
 ```bash
-docker run -d --name rekuiper -p 9081:9081 ankurkrp/rekuiper:1.0.0-rc3
+docker run -d --name rekuiper -p 9081:9081 ankurkrp/rekuiper:1.0.0-rc4
 ```
 
 **2. Register simulated sensor readings, ten per second.**
@@ -115,7 +115,7 @@ GROUP BY deviceId, TUMBLINGWINDOW(ss, 60)
 
 | Use rekuiper when | Look elsewhere when |
 | :--- | :--- |
-| Your data arrives as messages: MQTT, HTTP, WebSocket, Kafka, AMQP. | You need native Modbus, OPC UA, or BACnet drivers. Put a protocol gateway in front and publish to MQTT. |
+| Your data arrives via MQTT, HTTP, WebSocket, Kafka, AMQP, OTLP, Modbus TCP/RTU, or OPC-UA. | You need legacy proprietary fieldbus drivers (such as BACnet or Profibus). Put a protocol gateway in front and publish to MQTT. |
 | You want the logic in SQL, and you want to change it at runtime. | You need a visual flow builder for people who do not write SQL. |
 | The machine has one or two CPU cores and limited memory. | You need a distributed cluster that scales across many nodes. rekuiper runs on one node. |
 | You need time windows, joins, and rules that keep state. | You only need to collect metrics and forward them without processing. |
@@ -128,12 +128,12 @@ All tests run in a container limited to one CPU core and 1 GiB of RAM.
 
 | Measure | Result | Tested on |
 | :--- | :--- | :--- |
-| End-to-end streaming SQL throughput | 994,118 events per second (502 ms for 500k records) | 1.0.0-rc3 |
-| Zero-parse in-process SQL pipeline | 2,144,375 events per second (233 ms for 500k records) | 1.0.0-rc3 |
+| End-to-end streaming SQL throughput | 1,085,885 events per second (460 ms for 500k records) | 1.0.0-rc4 |
+| Zero-parse in-process SQL pipeline | 2,207,367 events per second (226 ms for 500k records) | 1.0.0-rc4 |
 | Parallel rules on one stream | 1,000 rules, 500,000 evaluations per second | 0.505 |
 | MQTT throughput, single rule | 150,000 to 200,000 messages per second | 0.500 |
 | Heap memory under load | 4.4 to 10.2 MiB | 0.500 |
-| Footprint | One static binary, about 30 MB | 1.0.0-rc3 |
+| Footprint | One static binary, about 30 MB | 1.0.0-rc4 |
 
 Full method, hardware limits, and comparisons with eKuiper, Telegraf, and Redpanda Connect: [Benchmark Overview](docs/en_US/benchmarks/overview.md).
 
@@ -147,7 +147,8 @@ Full method, hardware limits, and comparisons with eKuiper, Telegraf, and Redpan
 | **HTTP** | HTTP pull, HTTP push | REST |
 | **Databases** | PostgreSQL, SQLite | PostgreSQL, SQLite, InfluxDB v1 and v2, TDengine, IoTDB |
 | **Files and media** | CSV, JSON Lines, Parquet, video (FFmpeg) | CSV, JSON Lines, Parquet, image |
-| **Industrial** | EdgeX Foundry, Neuron | EdgeX Foundry, Neuron |
+| **Industrial** | Modbus TCP/RTU, OPC-UA (`opc.tcp`), EdgeX Foundry, Neuron | Modbus TCP/RTU, OPC-UA (`opc.tcp`), EdgeX Foundry, Neuron |
+| **Observability** | OpenTelemetry (OTLP/HTTP metrics, logs, traces) | OpenTelemetry (OTLP/HTTP export) |
 | **Test** | Simulator, Memory | Log, Memory, Nop |
 
 Details: [Sources](docs/en_US/guide/sources/overview.md) · [Sinks](docs/en_US/guide/sinks/overview.md)
@@ -161,9 +162,10 @@ Details: [Sources](docs/en_US/guide/sources/overview.md) · [Sinks](docs/en_US/g
 - **Rete-Lite StreamBus Routing.** Single-subscriber lock-free channel fast-paths and multi-rule indexable predicate routing.
 - **Parquet Columnar Buffering.** Automatic batch buffering with Arrow RecordBatch output and internal metadata isolation.
 - **Bounded memory.** Queues between sources, rules, and sinks have fixed sizes. A slow destination slows the source; it does not fill the memory.
+- **Declarative GitOps & Dead-Letter Queues (DLQ).** Run in read-only GitOps mode (`--declarative`) with automatic file watching, and isolate poison-pill records across 5 pipeline stages (`GET/DELETE /rules/:id/errors`).
 - **Extensions.** Write SQL functions as sandboxed WebAssembly modules.
 - **Secrets.** Read credentials from HashiCorp Vault or environment variables.
-- **Operations.** Prometheus metrics, a Helm chart, and a `kuiper` CLI.
+- **Operations.** Prometheus metrics, a self-contained Web UI (`GET /ui`), an interactive terminal dashboard (`rekuiper top`), a Helm chart, and a `rekuiper` / `kuiper` CLI.
 - **AI tooling.** A Model Context Protocol (MCP) server (`rekuiper-mcp`) exposing **48 tools** (including `explain_pipeline_profile`), 15 live resources, and prompt workflows. See [MCP](docs/en_US/mcp/overview.md).
 
 ---
@@ -182,7 +184,7 @@ rekuiper implements the eKuiper REST API, SQL dialect, rule format, and `kuiper`
 
 | Method | Command or link |
 | :--- | :--- |
-| Docker | `docker run -d -p 9081:9081 ankurkrp/rekuiper:1.0.0-rc3` |
+| Docker | `docker run -d -p 9081:9081 ankurkrp/rekuiper:1.0.0-rc4` |
 | Docker Compose | `docker compose -f deploy/docker/docker-compose.yml up -d` |
 | Kubernetes | `helm install rekuiper deploy/chart/ekuiper` ([chart docs](deploy/chart/ekuiper/README.md)) |
 | Binaries | [Releases](https://github.com/ankur-paan/rekuiper/releases) |

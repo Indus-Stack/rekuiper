@@ -106,7 +106,7 @@ pub struct StoreConfig {
 }
 
 fn default_store_type() -> String {
-    "memory".to_string()
+    "sqlite".to_string()
 }
 
 impl Default for StoreConfig {

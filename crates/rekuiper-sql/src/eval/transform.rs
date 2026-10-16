@@ -640,7 +640,17 @@ impl Evaluator {
         if let Some(ms) = args[0].as_i64() {
             if ms > 0 {
                 let sleep_ms = ms.min(10_000) as u64;
-                std::thread::sleep(std::time::Duration::from_millis(sleep_ms));
+                let captured = super::ASYNC_DELAY_ACCUMULATOR.with(|c| {
+                    if let Some(acc) = c.get() {
+                        c.set(Some(acc.saturating_add(sleep_ms)));
+                        true
+                    } else {
+                        false
+                    }
+                });
+                if !captured {
+                    std::thread::sleep(std::time::Duration::from_millis(sleep_ms));
+                }
             }
         }
         args[1].clone()

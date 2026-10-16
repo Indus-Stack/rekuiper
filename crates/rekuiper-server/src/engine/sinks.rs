@@ -1038,8 +1038,12 @@ impl FileBatchWriter {
         if !self.parquet_buf.is_empty() {
             let records = std::mem::take(&mut self.parquet_buf);
             self.pending = 0;
-            return rekuiper_connectors::parquet_io::write_records_to_parquet(&records, &self.path)
-                .map_err(|e| std::io::Error::other(e.to_string()));
+            return rekuiper_connectors::parquet_io::write_records_to_parquet_async(
+                records,
+                self.path.clone(),
+            )
+            .await
+            .map_err(|e| std::io::Error::other(e.to_string()));
         }
         if self.buf.is_empty() {
             return Ok(());
@@ -2508,21 +2512,21 @@ pub(crate) async fn send_action(
             }
             let sink = rt.otlp.as_ref().unwrap();
             if let Some(Value::Array(arr)) = output.data.get(BATCH_ROWS_KEY) {
+                let mut batch_maps = Vec::with_capacity(arr.len());
                 for row in arr {
                     if let Value::Object(m) = format_record_for_sink_val(row, opts) {
-                        let map: HashMap<String, Value> = m.into_iter().collect();
-                        sink.write_record(&map)
-                            .await
-                            .map_err(|(is_perm, err_str)| {
-                                if is_perm {
-                                    SendError::Permanent(err_str)
-                                } else {
-                                    SendError::Retry(err_str)
-                                }
-                            })?;
+                        batch_maps.push(m.into_iter().collect::<HashMap<String, Value>>());
                     }
                 }
-                Ok(())
+                sink.write_batch(&batch_maps)
+                    .await
+                    .map_err(|(is_perm, err_str)| {
+                        if is_perm {
+                            SendError::Permanent(err_str)
+                        } else {
+                            SendError::Retry(err_str)
+                        }
+                    })
             } else {
                 let map = match format_record_for_sink(&output.data, opts) {
                     Value::Object(m) => m.into_iter().collect(),
@@ -3082,8 +3086,6 @@ pub(crate) async fn enqueue_sink_record(
     sink: &tokio::sync::mpsc::Sender<StreamRecord>,
     output_record: StreamRecord,
 ) -> bool {
-    let depth = sink.max_capacity().saturating_sub(sink.capacity());
-    counters.observe_high_water(depth);
     match sink.try_send(output_record) {
         Ok(()) => {
             counters.inc_enqueued(1);
@@ -3091,8 +3093,7 @@ pub(crate) async fn enqueue_sink_record(
         }
         Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => false,
         Err(tokio::sync::mpsc::error::TrySendError::Full(rec)) => {
-            let depth = sink.max_capacity().saturating_sub(sink.capacity());
-            counters.observe_high_water(depth);
+            counters.observe_high_water(sink.max_capacity());
             let start = std::time::Instant::now();
             match sink.send(rec).await {
                 Ok(()) => {

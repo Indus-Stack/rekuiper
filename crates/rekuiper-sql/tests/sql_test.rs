@@ -1064,8 +1064,7 @@ fn test_array_object_and_utility_functions() {
     // keys() order is unspecified; sort before asserting.
     let mut keys = eval_expr("SELECT keys(obj) FROM demo", &r);
     if let Some(arr) = keys.as_array_mut() {
-        #[allow(clippy::unnecessary_sort_by)]
-        arr.sort_by(|a, b| a.as_str().cmp(&b.as_str()));
+        arr.sort_by_key(|a| a.to_string());
     }
     assert_eq!(keys, json!(["x", "y"]));
     let mut values = eval_expr("SELECT values(obj) FROM demo", &r);

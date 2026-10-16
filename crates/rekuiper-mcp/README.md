@@ -44,7 +44,7 @@ An enterprise-grade, native Rust **Model Context Protocol (MCP)** server providi
 - **Universal REST API Proxy (`execute_rekuiper_api`)**:
   - Allows executing arbitrary HTTP methods (`GET`, `POST`, `PUT`, `DELETE`, `PATCH`) against any present or future `rekuiper` REST endpoint, ensuring 100% API coverage.
 
-- **15 First-Class Resources & 10 Interactive Prompts**:
+- **22 First-Class Resources & 10 Interactive Prompts**:
   - Live queryable resources via `rekuiper://` URIs, including connector action schemas (`rabbitmq`, `parquet`, `edgex`) and Wasm plugins.
   - Expert troubleshooting, query optimization, vector similarity search, CEP sequence matching, security audit, and RabbitMQ pipeline generation prompts.
 
@@ -70,7 +70,7 @@ An enterprise-grade, native Rust **Model Context Protocol (MCP)** server providi
 
 ---
 
-## Tool Catalog (47 Tools)
+## Tool Catalog (48 Tools)
 
 ### 1. SQL Intelligence & Simulation
 | Tool | Description |
@@ -78,6 +78,7 @@ An enterprise-grade, native Rust **Model Context Protocol (MCP)** server providi
 | `validate_sql` | Offline AST syntax parser and static validator for SQL, window functions, CEP pattern matchers (`sequence_match`, `sequence_count`), `ASOF JOIN` syntax, and DDL statements (including `DEFAULT` column values and `BUFFER_FULL_POLICY`). |
 | `test_sql_expression` | In-memory streaming query evaluator against mock JSON telemetry payloads, supporting vector search (`cosine_similarity`), CEP sequence patterns (`sequence_match`), array/object transforms (`json_map`, `object_erase`), and stateful analytics (`acc_distinct_collect`, `lead`). |
 | `explain_sql` | Deconstructs streaming SQL into projections, sources, joins, and window clauses. |
+| `explain_pipeline_profile` | Static performance profiler analyzing whether a query qualifies for zero-allocation WHERE fast-paths, Rete-Lite StreamBus indexing, IncrementalWindow, or bounded ASOF JOIN state. |
 
 ### 2. Streams Management & Ingress
 | Tool | Description |
@@ -184,6 +185,13 @@ An enterprise-grade, native Rust **Model Context Protocol (MCP)** server providi
 | `rekuiper://schemas/rabbitmq` | Configuration template for RabbitMQ AMQP 0-9-1 source and sink actions. |
 | `rekuiper://schemas/parquet` | Configuration template for Apache Parquet columnar sink actions. |
 | `rekuiper://schemas/edgex` | Configuration template for EdgeX Foundry dual-port listening (59880 / 59881). |
+| `rekuiper://schemas/influx` | Configuration template for InfluxDB v1 and v2 timeseries sink actions. |
+| `rekuiper://schemas/tdengine` | Configuration template for TDengine 3.x timeseries sink actions. |
+| `rekuiper://schemas/iotdb` | Configuration template for Apache IoTDB REST timeseries sink actions. |
+| `rekuiper://schemas/image` | Configuration template for Image sink actions with retention pruning. |
+| `rekuiper://schemas/random` | Configuration template for Random / Simulator telemetry source streams. |
+| `rekuiper://schemas/zmq` | Configuration template for ZeroMQ PUB/SUB socket sink and source actions. |
+| `rekuiper://schemas/video` | Configuration template for Video source streams extracting frames via FFmpeg. |
 
 ---
 

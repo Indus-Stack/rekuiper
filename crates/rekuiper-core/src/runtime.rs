@@ -2,7 +2,7 @@ use crate::model::StreamRecord;
 use parking_lot::RwLock;
 use serde_json::Value;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
@@ -81,18 +81,21 @@ pub struct SubscriberFilter {
 impl SubscriberFilter {
     #[inline]
     pub fn check_and_account(&self, record: &StreamRecord) -> bool {
-        // Error records must always be delivered to the rule actor so `sendError`
-        // and exception counters behave identically to unindexed execution.
-        if record.data.contains_key("error") || record.data.contains_key("__error") {
+        if self.predicate.matches(record) {
             return true;
         }
-        if self.predicate.matches(record) {
-            true
-        } else {
-            self.source_in_counter.fetch_add(1, Ordering::Relaxed);
-            self.filtered_counter.fetch_add(1, Ordering::Relaxed);
-            false
+        // Error records must always be delivered to the rule actor so `sendError`
+        // and exception counters behave identically to unindexed execution.
+        let has_err = record.data.iter().any(|(k, _)| {
+            let b = k.as_bytes();
+            !b.is_empty() && (b[0] == b'e' || b[0] == b'_') && (k == "error" || k == "__error")
+        });
+        if has_err {
+            return true;
         }
+        self.source_in_counter.fetch_add(1, Ordering::Relaxed);
+        self.filtered_counter.fetch_add(1, Ordering::Relaxed);
+        false
     }
 }
 
@@ -152,6 +155,13 @@ impl std::fmt::Display for PublishError {
 
 impl std::error::Error for PublishError {}
 
+struct BatchActiveGuard<'a>(&'a AtomicBool);
+impl<'a> Drop for BatchActiveGuard<'a> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
+}
+
 #[derive(Debug, Default)]
 struct Topic {
     senders: RwLock<Vec<(RecordTx, Option<SubscriberFilter>)>>,
@@ -160,6 +170,7 @@ struct Topic {
     /// Separate from the global topic map lock, which is never held across
     /// an await.
     gate: tokio::sync::Mutex<()>,
+    batch_active: AtomicBool,
 }
 
 impl Topic {
@@ -286,6 +297,53 @@ impl StreamBus {
         topic: &Topic,
         record: StreamRecord,
     ) -> Result<usize, PublishError> {
+        // Lock-free fast path: 1 live subscriber and no batch publisher holding admission gate.
+        if !topic.batch_active.load(Ordering::Relaxed) {
+            let mut was_closed = false;
+            let mut single_full_tx: Option<RecordTx> = None;
+            {
+                let senders = topic.senders.read();
+                if senders.is_empty() {
+                    return Ok(0);
+                }
+                if senders.len() == 1 {
+                    let (sender, filter) = &senders[0];
+                    if let Some(f) = filter {
+                        if !f.check_and_account(&record) {
+                            return Ok(0);
+                        }
+                    }
+                    match sender.try_reserve() {
+                        Ok(permit) => {
+                            permit.send(record);
+                            return Ok(1);
+                        }
+                        Err(mpsc::error::TrySendError::Closed(())) => {
+                            was_closed = true;
+                        }
+                        Err(mpsc::error::TrySendError::Full(())) => {
+                            single_full_tx = Some(sender.clone());
+                        }
+                    }
+                }
+            }
+            if was_closed {
+                topic.purge_closed();
+                return Err(PublishError::Closed);
+            }
+            if let Some(sender) = single_full_tx {
+                let permit = match sender.reserve().await {
+                    Ok(p) => p,
+                    Err(_) => {
+                        topic.purge_closed();
+                        return Err(PublishError::Closed);
+                    }
+                };
+                permit.send(record);
+                return Ok(1);
+            }
+        }
+
         let _admission = match topic.gate.try_lock() {
             Ok(guard) => guard,
             Err(_) => topic.gate.lock().await,
@@ -437,6 +495,8 @@ impl StreamBus {
             Ok(guard) => guard,
             Err(_) => topic.gate.lock().await,
         };
+        topic.batch_active.store(true, Ordering::Release);
+        let _batch_guard = BatchActiveGuard(&topic.batch_active);
         let (registered, mut selected) = topic.snapshot();
         if registered == 0 {
             return Ok(0);
@@ -558,6 +618,38 @@ impl StreamBus {
         topic: &Topic,
         record: StreamRecord,
     ) -> Result<usize, PublishError> {
+        if !topic.batch_active.load(Ordering::Relaxed) {
+            let mut was_closed = false;
+            {
+                let senders = topic.senders.read();
+                if senders.is_empty() {
+                    return Err(PublishError::NoSubscribers);
+                }
+                if senders.len() == 1 {
+                    let (sender, filter) = &senders[0];
+                    if let Some(f) = filter {
+                        if !f.check_and_account(&record) {
+                            return Ok(0);
+                        }
+                    }
+                    match sender.try_reserve() {
+                        Ok(permit) => {
+                            permit.send(record);
+                            return Ok(1);
+                        }
+                        Err(mpsc::error::TrySendError::Closed(())) => {
+                            was_closed = true;
+                        }
+                        Err(mpsc::error::TrySendError::Full(())) => return Err(PublishError::Full),
+                    }
+                }
+            }
+            if was_closed {
+                topic.purge_closed();
+                return Err(PublishError::Closed);
+            }
+        }
+
         let Ok(_admission) = topic.gate.try_lock() else {
             if topic.snapshot().0 == 0 {
                 return Err(PublishError::NoSubscribers);

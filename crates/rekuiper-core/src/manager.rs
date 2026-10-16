@@ -414,6 +414,73 @@ pub struct ActiveRule {
     pub dlq_capacity: usize,
 }
 
+/// Lock-free latency tracker for Prometheus gauge and histogram exposition.
+/// Bucket upper bounds (microseconds): `100`, `500`, `1000`, `5000`, `+Inf`.
+#[derive(Debug, Default)]
+pub struct LatencyTracker {
+    pub last_us: std::sync::atomic::AtomicU64,
+    pub sum_us: std::sync::atomic::AtomicU64,
+    pub count: std::sync::atomic::AtomicU64,
+    pub buckets: [std::sync::atomic::AtomicU64; 5],
+}
+
+impl LatencyTracker {
+    #[inline]
+    pub fn observe(&self, latency_us: u64) {
+        self.observe_batch(latency_us, 1);
+    }
+
+    #[inline]
+    pub fn observe_batch(&self, total_latency_us: u64, records: u64) {
+        if records == 0 {
+            return;
+        }
+        use std::sync::atomic::Ordering::Relaxed;
+        let per_record_us = total_latency_us / records;
+        self.last_us.store(per_record_us, Relaxed);
+        self.sum_us.fetch_add(total_latency_us, Relaxed);
+        self.count.fetch_add(records, Relaxed);
+        let idx = if per_record_us <= 100 {
+            0
+        } else if per_record_us <= 500 {
+            1
+        } else if per_record_us <= 1000 {
+            2
+        } else if per_record_us <= 5000 {
+            3
+        } else {
+            4
+        };
+        self.buckets[idx].fetch_add(records, Relaxed);
+    }
+
+    pub fn reset(&self) {
+        use std::sync::atomic::Ordering::Relaxed;
+        self.last_us.store(0, Relaxed);
+        self.sum_us.store(0, Relaxed);
+        self.count.store(0, Relaxed);
+        for b in &self.buckets {
+            b.store(0, Relaxed);
+        }
+    }
+
+    /// Returns `(last_us, [le_100, le_500, le_1000, le_5000, le_inf], sum_us, count)`.
+    pub fn snapshot(&self, total_records: u64) -> (u64, [u64; 5], u64, u64) {
+        use std::sync::atomic::Ordering::Relaxed;
+        let last = self.last_us.load(Relaxed);
+        let sum = self.sum_us.load(Relaxed);
+        let timed = self.count.load(Relaxed);
+        let untimed_fast = total_records.saturating_sub(timed);
+        let b0 = self.buckets[0].load(Relaxed) + untimed_fast;
+        let b1 = b0 + self.buckets[1].load(Relaxed);
+        let b2 = b1 + self.buckets[2].load(Relaxed);
+        let b3 = b2 + self.buckets[3].load(Relaxed);
+        let b4 = b3 + self.buckets[4].load(Relaxed);
+        let final_count = b4.max(total_records);
+        (last, [b0, b1, b2, b3, final_count], sum, final_count)
+    }
+}
+
 /// Per-rule atomic counters. Rule tasks hold an `Arc<RuleCounters>` cloned at
 /// spawn time, so the hot path never takes the global rules-map lock: counts
 /// are bumped lock-free and mirrored into the status snapshot.
@@ -432,6 +499,9 @@ pub struct RuleCounters {
     pub dlq_records: std::sync::atomic::AtomicU64,
     pub dlq_stages: [std::sync::atomic::AtomicU64; 5],
     pub dlq_sink_failures: std::sync::atomic::AtomicU64,
+    pub source_latency: LatencyTracker,
+    pub op_latency: LatencyTracker,
+    pub sink_latency: LatencyTracker,
 }
 
 impl Default for RuleCounters {
@@ -456,6 +526,9 @@ impl Default for RuleCounters {
                 std::sync::atomic::AtomicU64::new(0),
             ],
             dlq_sink_failures: std::sync::atomic::AtomicU64::new(0),
+            source_latency: LatencyTracker::default(),
+            op_latency: LatencyTracker::default(),
+            sink_latency: LatencyTracker::default(),
         }
     }
 }
@@ -816,6 +889,9 @@ impl RuleManager {
             s.store(0, Relaxed);
         }
         active.counters.dlq_sink_failures.store(0, Relaxed);
+        active.counters.source_latency.reset();
+        active.counters.op_latency.reset();
+        active.counters.sink_latency.reset();
         active.counters.sync_to(&active.status);
         Ok(())
     }

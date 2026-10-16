@@ -1,8 +1,63 @@
 use crate::META_KEY;
 use anyhow::{bail, Result};
+use parking_lot::RwLock;
 use rekuiper_core::model::StreamRecord;
 use rekuiper_core::StreamSender;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::sync::LazyLock;
+
+static SQLITE_POOLS: LazyLock<RwLock<HashMap<String, sqlx::sqlite::SqlitePool>>> =
+    LazyLock::new(|| RwLock::new(HashMap::new()));
+
+static PG_POOLS: LazyLock<RwLock<HashMap<String, sqlx::postgres::PgPool>>> =
+    LazyLock::new(|| RwLock::new(HashMap::new()));
+
+/// Resolve or initialize a shared SQLite connection pool for `url`.
+pub async fn sqlite_pool(url: &str) -> Result<sqlx::sqlite::SqlitePool> {
+    if let Some(pool) = SQLITE_POOLS.read().get(url).cloned() {
+        if !pool.is_closed() {
+            return Ok(pool);
+        }
+    }
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(8)
+        .acquire_timeout(std::time::Duration::from_secs(5))
+        .connect(url)
+        .await?;
+    let mut guard = SQLITE_POOLS.write();
+    let entry = guard.entry(url.to_string()).or_insert_with(|| pool.clone());
+    Ok(entry.clone())
+}
+
+/// Connect or reuse a shared PostgreSQL pool with a bounded 3s handshake timeout
+/// so dead brokers fail fast without stalling rule pipelines.
+pub async fn pg_pool(url: &str) -> Result<sqlx::postgres::PgPool> {
+    if let Some(pool) = PG_POOLS.read().get(url).cloned() {
+        if !pool.is_closed() {
+            return Ok(pool);
+        }
+    }
+    use std::str::FromStr;
+    let opts = sqlx::postgres::PgConnectOptions::from_str(url)?;
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(16)
+        .acquire_timeout(std::time::Duration::from_secs(3))
+        .connect_with(opts)
+        .await?;
+    let mut guard = PG_POOLS.write();
+    let entry = guard.entry(url.to_string()).or_insert_with(|| pool.clone());
+    Ok(entry.clone())
+}
+
+/// Evict a cached SQL pool on transport/execution error so subsequent calls reconnect cleanly.
+pub fn evict_sql_pool(url: &str) {
+    if url.starts_with("sqlite") {
+        SQLITE_POOLS.write().remove(url);
+    } else if url.starts_with("postgres") {
+        PG_POOLS.write().remove(url);
+    }
+}
 
 /// SQL connector configuration (SQLite / PostgreSQL sink, lookup and
 /// polling source). Accepts both the native rekuiper shape (`url`/`table`)
@@ -337,8 +392,52 @@ pub fn is_valid_sql_identifier(name: &str) -> bool {
     chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
+/// Validates SQL source table and index column identifiers before query execution.
+pub fn validate_sql_source_identifiers(
+    config: &SqlConnectorConfig,
+    pairs: &[(String, serde_json::Value)],
+) -> Result<()> {
+    for (k, _) in pairs {
+        if !is_valid_sql_identifier(k) {
+            bail!(
+                "Invalid SQL index field identifier '{}': requires [A-Za-z_][A-Za-z0-9_]*",
+                k
+            );
+        }
+    }
+    let uses_template = config
+        .template_sql_query_cfg
+        .as_ref()
+        .is_some_and(|t| !t.template_sql.trim().is_empty());
+    if !uses_template {
+        let table = config
+            .internal_sql_query_cfg
+            .as_ref()
+            .filter(|i| !i.table.is_empty())
+            .map(|i| i.table.as_str())
+            .unwrap_or(&config.table);
+        if !is_valid_sql_identifier(table) {
+            bail!(
+                "Invalid SQL table identifier '{}': requires [A-Za-z_][A-Za-z0-9_]*",
+                table
+            );
+        }
+    }
+    Ok(())
+}
+
 impl SqlSink {
+    pub fn new(config: SqlConnectorConfig) -> Self {
+        Self { config }
+    }
+
     pub async fn insert_record(&self, record: &StreamRecord) -> Result<()> {
+        if !is_valid_sql_identifier(&self.config.table) {
+            bail!(
+                "Invalid SQL table identifier '{}': SQL sink requires identifiers matching [A-Za-z_][A-Za-z0-9_]*",
+                self.config.table
+            );
+        }
         let fields = if self.config.fields.is_empty() {
             let mut cols: Vec<String> = Vec::new();
             for k in record
@@ -357,6 +456,14 @@ impl SqlSink {
             cols.sort();
             cols
         } else {
+            for f in &self.config.fields {
+                if !is_valid_sql_identifier(f) {
+                    bail!(
+                        "Invalid field name '{}': SQL sink requires identifiers matching [A-Za-z_][A-Za-z0-9_]*",
+                        f
+                    );
+                }
+            }
             self.config.fields.clone()
         };
         // Null/missing columns become an untyped SQL NULL literal (the
@@ -369,11 +476,15 @@ impl SqlSink {
             .map(|f| (f, json_to_bind(record.data.get(f))))
             .collect();
         if self.config.url.starts_with("sqlite") {
-            let pool = sqlx::sqlite::SqlitePool::connect(&self.config.url).await?;
+            let pool = sqlite_pool(&self.config.url).await?;
             if cells.is_empty() {
-                sqlx::query(&format!("INSERT INTO {} DEFAULT VALUES", self.config.table))
+                let res = sqlx::query(&format!("INSERT INTO {} DEFAULT VALUES", self.config.table))
                     .execute(&pool)
-                    .await?;
+                    .await;
+                if let Err(e) = res {
+                    evict_sql_pool(&self.config.url);
+                    return Err(e.into());
+                }
                 return Ok(());
             }
             let cols: Vec<String> = cells.iter().map(|(f, _)| (*f).clone()).collect();
@@ -383,13 +494,20 @@ impl SqlSink {
             for v in cells.iter().filter_map(|(_, v)| v.as_ref()) {
                 query = bind_sqlite_arg(query, v);
             }
-            query.execute(&pool).await?;
+            if let Err(e) = query.execute(&pool).await {
+                evict_sql_pool(&self.config.url);
+                return Err(e.into());
+            }
         } else if self.config.url.starts_with("postgres") {
             let pool = pg_pool(&self.config.url).await?;
             if cells.is_empty() {
-                sqlx::query(&format!("INSERT INTO {} DEFAULT VALUES", self.config.table))
+                let res = sqlx::query(&format!("INSERT INTO {} DEFAULT VALUES", self.config.table))
                     .execute(&pool)
-                    .await?;
+                    .await;
+                if let Err(e) = res {
+                    evict_sql_pool(&self.config.url);
+                    return Err(e.into());
+                }
                 return Ok(());
             }
             let cols: Vec<String> = cells.iter().map(|(f, _)| (*f).clone()).collect();
@@ -399,7 +517,10 @@ impl SqlSink {
             for v in cells.iter().filter_map(|(_, v)| v.as_ref()) {
                 query = bind_pg_arg(query, v);
             }
-            query.execute(&pool).await?;
+            if let Err(e) = query.execute(&pool).await {
+                evict_sql_pool(&self.config.url);
+                return Err(e.into());
+            }
         } else {
             bail!("Unsupported SQL sink URL scheme: {}", self.config.url);
         }
@@ -411,6 +532,12 @@ impl SqlSink {
     pub async fn insert_batch(&self, records: &[StreamRecord]) -> Result<()> {
         if records.is_empty() {
             return Ok(());
+        }
+        if !is_valid_sql_identifier(&self.config.table) {
+            bail!(
+                "Invalid SQL table identifier '{}': SQL sink requires identifiers matching [A-Za-z_][A-Za-z0-9_]*",
+                self.config.table
+            );
         }
         if records.len() == 1 {
             return self.insert_record(&records[0]).await;
@@ -434,6 +561,14 @@ impl SqlSink {
             }
             set.into_iter().collect::<Vec<_>>()
         } else {
+            for f in &self.config.fields {
+                if !is_valid_sql_identifier(f) {
+                    bail!(
+                        "Invalid field name '{}': SQL sink requires identifiers matching [A-Za-z_][A-Za-z0-9_]*",
+                        f
+                    );
+                }
+            }
             self.config.fields.clone()
         };
         if fields.is_empty() {
@@ -445,9 +580,9 @@ impl SqlSink {
 
         // Limit sub-batch size so total parameters stay comfortably within database limits
         let sub_batch_size = (900 / fields.len().max(1)).clamp(1, 256);
-        for chunk in records.chunks(sub_batch_size) {
-            if self.config.url.starts_with("sqlite") {
-                let pool = sqlx::sqlite::SqlitePool::connect(&self.config.url).await?;
+        if self.config.url.starts_with("sqlite") {
+            let pool = sqlite_pool(&self.config.url).await?;
+            for chunk in records.chunks(sub_batch_size) {
                 let mut sql = format!(
                     "INSERT INTO {} ({}) VALUES ",
                     self.config.table,
@@ -480,9 +615,14 @@ impl SqlSink {
                 for v in &all_vals {
                     query = bind_sqlite_arg(query, v);
                 }
-                query.execute(&pool).await?;
-            } else if self.config.url.starts_with("postgres") {
-                let pool = pg_pool(&self.config.url).await?;
+                if let Err(e) = query.execute(&pool).await {
+                    evict_sql_pool(&self.config.url);
+                    return Err(e.into());
+                }
+            }
+        } else if self.config.url.starts_with("postgres") {
+            let pool = pg_pool(&self.config.url).await?;
+            for chunk in records.chunks(sub_batch_size) {
                 let mut sql = format!(
                     "INSERT INTO {} ({}) VALUES ",
                     self.config.table,
@@ -517,11 +657,14 @@ impl SqlSink {
                 for v in &all_vals {
                     query = bind_pg_arg(query, v);
                 }
-                query.execute(&pool).await?;
-            } else {
-                for r in chunk {
-                    self.insert_record(r).await?;
+                if let Err(e) = query.execute(&pool).await {
+                    evict_sql_pool(&self.config.url);
+                    return Err(e.into());
                 }
+            }
+        } else {
+            for r in records {
+                self.insert_record(r).await?;
             }
         }
         Ok(())
@@ -592,18 +735,6 @@ pub fn pg_insert_row_sql(table: &str, cols: &[String], nulls: &[bool]) -> String
         "INSERT INTO {} ({}) VALUES ({})",
         table, names, placeholders
     )
-}
-
-/// Connect a PostgreSQL pool with a bounded handshake timeout so dead
-/// brokers fail fast (instead of stalling rule pipelines on the 30s sqlx
-/// default) while refused/blackholed hosts still surface real errors.
-async fn pg_pool(url: &str) -> Result<sqlx::postgres::PgPool> {
-    use std::str::FromStr;
-    let opts = sqlx::postgres::PgConnectOptions::from_str(url)?;
-    Ok(sqlx::postgres::PgPoolOptions::new()
-        .acquire_timeout(std::time::Duration::from_secs(3))
-        .connect_with(opts)
-        .await?)
 }
 
 /// `SELECT * ... WHERE {key_col} = $1 LIMIT 1` for PostgreSQL. The
@@ -697,13 +828,28 @@ pub async fn sql_lookup_key(
     key_col: &str,
     key_val: &str,
 ) -> Result<Option<serde_json::Value>> {
+    if !is_valid_sql_identifier(table) {
+        bail!(
+            "Invalid SQL table identifier '{}': requires [A-Za-z_][A-Za-z0-9_]*",
+            table
+        );
+    }
+    if !is_valid_sql_identifier(key_col) {
+        bail!(
+            "Invalid SQL key column identifier '{}': requires [A-Za-z_][A-Za-z0-9_]*",
+            key_col
+        );
+    }
     if url.starts_with("sqlite") {
-        let pool = sqlx::sqlite::SqlitePool::connect(url).await?;
+        let pool = sqlite_pool(url).await?;
         let sql = format!("SELECT * FROM {} WHERE {} = ? LIMIT 1", table, key_col);
-        let row = sqlx::query(&sql)
-            .bind(key_val)
-            .fetch_optional(&pool)
-            .await?;
+        let row = match sqlx::query(&sql).bind(key_val).fetch_optional(&pool).await {
+            Ok(r) => r,
+            Err(e) => {
+                evict_sql_pool(url);
+                return Err(e.into());
+            }
+        };
         if let Some(r) = row {
             use sqlx::{Column, Row};
             let mut map = serde_json::Map::new();
@@ -716,10 +862,13 @@ pub async fn sql_lookup_key(
     } else if url.starts_with("postgres") {
         let pool = pg_pool(url).await?;
         let sql = pg_lookup_sql(table, key_col);
-        let row = sqlx::query(&sql)
-            .bind(key_val)
-            .fetch_optional(&pool)
-            .await?;
+        let row = match sqlx::query(&sql).bind(key_val).fetch_optional(&pool).await {
+            Ok(r) => r,
+            Err(e) => {
+                evict_sql_pool(url);
+                return Err(e.into());
+            }
+        };
         if let Some(r) = row {
             use sqlx::{Column, Row};
             let mut map = serde_json::Map::new();
@@ -800,10 +949,17 @@ impl SqlSource {
     /// Poll once with the current index values, then advance tracked
     /// indexes from the fetched rows (last row wins).
     pub async fn poll_once(&mut self) -> Result<Vec<StreamRecord>> {
+        validate_sql_source_identifiers(&self.config, &self.index)?;
         let sql = sql_source_query_with(&self.config, &self.index);
         if self.config.url.starts_with("sqlite") {
-            let pool = sqlx::sqlite::SqlitePool::connect(&self.config.url).await?;
-            let rows = sqlx::query(&sql).fetch_all(&pool).await?;
+            let pool = sqlite_pool(&self.config.url).await?;
+            let rows = match sqlx::query(&sql).fetch_all(&pool).await {
+                Ok(r) => r,
+                Err(e) => {
+                    evict_sql_pool(&self.config.url);
+                    return Err(e.into());
+                }
+            };
             use sqlx::{Column, Row};
             let mut out = Vec::with_capacity(rows.len());
             for r in &rows {
@@ -819,7 +975,13 @@ impl SqlSource {
         }
         if self.config.url.starts_with("postgres") {
             let pool = pg_pool(&self.config.url).await?;
-            let rows = sqlx::query(&sql).fetch_all(&pool).await?;
+            let rows = match sqlx::query(&sql).fetch_all(&pool).await {
+                Ok(r) => r,
+                Err(e) => {
+                    evict_sql_pool(&self.config.url);
+                    return Err(e.into());
+                }
+            };
             use sqlx::{Column, Row};
             let mut out = Vec::with_capacity(rows.len());
             for r in &rows {
@@ -834,5 +996,36 @@ impl SqlSource {
             return Ok(out);
         }
         bail!("Unsupported SQL source URL scheme: {}", self.config.url)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_sqlite_pool_registry_reuses_pool() {
+        let mut path = std::env::temp_dir();
+        path.push(format!(
+            "rekuiper-sql-pool-test-{}-{}.db",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let url = format!("sqlite://{}?mode=rwc", path.display());
+
+        let pool1 = sqlite_pool(&url).await.expect("connect pool 1");
+        let pool2 = sqlite_pool(&url).await.expect("reuse pool 2");
+        assert!(SQLITE_POOLS.read().contains_key(&url));
+        assert!(!pool1.is_closed());
+        assert!(!pool2.is_closed());
+
+        evict_sql_pool(&url);
+        assert!(!SQLITE_POOLS.read().contains_key(&url));
+        drop(pool1);
+        drop(pool2);
+        let _ = std::fs::remove_file(&path);
     }
 }

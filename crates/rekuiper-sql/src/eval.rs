@@ -44,14 +44,48 @@ pub struct RuleState {
 }
 
 impl RuleState {
+    /// Maximum number of distinct state keys retained per rule to bound RAM on high-cardinality streams.
+    pub const MAX_STATE_KEYS: usize = 10_000;
+
     pub fn new() -> Self {
         Self::default()
     }
+
+    /// Inserts a state entry while bounding total non-metadata keys in `guard` to [`Self::MAX_STATE_KEYS`].
+    #[inline]
+    pub fn insert_bounded(guard: &mut HashMap<String, Value>, key: String, val: Value) {
+        if !guard.contains_key(&key) && guard.len() >= Self::MAX_STATE_KEYS {
+            if let Some(evict_key) = guard
+                .keys()
+                .find(|k| !k.starts_with("__") && !k.starts_with("$$"))
+                .cloned()
+            {
+                guard.remove(&evict_key);
+            }
+        }
+        guard.insert(key, val);
+    }
+}
+
+thread_local! {
+    pub(crate) static ASYNC_DELAY_ACCUMULATOR: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
 }
 
 pub struct Evaluator;
 
 impl Evaluator {
+    /// Enables non-blocking delay capture on the current thread so `delay(ms, val)`
+    /// records the requested sleep duration instead of blocking the OS worker thread.
+    #[inline]
+    pub fn begin_async_eval() {
+        ASYNC_DELAY_ACCUMULATOR.with(|c| c.set(Some(0)));
+    }
+
+    /// Finishes non-blocking delay capture and returns the accumulated delay in milliseconds.
+    #[inline]
+    pub fn finish_async_eval() -> u64 {
+        ASYNC_DELAY_ACCUMULATOR.with(|c| c.replace(None).unwrap_or(0))
+    }
     /// Copy of a statement with any trailing `UNION` detached, so a single
     /// branch can be evaluated without recursing into the set operation.
     fn without_set_op(stmt: &SelectStmt) -> SelectStmt {
@@ -243,7 +277,13 @@ impl Evaluator {
                     });
                 }
                 Expr::Call { name, args } if Self::is_aggregate_call(name) => {
-                    let val = Self::eval_aggregate_call(name, args, records);
+                    let val = Self::eval_aggregate_call_stateful(
+                        name,
+                        args,
+                        records,
+                        state,
+                        partition_key,
+                    );
                     let key = field_names[idx].clone();
                     output.insert(key, val);
                 }
@@ -342,7 +382,13 @@ impl Evaluator {
             },
             Expr::Call { name, args } => {
                 if Self::is_aggregate_call(name) {
-                    return Self::eval_aggregate_call(name, args, records);
+                    return Self::eval_aggregate_call_stateful(
+                        name,
+                        args,
+                        records,
+                        state,
+                        partition_key,
+                    );
                 }
                 // Contextual system functions resolve against the first batch
                 // record when one exists.
@@ -616,6 +662,60 @@ impl Evaluator {
                 .is_some_and(Self::expr_has_analytic)
     }
 
+    fn expr_has_delay(expr: &Expr) -> bool {
+        match expr {
+            Expr::Call { name, args } => {
+                name.eq_ignore_ascii_case("delay") || args.iter().any(Self::expr_has_delay)
+            }
+            Expr::Over { call, .. } => Self::expr_has_delay(call),
+            Expr::BinaryOp { left, right, .. } => {
+                Self::expr_has_delay(left) || Self::expr_has_delay(right)
+            }
+            Expr::UnaryOp { expr, .. }
+            | Expr::IsNull { expr, .. }
+            | Expr::FieldAccess { parent: expr, .. } => Self::expr_has_delay(expr),
+            Expr::Index { base, index } => {
+                Self::expr_has_delay(base) || Self::expr_has_delay(index)
+            }
+            Expr::Slice { base, lo, hi } => {
+                Self::expr_has_delay(base)
+                    || lo.as_deref().is_some_and(Self::expr_has_delay)
+                    || hi.as_deref().is_some_and(Self::expr_has_delay)
+            }
+            Expr::Between {
+                expr, low, high, ..
+            } => {
+                Self::expr_has_delay(expr)
+                    || Self::expr_has_delay(low)
+                    || Self::expr_has_delay(high)
+            }
+            Expr::InList { expr, list, .. } => {
+                Self::expr_has_delay(expr) || list.iter().any(Self::expr_has_delay)
+            }
+            Expr::Case {
+                operand,
+                when_clauses,
+                else_clause,
+            } => {
+                operand.as_deref().is_some_and(Self::expr_has_delay)
+                    || when_clauses
+                        .iter()
+                        .any(|(c, v)| Self::expr_has_delay(c) || Self::expr_has_delay(v))
+                    || else_clause.as_deref().is_some_and(Self::expr_has_delay)
+            }
+            Expr::WildcardModified { replace, .. } => {
+                replace.iter().any(|(e, _)| Self::expr_has_delay(e))
+            }
+            Expr::Wildcard | Expr::Literal(_) | Expr::Identifier(_) => false,
+        }
+    }
+
+    #[inline]
+    pub fn stmt_has_delay(stmt: &SelectStmt) -> bool {
+        stmt.fields.iter().any(Self::expr_has_delay)
+            || stmt.where_clause.as_ref().is_some_and(Self::expr_has_delay)
+    }
+
     /// Advance analytic functions before WHERE, then project only passing rows.
     /// The per-row cache prevents SELECT and WHERE from advancing the same call twice.
     pub fn eval_select_filtered_stateful_fallible(
@@ -628,7 +728,6 @@ impl Evaluator {
         Self::eval_select_stateless_fast(stmt, &field_names, has_analytic, record, state)
     }
 
-    /// Fast stateless projection for hot-path streaming rules.
     /// Reuses pre-computed `field_names` and `has_analytic` to avoid traversing
     /// the AST or re-computing field alias names on every row.
     #[inline]
@@ -794,11 +893,6 @@ impl Evaluator {
         }
     }
 
-    /// Evaluates pure arithmetic trees (`+`, `-`, `*`, `/`) over numeric columns
-    /// and literals directly in CPU `f64`/`i64` registers without intermediate
-    /// `serde_json::Value` clones or recursive `Result<Value, String>` boxing.
-    /// Returns `None` if any operand is non-numeric, null, or division-by-zero,
-    /// falling back to the standard fallible evaluator for exact error parity.
     #[inline]
     fn try_eval_numeric_fast(expr: &Expr, record: &HashMap<String, Value>) -> Option<Value> {
         #[inline]
@@ -1820,6 +1914,25 @@ impl Evaluator {
             match (left.as_ref(), right.as_ref()) {
                 (Expr::Identifier(name), Expr::Literal(lit)) => {
                     if let Some(l_val) = record.get(name) {
+                        if let (Some(lf), Some(rf)) = (l_val.as_f64(), lit.as_f64()) {
+                            return match op {
+                                BinaryOperator::Gt => Ok(lf > rf),
+                                BinaryOperator::Gte => Ok(lf >= rf),
+                                BinaryOperator::Lt => Ok(lf < rf),
+                                BinaryOperator::Lte => Ok(lf <= rf),
+                                BinaryOperator::Eq => Ok((lf - rf).abs() < f64::EPSILON),
+                                BinaryOperator::Neq => Ok((lf - rf).abs() >= f64::EPSILON),
+                                _ => match Self::eval_binary_op_fallible(l_val, op, lit) {
+                                    Ok(Value::Bool(b)) => Ok(b),
+                                    Ok(Value::Null) => Ok(false),
+                                    Ok(other) => Err(format!(
+                                        "run Where error: invalid condition that returns non-bool value {}",
+                                        Self::format_ekuiper_val_type(&other)
+                                    )),
+                                    Err(e) => Err(format!("run Where error: {}", e)),
+                                },
+                            };
+                        }
                         return match Self::eval_binary_op_fallible(l_val, op, lit) {
                             Ok(Value::Bool(b)) => Ok(b),
                             Ok(Value::Null) => Ok(false),
@@ -1833,6 +1946,25 @@ impl Evaluator {
                 }
                 (Expr::Literal(lit), Expr::Identifier(name)) => {
                     if let Some(r_val) = record.get(name) {
+                        if let (Some(lf), Some(rf)) = (lit.as_f64(), r_val.as_f64()) {
+                            return match op {
+                                BinaryOperator::Gt => Ok(lf > rf),
+                                BinaryOperator::Gte => Ok(lf >= rf),
+                                BinaryOperator::Lt => Ok(lf < rf),
+                                BinaryOperator::Lte => Ok(lf <= rf),
+                                BinaryOperator::Eq => Ok((lf - rf).abs() < f64::EPSILON),
+                                BinaryOperator::Neq => Ok((lf - rf).abs() >= f64::EPSILON),
+                                _ => match Self::eval_binary_op_fallible(lit, op, r_val) {
+                                    Ok(Value::Bool(b)) => Ok(b),
+                                    Ok(Value::Null) => Ok(false),
+                                    Ok(other) => Err(format!(
+                                        "run Where error: invalid condition that returns non-bool value {}",
+                                        Self::format_ekuiper_val_type(&other)
+                                    )),
+                                    Err(e) => Err(format!("run Where error: {}", e)),
+                                },
+                            };
+                        }
                         return match Self::eval_binary_op_fallible(lit, op, r_val) {
                             Ok(Value::Bool(b)) => Ok(b),
                             Ok(Value::Null) => Ok(false),

@@ -6,7 +6,7 @@
   "info": {
     "title": "rekuiper REST Management API",
     "description": "Authoritative OpenAPI contract for the management REST routes registered by rekuiper (100% wire-compatible with eKuiper v2.4.1). Optional components depend on build tags; JWT authentication, when enabled, expects a raw RS256 token in the Authorization header.",
-    "version": "1.0.0-rc3",
+    "version": "1.0.0-rc4",
     "contact": {
       "name": "I-Dacs Labs",
       "url": "https://i-dacs.com"
@@ -7247,6 +7247,213 @@
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/streams/{name}/data": {
+      "post": {
+        "summary": "Ingest JSON, CSV, or binary event payload into a stream",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Data ingested successfully"
+          }
+        }
+      }
+    },
+    "/tables/{name}/data": {
+      "post": {
+        "summary": "Insert or update lookup rows in a table",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Table data ingested successfully"
+          }
+        }
+      }
+    },
+    "/rules/{name}/errors": {
+      "get": {
+        "summary": "Get dead-letter queue (DLQ) statistics and recent poison-pill records for a rule",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "DLQ statistics and recent error envelopes"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Clear buffered dead-letter queue (DLQ) error records for a rule",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "DLQ errors cleared"
+          }
+        }
+      }
+    },
+    "/rules/{name}/dlq": {
+      "get": {
+        "summary": "Alias of GET /rules/{name}/errors",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "DLQ statistics and recent error envelopes"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Alias of DELETE /rules/{name}/errors",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "DLQ errors cleared"
+          }
+        }
+      }
+    },
+    "/declarative/reload": {
+      "post": {
+        "summary": "Trigger atomic reconciliation and hot-reload of declarative GitOps manifests",
+        "responses": {
+          "200": {
+            "description": "Reconciliation report"
+          },
+          "400": {
+            "description": "Validation or mode error"
+          }
+        }
+      }
+    },
+    "/v1/metrics": {
+      "post": {
+        "summary": "Ingest OpenTelemetry (OTLP/HTTP JSON) metrics batch",
+        "responses": {
+          "200": {
+            "description": "OTLP partialSuccess response"
+          }
+        }
+      }
+    },
+    "/v1/logs": {
+      "post": {
+        "summary": "Ingest OpenTelemetry (OTLP/HTTP JSON) logs batch",
+        "responses": {
+          "200": {
+            "description": "OTLP partialSuccess response"
+          }
+        }
+      }
+    },
+    "/v1/traces": {
+      "post": {
+        "summary": "Ingest OpenTelemetry (OTLP/HTTP JSON) traces batch",
+        "responses": {
+          "200": {
+            "description": "OTLP partialSuccess response"
+          }
+        }
+      }
+    },
+    "/ui": {
+      "get": {
+        "summary": "Embedded self-contained web inspection console",
+        "responses": {
+          "200": {
+            "description": "HTML web console"
+          }
+        }
+      }
+    },
+    "/plugins/wasm": {
+      "get": {
+        "summary": "List registered WebAssembly plugin modules",
+        "responses": {
+          "200": {
+            "description": "Array of WASM module names"
+          }
+        }
+      },
+      "post": {
+        "summary": "Register a WebAssembly plugin module from file or base64 bytecode",
+        "responses": {
+          "201": {
+            "description": "Registered WASM module and exported UDFs"
+          }
+        }
+      }
+    },
+    "/plugins/wasm/{name}": {
+      "delete": {
+        "summary": "Unregister a WebAssembly plugin module",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Module unregistered"
           }
         }
       }

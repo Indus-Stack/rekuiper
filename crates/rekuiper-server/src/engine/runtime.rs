@@ -8,8 +8,13 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+#[inline]
 pub(crate) fn is_rule_running(status: &Arc<RwLock<RuleStatus>>) -> bool {
-    status.read().status == "running"
+    if let Some(guard) = status.try_read() {
+        guard.status == "running"
+    } else {
+        true
+    }
 }
 
 pub(crate) async fn restore_rule_checkpoint(
@@ -63,16 +68,14 @@ pub(crate) fn check_record_error(data: &HashMap<String, Value>) -> Option<String
     if data.is_empty() {
         return None;
     }
-    if let Some(err) = data
-        .get("error")
-        .or_else(|| data.get("__error"))
-        .or_else(|| data.get("__raw_error__"))
-    {
-        return Some(
-            err.as_str()
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| err.to_string()),
-        );
+    for (k, v) in data.iter() {
+        if k == "error" || k == "__error" || k == "__raw_error__" {
+            return Some(
+                v.as_str()
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| v.to_string()),
+            );
+        }
     }
     None
 }
@@ -237,6 +240,7 @@ pub(crate) async fn run_stateless_rule(
     }
 
     let has_analytic = Evaluator::stmt_has_analytic(&select_stmt);
+    let has_delay = Evaluator::stmt_has_delay(&select_stmt);
     let field_names = Evaluator::select_field_names(&select_stmt);
 
     let has_asof = select_stmt.joins.iter().any(|j| {
@@ -260,6 +264,7 @@ pub(crate) async fn run_stateless_rule(
             .get(&select_stmt.from)
             .cloned()
             .or_else(|| event_time.timestamp_field.clone());
+        let mut sample_seq = 0u32;
 
         loop {
             tokio::select! {
@@ -282,19 +287,40 @@ pub(crate) async fn run_stateless_rule(
                         }
                         continue;
                     }
+                    sample_seq = sample_seq.wrapping_add(1);
+                    let is_sampled = (sample_seq & 0x7F) == 0;
+                    let eval_start = if is_sampled {
+                        Some(std::time::Instant::now())
+                    } else {
+                        None
+                    };
                     let left_ts = extract_event_timestamp(&record.data, left_ts_field.as_deref());
                     let Some(probed) = asof_state.probe_left_event(&select_stmt, left_ts, &record.data) else {
                         counters.inc_filtered(1);
+                        if let Some(start) = eval_start {
+                            counters.op_latency.observe(start.elapsed().as_micros() as u64);
+                        }
                         continue;
                     };
+                    if has_delay {
+                        Evaluator::begin_async_eval();
+                    }
                     let eval_res = if has_lookup_joins {
                         let Some(joined) = apply_lookup_joins(
                             &table_manager,
                             &source_configs,
                             &select_stmt,
                             &probed,
-                        ).await else {
+                        )
+                        .await
+                        else {
+                            if has_delay {
+                                let _ = Evaluator::finish_async_eval();
+                            }
                             counters.inc_filtered(1);
+                            if let Some(start) = eval_start {
+                                counters.op_latency.observe(start.elapsed().as_micros() as u64);
+                            }
                             continue;
                         };
                         Evaluator::eval_select_stateless_fast(
@@ -313,6 +339,15 @@ pub(crate) async fn run_stateless_rule(
                             &rule_state,
                         )
                     };
+                    if has_delay {
+                        let delay_ms = Evaluator::finish_async_eval();
+                        if delay_ms > 0 {
+                            tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+                        }
+                    }
+                    if let Some(start) = eval_start {
+                        counters.op_latency.observe(start.elapsed().as_micros() as u64);
+                    }
                     match eval_res {
                         Ok(Some(output)) => {
                             if !enqueue_sink_record(&counters, &sink, StreamRecord::new(output)).await {
@@ -344,11 +379,19 @@ pub(crate) async fn run_stateless_rule(
         }
     } else {
         const DRAIN_BATCH_LIMIT: usize = 64;
+        let mut sample_seq = 0u32;
 
         while let Some(mut record) = rx.recv().await {
             if !is_rule_running(&running) {
                 break;
             }
+            sample_seq = sample_seq.wrapping_add(1);
+            let is_sampled = (sample_seq & 0x1FF) == 0;
+            let batch_start = if is_sampled {
+                Some(std::time::Instant::now())
+            } else {
+                None
+            };
             let mut drained = 0usize;
             loop {
                 'process: {
@@ -371,6 +414,9 @@ pub(crate) async fn run_stateless_rule(
                         }
                         break 'process;
                     }
+                    if has_delay {
+                        Evaluator::begin_async_eval();
+                    }
                     let eval_res = if has_lookup_joins {
                         let Some(joined) = apply_lookup_joins(
                             &table_manager,
@@ -380,6 +426,9 @@ pub(crate) async fn run_stateless_rule(
                         )
                         .await
                         else {
+                            if has_delay {
+                                let _ = Evaluator::finish_async_eval();
+                            }
                             counters.inc_filtered(1);
                             break 'process;
                         };
@@ -399,6 +448,12 @@ pub(crate) async fn run_stateless_rule(
                             &rule_state,
                         )
                     };
+                    if has_delay {
+                        let delay_ms = Evaluator::finish_async_eval();
+                        if delay_ms > 0 {
+                            tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+                        }
+                    }
                     match eval_res {
                         Ok(Some(output)) => {
                             let out_rec = StreamRecord::with_timestamp(output, record.timestamp);
@@ -434,6 +489,11 @@ pub(crate) async fn run_stateless_rule(
                     Ok(next) => record = next,
                     Err(_) => break,
                 }
+            }
+            if let Some(start) = batch_start {
+                counters
+                    .op_latency
+                    .observe_batch(start.elapsed().as_micros() as u64, drained as u64);
             }
         }
     }

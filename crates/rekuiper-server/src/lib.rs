@@ -41,10 +41,14 @@ pub async fn start_server_with_options(
     let init_start = Instant::now();
     let is_declarative = options.declarative_path.is_some();
 
-    // Embedded KV persistence (eKuiper `data/sqliteKV.db`): definitions
-    // survive daemon restarts and running rules resume automatically.
-    let kv: Arc<dyn rekuiper_core::KvStore> =
-        Arc::new(SqliteKvStore::new("data/sqliteKV.db").await?);
+    // Embedded KV persistence: honors `store.type` ("memory" -> MemKvStore,
+    // default "sqlite" -> `data/sqliteKV.db`).
+    let kv: Arc<dyn rekuiper_core::KvStore> = if config.store.r#type.eq_ignore_ascii_case("memory")
+    {
+        Arc::new(rekuiper_core::MemKvStore::new())
+    } else {
+        Arc::new(SqliteKvStore::new("data/sqliteKV.db").await?)
+    };
     let stream_bus = StreamBus::new();
     let stream_manager = StreamManager::new_with_kv(kv.clone());
     let rule_manager = RuleManager::new_with_kv(stream_bus.clone(), kv.clone());
@@ -73,6 +77,7 @@ pub async fn start_server_with_options(
         rule_streams: Arc::new(RwLock::new(HashMap::new())),
         stream_attach_meta: Arc::new(RwLock::new(HashMap::new())),
         stream_field_masks: Arc::new(RwLock::new(HashMap::new())),
+        stream_rule_field_masks: Arc::new(RwLock::new(HashMap::new())),
         http_push_endpoints: Arc::new(RwLock::new(HashMap::new())),
         http_client: reqwest::Client::builder()
             .tcp_nodelay(true)

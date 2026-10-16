@@ -30,7 +30,7 @@ docker run -d \
   -p 9081:9081 \
   -p 20498:20498 \
   -p 20499:20499 \
-  ankurkrp/rekuiper:1.0.0-rc3
+  ankurkrp/rekuiper:1.0.0-rc4
 ```
 
 ### Production Deployment with Persistent Storage
@@ -49,7 +49,7 @@ docker run -d \
   -v /var/log/rekuiper:/kuiper/log \
   -e KUIPER__BASIC__PROMETHEUS="true" \
   -e LOG_LEVEL="info" \
-  ankurkrp/rekuiper:1.0.0-rc3
+  ankurkrp/rekuiper:1.0.0-rc4
 ```
 
 Verify service availability:
@@ -72,7 +72,7 @@ version: '3.8'
 
 services:
   rekuiper:
-    image: ankurkrp/rekuiper:1.0.0-rc3
+    image: ankurkrp/rekuiper:1.0.0-rc4
     container_name: rekuiper
     restart: unless-stopped
     ports:
@@ -134,7 +134,7 @@ Prebuilt binaries are available on [GitHub Releases](https://github.com/ankur-pa
 
 ```shell
 # Example for Linux x86_64 (replace with desired release tag)
-curl -LO https://github.com/ankur-paan/rekuiper/releases/download/v1.0.0-rc3/rekuiperd-x86_64-unknown-linux-musl.tar.gz
+curl -LO https://github.com/ankur-paan/rekuiper/releases/download/v1.0.0-rc4/rekuiperd-x86_64-unknown-linux-musl.tar.gz
 tar -xzf rekuiperd-x86_64-unknown-linux-musl.tar.gz
 cd rekuiper
 
