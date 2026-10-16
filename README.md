@@ -194,6 +194,10 @@ The Docker image listens on all interfaces. A binary that you run directly liste
 
 ---
 
+[![Docker Pulls Tracker](docs/docker-pulls.svg)](https://hub.docker.com/r/ankurkrp/rekuiper)
+
+---
+
 ## Project
 
 - [Changelog](CHANGELOG.md)
