@@ -39,7 +39,7 @@ SELECT sum(b) FROM demo GROUP BY tumblingWindow(ss, 10), c HAVING avg(a) > 0;
                                                         {"op":"DataSourcePlan_4","info":"StreamName: demo, StreamFields:[ a, b, c ]"}
 ```
 
-![Standard aggregation plan](../../resources/inc_p1.png)
+![Standard aggregation plan](/diagrams/inc_plan_standard.svg)
 
 ### Operator Consolidation
 
@@ -49,7 +49,7 @@ As records arrive, the engine transfers them directly to `IncAggWindow`. Within 
 
 The runtime discards the original raw events. Subsequent `Having` and `Project` operators do not recalculate aggregates. They read the precalculated values directly.
 
-![Incremental aggregation plan](../../resources/inc_p2.png)
+![Incremental aggregation plan](/diagrams/inc_plan_consolidated.svg)
 
 When you enable incremental computing, rekuiper generates the following optimized query plan:
 
@@ -171,10 +171,4 @@ Example rule configuration:
 }
 ```
 
-### Incremental Computation Disabled
-
-![Memory usage without incremental computation](../../resources/inc_p3.png)
-
-### Incremental Computation Enabled
-
-![Memory usage with incremental computation](../../resources/inc_p4.png)
+![Memory usage comparison between standard and incremental windowing](/diagrams/incremental_memory_comparison.svg)

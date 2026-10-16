@@ -2,7 +2,7 @@
 
 Edge-to-cloud architectures connect local stream processing with cloud storage, analytics platforms, and central message brokers. In industrial IoT (IIoT), connected vehicles (IoV), and smart infrastructure, processing streams at the edge reduces network bandwidth, ensures sub-millisecond local responses, and secures sensitive operational data.
 
-![Edge Cloud Architecture](../resources/edge_cloud.png)
+![Edge Cloud Architecture](/diagrams/edge_cloud_architecture.svg)
 
 ## Architecture Overview
 

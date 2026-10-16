@@ -191,23 +191,32 @@ Response sample for a running rule:
 {
   "status": "running",
   "message": "",
-  "lastStartTimestamp": 0,
+  "lastStartTimestamp": 1792184907961,
   "lastStopTimestamp": 0,
   "nextStartTimestamp": 0,
+  "lastException": "",
+  "last_exception": "",
+  "exceptionsTotal": 0,
+  "exceptions_total": 0,
   "sourceRecordsInTotal": 50,
   "sourceRecordsFilteredTotal": 10,
   "sinkRecordsEnqueuedTotal": 40,
   "sinkRecordsOutTotal": 40,
   "sinkRecordsFailedTotal": 0,
   "sinkQueueHighWater": 3,
-  "exceptionsTotal": 0,
-  "processLatencyMs": 0,
-  "bufferLength": 0,
-  "lastInvocation": "2026-09-30T18:39:32.123456"
+  "sinkBlockedMicrosTotal": 0,
+  "droppedByPolicyTotal": 0,
+  "dlqRecordsTotal": 0
 }
 ```
 
-For periodic rules, `nextStartTimestamp` indicates the next scheduled execution time in Unix epoch milliseconds.
+- `lastStartTimestamp`: Unix epoch milliseconds when the rule was created or restarted.
+- `lastStopTimestamp`: Unix epoch milliseconds when the rule was stopped (0 if running continuously).
+- `nextStartTimestamp`: Unix epoch milliseconds of the next scheduled trigger for periodic rules.
+- `sourceRecordsInTotal`: Total input records received across sources for this rule.
+- `sinkRecordsOutTotal`: Total output records emitted by sinks for this rule.
+- `exceptionsTotal`: Total errors encountered during processing.
+- `lastException`: Last recorded exception message (available in both `lastException` and `last_exception` aliases).
 
 ## Get Status of All Rules
 
@@ -343,18 +352,38 @@ Request payload:
 
 ## Query Rules by Tags
 
-Use this endpoint to find all rule names that match specified tags:
+Use this endpoint to find all rule names that match specified tags. Both query parameters (`GET`) and request body (`POST` or `GET`) are supported:
+
+### Method 1: Using Query Parameters (GET)
 
 ```http
-GET http://localhost:9081/rules/tags/match
+GET http://localhost:9081/rules/tags/match?tags=tier:vip,env:prod
 ```
 
-Request payload:
+Or for a single tag:
+
+```http
+GET http://localhost:9081/rules/tags/match?tag=tier:vip
+```
+
+### Method 2: Using JSON Request Body (POST or GET)
+
+```http
+POST http://localhost:9081/rules/tags/match
+Content-Type: application/json
+
+{
+  "tags": ["tier:vip", "env:prod"]
+}
+```
+
+Response sample (HTTP 200 OK):
 
 ```json
-{
-  "keys": ["key1", "key2"]
-}
+[
+  "rule_comprehensive",
+  "rule_monitoring"
+]
 ```
 
 ## Bulk Start and Stop Rules by Tag

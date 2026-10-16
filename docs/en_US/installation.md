@@ -216,3 +216,31 @@ sudo systemctl enable --now rekuiper
 sudo systemctl status rekuiper
 ```
 
+---
+
+## 7. Kubernetes Deployment via Helm
+
+Deploy `rekuiper` on Kubernetes or edge distributions (K3s, MicroK8s) using the official Helm chart:
+
+```shell
+# Clone the repository
+git clone https://github.com/ankur-paan/rekuiper.git
+cd rekuiper
+
+# Install the Helm chart
+helm install rekuiper deploy/chart/rekuiper
+```
+
+### Custom Configurations
+
+Configure custom settings such as persistent volume claims:
+
+```shell
+helm install rekuiper deploy/chart/rekuiper \
+  --set persistence.enabled=true \
+  --set persistence.size=1Gi
+```
+
+For the complete values schema, review the [rekuiper Helm Chart Documentation](https://github.com/ankur-paan/rekuiper/tree/main/deploy/chart/rekuiper).
+
+

@@ -4,7 +4,7 @@ rekuiper is a lightweight stream processing engine for edge computing, written i
 
 rekuiper implements the REST API, SQL dialect, rule format, and `kuiper` CLI of eKuiper. Existing eKuiper streams, rules, and management tools operate without modification.
 
-![rekuiper Architecture](../resources/arch.png)
+![rekuiper Architecture](/diagrams/architecture_overview.svg)
 
 ## Core Architectural Principles
 

@@ -285,6 +285,61 @@
             "$ref": "#/components/responses/Unauthorized"
           }
         }
+      },
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Get system configuration",
+        "operationId": "getConfigs",
+        "security": [
+          {},
+          {
+            "JwtToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "System configuration object",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "basic": {
+                      "type": "object",
+                      "properties": {
+                        "debug": {
+                          "type": "boolean"
+                        },
+                        "logLevel": {
+                          "type": "string"
+                        },
+                        "port": {
+                          "type": "integer"
+                        },
+                        "restPort": {
+                          "type": "integer"
+                        }
+                      }
+                    }
+                  }
+                },
+                "example": {
+                  "basic": {
+                    "debug": false,
+                    "logLevel": "info",
+                    "port": 20498,
+                    "restPort": 9081
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
       }
     },
     "/metrics/dump/check": {
@@ -2119,47 +2174,128 @@
           "Rules"
         ],
         "summary": "Find rules containing all requested tags",
-        "operationId": "matchRulesByTags",
-        "x-ekuiper-source": [
-          "https://github.com/lf-edge/ekuiper/blob/v2.4.1/internal/server/rest.go",
-          "https://github.com/lf-edge/ekuiper/blob/v2.4.1/internal/server/rule_tag.go",
-          "https://github.com/lf-edge/ekuiper/blob/v2.4.1/docs/en_US/api/restapi/rules.md"
-        ],
+        "operationId": "matchRulesByTagsGet",
         "security": [
           {},
           {
             "JwtToken": []
           }
         ],
-        "description": "The v2.4.1 handler requires a JSON request body even though this is GET. Some intermediaries and generators do not support GET bodies. The tagged Markdown incorrectly shows \"keys\"; code and tests use \"tags\".",
+        "description": "Matches rules containing all specified tags. Query parameters ?tags=, ?tag=, ?keys=, or ?key= (comma-separated) can be used, or a JSON body.",
+        "parameters": [
+          {
+            "name": "tags",
+            "in": "query",
+            "required": false,
+            "description": "Comma-separated list of tags to match (e.g. env:prod,tier:vip)",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tag",
+            "in": "query",
+            "required": false,
+            "description": "Single tag or comma-separated tags to match",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "keys",
+            "in": "query",
+            "required": false,
+            "description": "Legacy alias for tags parameter",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Matching rule IDs",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "example": [
+                  "rule_comprehensive",
+                  "rule_monitoring"
+                ]
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Rules"
+        ],
+        "summary": "Find rules containing all requested tags via POST body",
+        "operationId": "matchRulesByTagsPost",
+        "security": [
+          {},
+          {
+            "JwtToken": []
+          }
+        ],
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/RuleTagRequest"
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "tags": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                ]
+              },
+              "example": {
+                "tags": [
+                  "tier:vip",
+                  "env:prod"
+                ]
               }
             }
           }
         },
         "responses": {
           "200": {
-            "description": "Matching rule ids",
+            "description": "Matching rule IDs",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/RuleTagMatchResponse"
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
                 },
-                "example": {
-                  "rules": [
-                    "rule1"
-                  ]
-                }
+                "example": [
+                  "rule_comprehensive"
+                ]
               }
             }
-          },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
@@ -2967,18 +3103,33 @@
           }
         ],
         "requestBody": {
-          "required": true,
+          "required": false,
           "content": {
             "application/json": {
               "schema": {
-                "type": "array",
-                "items": {
-                  "type": "string"
-                }
+                "oneOf": [
+                  {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Array of rule IDs to export"
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "rules": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                ]
               },
               "example": [
-                "rule1",
-                "rule2"
+                "rule_comprehensive"
               ]
             }
           }
@@ -7457,6 +7608,81 @@
           }
         }
       }
+    },
+    "/config": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Get system configuration (alias for /configs)",
+        "operationId": "getConfigAlias",
+        "security": [
+          {},
+          {
+            "JwtToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "System configuration object",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Dynamically reload supported configuration",
+        "operationId": "patchConfigs",
+        "x-ekuiper-source": [
+          "https://github.com/lf-edge/ekuiper/blob/v2.4.1/internal/server/rest.go",
+          "https://github.com/lf-edge/ekuiper/blob/v2.4.1/internal/server/import_export.go",
+          "https://github.com/lf-edge/ekuiper/blob/v2.4.1/docs/en_US/api/restapi/configs.md"
+        ],
+        "security": [
+          {},
+          {
+            "JwtToken": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DynamicConfig"
+              },
+              "example": {
+                "debug": true,
+                "consoleLog": true,
+                "fileLog": true,
+                "timezone": "UTC"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Configuration updated; no response body."
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -8145,6 +8371,68 @@
           "nextStartTimestamp": {
             "type": "integer",
             "format": "int64"
+          },
+          "lastException": {
+            "type": "string",
+            "description": "Last recorded exception message (camelCase alias)"
+          },
+          "last_exception": {
+            "type": "string",
+            "description": "Last recorded exception message (snake_case alias)"
+          },
+          "exceptionsTotal": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Total exception count (camelCase)"
+          },
+          "exceptions_total": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Total exception count (snake_case)"
+          },
+          "sourceRecordsInTotal": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Total input records read across all sources"
+          },
+          "sourceRecordsFilteredTotal": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Input records filtered out by WHERE clause"
+          },
+          "sinkRecordsOutTotal": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Total output records dispatched to sinks"
+          },
+          "sinkRecordsEnqueuedTotal": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Output records enqueued in sink buffer"
+          },
+          "sinkRecordsFailedTotal": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Sink operations that failed after dequeue"
+          },
+          "droppedByPolicyTotal": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Records dropped by buffer overflow/backpressure policy"
+          },
+          "sinkQueueHighWater": {
+            "type": "integer",
+            "description": "Peak observed sink queue depth"
+          },
+          "sinkBlockedMicrosTotal": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Microseconds execution loop blocked on sink capacity"
+          },
+          "dlqRecordsTotal": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Total records routed to dead-letter queue"
           }
         },
         "additionalProperties": true

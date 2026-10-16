@@ -4,6 +4,15 @@ rekuiper provides a comprehensive REST API to manage streams, tables, rules, and
 
 By default, the REST API listens on HTTP port `9081`. You can configure the port number using the `restPort` property in `etc/kuiper.yaml`.
 
+::: tip Interactive OpenAPI & Web Management Console
+Explore the public [Interactive OpenAPI / Swagger UI](../swagger.md) directly in your browser:
+- **Public Swagger Explorer**: Browse and test schemas online via [Interactive OpenAPI / Swagger UI](../swagger.md).
+- **Embedded Node OpenAPI 3.0 (`/api-docs`)**: Test endpoints, execute dry-run SQL validations, and inspect JSON contracts on your running node on port `9081`.
+- **Web Management Console (`/ui`)**: Monitor fleet throughput, inspect active rule pipelines, and review Dead-Letter Queue (DLQ) poison pills.
+
+See the complete guide and walkthrough in [Management with the Interactive OpenAPI / Swagger UI](../../getting_started/getting_started.md#5-method-c-management-with-the-interactive-openapi-swagger-ui).
+:::
+
 ## System Information
 
 Use this endpoint to retrieve the version string, host operating system, and process uptime.

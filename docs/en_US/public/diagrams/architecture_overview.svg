@@ -1,223 +1,205 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 940 430" width="100%" height="100%">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 430" width="100%" height="100%">
   <defs>
-    <linearGradient id="bgGrad2" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#090d16" />
-      <stop offset="50%" stop-color="#0f172a" />
-      <stop offset="100%" stop-color="#090d16" />
-    </linearGradient>
-
-    <linearGradient id="blueHdr" x1="0%" y1="0%" x2="100%" y2="0%">
-      <stop offset="0%" stop-color="#38bdf8" stop-opacity="0.22" />
-      <stop offset="100%" stop-color="#0284c7" stop-opacity="0" />
-    </linearGradient>
-    <linearGradient id="orangeHdr" x1="0%" y1="0%" x2="100%" y2="0%">
-      <stop offset="0%" stop-color="#fb923c" stop-opacity="0.25" />
-      <stop offset="100%" stop-color="#ea580c" stop-opacity="0" />
-    </linearGradient>
-    <linearGradient id="emeraldHdr" x1="0%" y1="0%" x2="100%" y2="0%">
-      <stop offset="0%" stop-color="#34d399" stop-opacity="0.22" />
-      <stop offset="100%" stop-color="#059669" stop-opacity="0" />
-    </linearGradient>
-
-    <linearGradient id="cardGrad2" x1="0%" y1="0%" x2="0%" y2="100%">
-      <stop offset="0%" stop-color="#1e293b" stop-opacity="0.85" />
-      <stop offset="100%" stop-color="#0f172a" stop-opacity="0.95" />
-    </linearGradient>
-
-    <linearGradient id="engineBg" x1="0%" y1="0%" x2="0%" y2="100%">
-      <stop offset="0%" stop-color="#1c192e" stop-opacity="0.9" />
-      <stop offset="100%" stop-color="#0d1124" stop-opacity="0.95" />
-    </linearGradient>
-
-    <!-- userSpaceOnUse ensures all lines regardless of angle or flatness have full visible gradient stroke -->
-    <linearGradient id="flow1" gradientUnits="userSpaceOnUse" x1="234" y1="0" x2="346" y2="0">
-      <stop offset="0%" stop-color="#38bdf8" />
-      <stop offset="100%" stop-color="#fb923c" />
-    </linearGradient>
-    <linearGradient id="flow2" gradientUnits="userSpaceOnUse" x1="632" y1="0" x2="716" y2="0">
-      <stop offset="0%" stop-color="#fb923c" />
-      <stop offset="100%" stop-color="#34d399" />
-    </linearGradient>
-
-    <filter id="shadow2" x="-10%" y="-10%" width="120%" height="120%">
-      <feDropShadow dx="0" dy="5" stdDeviation="7" flood-color="#000000" flood-opacity="0.45" />
+    <!-- Card Drop Shadow -->
+    <filter id="softShadow" x="-5%" y="-5%" width="110%" height="115%">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#0f172a" flood-opacity="0.06" />
     </filter>
 
-    <marker id="arrO" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
-      <path d="M 1 1 L 7 4 L 1 7 Z" fill="#fb923c" />
+    <!-- Column Header Gradients (Subtle Light Tints) -->
+    <linearGradient id="blueHdrLight" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#eff6ff" />
+      <stop offset="100%" stop-color="#e0f2fe" />
+    </linearGradient>
+    <linearGradient id="orangeHdrLight" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#fff7ed" />
+      <stop offset="100%" stop-color="#ffedd5" />
+    </linearGradient>
+    <linearGradient id="emeraldHdrLight" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#ecfdf5" />
+      <stop offset="100%" stop-color="#d1fae5" />
+    </linearGradient>
+
+    <!-- Connector Stream Gradients -->
+    <linearGradient id="streamIn" gradientUnits="userSpaceOnUse" x1="234" y1="0" x2="340" y2="0">
+      <stop offset="0%" stop-color="#0284c7" />
+      <stop offset="100%" stop-color="#ea580c" />
+    </linearGradient>
+    <linearGradient id="streamOut" gradientUnits="userSpaceOnUse" x1="640" y1="0" x2="726" y2="0">
+      <stop offset="0%" stop-color="#ea580c" />
+      <stop offset="100%" stop-color="#059669" />
+    </linearGradient>
+
+    <!-- Arrow Markers -->
+    <marker id="arrOrange" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+      <path d="M 1 1 L 7 4 L 1 7 Z" fill="#ea580c" />
     </marker>
-    <marker id="arrE" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
-      <path d="M 1 1 L 7 4 L 1 7 Z" fill="#34d399" />
-    </marker>
-    <marker id="arrP2" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
-      <path d="M 1 1 L 7 4 L 1 7 Z" fill="#c084fc" />
+    <marker id="arrEmerald" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+      <path d="M 1 1 L 7 4 L 1 7 Z" fill="#059669" />
     </marker>
   </defs>
 
   <style>
-    .hdr { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
-    .node-title { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; font-size: 13px; font-weight: 600; fill: #f8fafc; }
-    .node-sub { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; font-size: 11px; font-weight: 400; fill: #94a3b8; }
-    .mono-code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 10px; font-weight: 600; }
+    .cat-hdr { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
+    .card-title { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; font-size: 13px; font-weight: 600; fill: #0f172a; }
+    .card-sub { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; font-size: 11px; font-weight: 400; fill: #64748b; }
+    .code-badge { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 10px; font-weight: 600; }
   </style>
 
-  <!-- Container -->
-  <rect x="2" y="2" width="936" height="426" rx="16" fill="url(#bgGrad2)" stroke="#1e293b" stroke-width="1.5" />
+  <!-- Container Canvas (Harmonized with Light Mode Default) -->
+  <rect x="2" y="2" width="956" height="426" rx="14" fill="#f8fafc" stroke="#e2e8f0" stroke-width="1.5" />
 
-  <!-- Ambient Glows -->
-  <circle cx="130" cy="215" r="100" fill="#0284c7" opacity="0.08" />
-  <circle cx="470" cy="215" r="140" fill="#f97316" opacity="0.09" />
-  <circle cx="810" cy="215" r="100" fill="#10b981" opacity="0.08" />
+  <!-- ==================== COLUMN 1: INGESTION ==================== -->
+  <g transform="translate(24, 20)">
+    <rect x="0" y="0" width="210" height="30" rx="6" fill="url(#blueHdrLight)" stroke="#bae6fd" stroke-width="1" />
+    <circle cx="14" cy="15" r="4" fill="#0284c7" />
+    <text x="26" y="19" fill="#0369a1" class="cat-hdr">1. Ingestion Sources</text>
 
-  <!-- ==================== 1. INGESTION ==================== -->
-  <g transform="translate(24, 24)">
-    <rect x="0" y="0" width="210" height="28" rx="6" fill="url(#blueHdr)" stroke="#0284c7" stroke-width="1" stroke-opacity="0.4" />
-    <circle cx="14" cy="14" r="4" fill="#38bdf8" />
-    <text x="26" y="18" fill="#38bdf8" class="hdr">1. Ingestion Layer</text>
-
-    <!-- Source Nodes -->
-    <g transform="translate(0, 40)">
-      <rect x="0" y="0" width="210" height="58" rx="8" fill="url(#cardGrad2)" stroke="#334155" stroke-width="1" filter="url(#shadow2)" />
-      <text x="14" y="24" class="node-title">MQTT Source</text>
-      <text x="14" y="42" class="node-sub">Shared subscriptions, wildcards</text>
+    <!-- Ingest Cards -->
+    <g transform="translate(0, 42)" filter="url(#softShadow)">
+      <rect x="0" y="0" width="210" height="60" rx="8" fill="#ffffff" stroke="#e2e8f0" stroke-width="1" />
+      <text x="14" y="25" class="card-title">MQTT &amp; ESPHome</text>
+      <text x="14" y="44" class="card-sub">Wildcards, QoS 0-2, dynamic topics</text>
     </g>
 
-    <g transform="translate(0, 110)">
-      <rect x="0" y="0" width="210" height="58" rx="8" fill="url(#cardGrad2)" stroke="#334155" stroke-width="1" filter="url(#shadow2)" />
-      <text x="14" y="24" class="node-title">HTTP Push / Pull</text>
-      <text x="14" y="42" class="node-sub">REST polling &amp; Webhook receiver</text>
+    <g transform="translate(0, 114)" filter="url(#softShadow)">
+      <rect x="0" y="0" width="210" height="60" rx="8" fill="#ffffff" stroke="#e2e8f0" stroke-width="1" />
+      <text x="14" y="25" class="card-title">HTTP Push &amp; Pull</text>
+      <text x="14" y="44" class="card-sub">REST endpoints, Webhook receiver</text>
     </g>
 
-    <g transform="translate(0, 180)">
-      <rect x="0" y="0" width="210" height="58" rx="8" fill="url(#cardGrad2)" stroke="#334155" stroke-width="1" filter="url(#shadow2)" />
-      <text x="14" y="24" class="node-title">WebSocket Source</text>
-      <text x="14" y="42" class="node-sub">Persistent bidirectional stream</text>
+    <g transform="translate(0, 186)" filter="url(#softShadow)">
+      <rect x="0" y="0" width="210" height="60" rx="8" fill="#ffffff" stroke="#e2e8f0" stroke-width="1" />
+      <text x="14" y="25" class="card-title">Industrial Protocols</text>
+      <text x="14" y="44" class="card-sub">Modbus TCP/RTU, OPC-UA, EdgeX</text>
     </g>
 
-    <g transform="translate(0, 250)">
-      <rect x="0" y="0" width="210" height="58" rx="8" fill="url(#cardGrad2)" stroke="#334155" stroke-width="1" filter="url(#shadow2)" />
-      <text x="14" y="24" class="node-title">Kafka / Redis / File</text>
-      <text x="14" y="42" class="node-sub">High-throughput queue ingestion</text>
+    <g transform="translate(0, 258)" filter="url(#softShadow)">
+      <rect x="0" y="0" width="210" height="60" rx="8" fill="#ffffff" stroke="#e2e8f0" stroke-width="1" />
+      <text x="14" y="25" class="card-title">WebSocket &amp; Queues</text>
+      <text x="14" y="44" class="card-sub">Bidirectional streams, Kafka, Redis</text>
     </g>
 
-    <g transform="translate(0, 320)">
-      <rect x="0" y="0" width="210" height="58" rx="8" fill="url(#cardGrad2)" stroke="#334155" stroke-width="1" filter="url(#shadow2)" />
-      <text x="14" y="24" class="node-title">EdgeX Foundry</text>
-      <text x="14" y="42" class="node-sub">ZeroMQ &amp; eBus message bus</text>
+    <g transform="translate(0, 330)" filter="url(#softShadow)">
+      <rect x="0" y="0" width="210" height="52" rx="8" fill="#ffffff" stroke="#e2e8f0" stroke-width="1" />
+      <text x="14" y="22" class="card-title">Local File &amp; Memory</text>
+      <text x="14" y="39" class="card-sub">CSV, JSONL, shared ring buffers</text>
     </g>
   </g>
 
-  <!-- Connectors Ingestion -> Engine with solid userSpaceOnUse gradients and clear tails -->
-  <path d="M 234 93 C 285 93, 295 125, 340 125" fill="none" stroke="url(#flow1)" stroke-width="2.5" marker-end="url(#arrO)" />
-  <path d="M 234 163 C 285 163, 295 145, 340 145" fill="none" stroke="url(#flow1)" stroke-width="2.5" marker-end="url(#arrO)" />
-  <path d="M 234 233 C 285 233, 295 165, 340 165" fill="none" stroke="url(#flow1)" stroke-width="2.5" marker-end="url(#arrO)" />
-  <path d="M 234 303 C 285 303, 295 185, 340 185" fill="none" stroke="url(#flow1)" stroke-width="2.5" marker-end="url(#arrO)" />
+  <!-- Flow Ingestion -> Engine -->
+  <path d="M 234 92 C 285 92, 290 120, 340 120" fill="none" stroke="url(#streamIn)" stroke-width="2.2" marker-end="url(#arrOrange)" />
+  <path d="M 234 164 C 285 164, 290 150, 340 150" fill="none" stroke="url(#streamIn)" stroke-width="2.2" marker-end="url(#arrOrange)" />
+  <path d="M 234 236 C 285 236, 290 180, 340 180" fill="none" stroke="url(#streamIn)" stroke-width="2.2" marker-end="url(#arrOrange)" />
+  <path d="M 234 308 C 285 308, 290 210, 340 210" fill="none" stroke="url(#streamIn)" stroke-width="2.2" marker-end="url(#arrOrange)" />
 
-  <!-- ==================== 2. REKUIPER ENGINE ==================== -->
-  <g transform="translate(346, 24)">
-    <rect x="0" y="0" width="286" height="380" rx="14" fill="url(#engineBg)" stroke="#f97316" stroke-width="1.5" stroke-opacity="0.8" filter="url(#shadow2)" />
+  <!-- ==================== COLUMN 2: REKUIPER ENGINE ==================== -->
+  <g transform="translate(346, 20)">
+    <!-- Engine Container -->
+    <rect x="0" y="0" width="294" height="390" rx="12" fill="#ffffff" stroke="#ea580c" stroke-width="1.8" filter="url(#softShadow)" />
 
     <!-- Engine Header -->
-    <rect x="14" y="14" width="258" height="28" rx="6" fill="url(#orangeHdr)" stroke="#f97316" stroke-width="1" stroke-opacity="0.5" />
-    <circle cx="28" cy="28" r="4" fill="#fb923c" />
-    <text x="40" y="32" fill="#fb923c" class="hdr">rekuiper Engine (Tokio)</text>
+    <rect x="12" y="12" width="270" height="32" rx="6" fill="url(#orangeHdrLight)" stroke="#fed7aa" stroke-width="1" />
+    <circle cx="28" cy="28" r="5" fill="#ea580c" />
+    <text x="40" y="32" fill="#c2410c" class="cat-hdr">2. rekuiper Engine</text>
+    <rect x="196" y="19" width="78" height="18" rx="4" fill="#ea580c" />
+    <text x="235" y="32" fill="#ffffff" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif" font-size="9" font-weight="700" text-anchor="middle">RUST NATIVE</text>
 
-    <!-- Subsection: Stream Pipeline -->
-    <g transform="translate(14, 52)">
-      <rect x="0" y="0" width="258" height="186" rx="10" fill="#14192a" stroke="#334155" stroke-width="1" />
-      <text x="14" y="20" fill="#94a3b8" class="mono-code">ZERO-COPY STREAM PIPELINE</text>
+    <!-- Sub-Block: Zero-Copy Stream Pipeline -->
+    <g transform="translate(12, 54)">
+      <rect x="0" y="0" width="270" height="196" rx="8" fill="#f8fafc" stroke="#e2e8f0" stroke-width="1" />
+      <text x="12" y="19" fill="#0f172a" class="code-badge">ZERO-COPY STREAM PIPELINE</text>
 
-      <g transform="translate(10, 30)">
-        <rect x="0" y="0" width="238" height="42" rx="6" fill="#1e293b" stroke="#475569" stroke-width="1" />
-        <text x="10" y="18" class="node-title">Decoder &amp; Deserializer</text>
-        <text x="10" y="33" class="node-sub">JSON, Protobuf, Custom schema formats</text>
+      <g transform="translate(10, 28)">
+        <rect x="0" y="0" width="250" height="42" rx="6" fill="#ffffff" stroke="#cbd5e1" stroke-width="1" />
+        <text x="12" y="18" class="card-title">Decoder &amp; Deserializer</text>
+        <text x="12" y="33" class="card-sub">JSON, Protobuf, Custom schema formats</text>
       </g>
 
-      <!-- Prominent internal flow arrow 1 with clear tail -->
-      <line x1="129" y1="74" x2="129" y2="86" stroke="#fb923c" stroke-width="2" marker-end="url(#arrO)" />
+      <line x1="135" y1="72" x2="135" y2="84" stroke="#ea580c" stroke-width="2" marker-end="url(#arrOrange)" />
 
-      <g transform="translate(10, 88)">
-        <rect x="0" y="0" width="238" height="42" rx="6" fill="#1e293b" stroke="#475569" stroke-width="1" />
-        <text x="10" y="18" class="node-title">SQL Engine &amp; Filter</text>
-        <text x="10" y="33" class="node-sub">AST evaluation, math &amp; dynamic routing</text>
+      <g transform="translate(10, 86)">
+        <rect x="0" y="0" width="250" height="42" rx="6" fill="#ffffff" stroke="#cbd5e1" stroke-width="1" />
+        <text x="12" y="18" class="card-title">SQL Processor &amp; Filter</text>
+        <text x="12" y="33" class="card-sub">AST evaluation, math &amp; dynamic routing</text>
       </g>
 
-      <!-- Prominent internal flow arrow 2 with clear tail -->
-      <line x1="129" y1="132" x2="129" y2="144" stroke="#fb923c" stroke-width="2" marker-end="url(#arrO)" />
+      <line x1="135" y1="130" x2="135" y2="142" stroke="#ea580c" stroke-width="2" marker-end="url(#arrOrange)" />
 
-      <g transform="translate(10, 146)">
-        <rect x="0" y="0" width="238" height="34" rx="6" fill="#1e293b" stroke="#475569" stroke-width="1" />
-        <text x="10" y="16" class="node-title">Window State Accumulator</text>
-        <text x="10" y="28" class="node-sub">Tumbling, sliding, hopping, session</text>
+      <g transform="translate(10, 144)">
+        <rect x="0" y="0" width="250" height="42" rx="6" fill="#ffffff" stroke="#cbd5e1" stroke-width="1" />
+        <text x="12" y="18" class="card-title">Window State Accumulator</text>
+        <text x="12" y="33" class="card-sub">Tumbling, sliding, hopping, session</text>
       </g>
     </g>
 
-    <!-- Subsection: Management & MCP -->
-    <g transform="translate(14, 250)">
-      <rect x="0" y="0" width="258" height="116" rx="10" fill="#14192a" stroke="#334155" stroke-width="1" />
-      <text x="14" y="20" fill="#c084fc" class="mono-code">CONTROL, API &amp; AI LAYER</text>
+    <!-- Sub-Block: Control & AI Layer -->
+    <g transform="translate(12, 260)">
+      <rect x="0" y="0" width="270" height="118" rx="8" fill="#f8fafc" stroke="#e2e8f0" stroke-width="1" />
+      <text x="12" y="19" fill="#6d28d9" class="code-badge">CONTROL, API &amp; AI LAYER</text>
 
-      <g transform="translate(10, 30)">
-        <rect x="0" y="0" width="112" height="40" rx="6" fill="#1e1b4b" stroke="#6366f1" stroke-width="1" />
-        <text x="8" y="17" fill="#e0e7ff" font-size="11" font-weight="600">REST API</text>
-        <text x="8" y="31" fill="#a5b4fc" class="mono-code">Port 9081</text>
+      <g transform="translate(10, 28)">
+        <rect x="0" y="0" width="118" height="40" rx="6" fill="#ffffff" stroke="#c7d2fe" stroke-width="1" />
+        <text x="10" y="17" fill="#4338ca" font-size="11" font-weight="700">REST / OpenAPI</text>
+        <text x="10" y="32" fill="#6366f1" class="code-badge">Port 9081</text>
       </g>
 
-      <g transform="translate(126, 30)">
-        <rect x="0" y="0" width="122" height="40" rx="6" fill="#1e1b4b" stroke="#6366f1" stroke-width="1" />
-        <text x="8" y="17" fill="#e0e7ff" font-size="11" font-weight="600">CLI / IPC</text>
-        <text x="8" y="31" fill="#a5b4fc" class="mono-code">Port 20499</text>
+      <g transform="translate(132, 28)">
+        <rect x="0" y="0" width="128" height="40" rx="6" fill="#ffffff" stroke="#c7d2fe" stroke-width="1" />
+        <text x="10" y="17" fill="#4338ca" font-size="11" font-weight="700">kuiper CLI / IPC</text>
+        <text x="10" y="32" fill="#6366f1" class="code-badge">Port 20499</text>
       </g>
 
-      <g transform="translate(10, 76)">
-        <rect x="0" y="0" width="238" height="32" rx="6" fill="#2e1065" stroke="#a855f7" stroke-width="1" />
-        <circle cx="14" cy="16" r="4" fill="#c084fc" />
-        <text x="24" y="16" fill="#f3e8ff" font-size="11" font-weight="600">rekuiper-mcp (AI Tools)</text>
-        <text x="175" y="16" fill="#d8b4fe" class="mono-code">42 tools</text>
+      <g transform="translate(10, 74)">
+        <rect x="0" y="0" width="250" height="34" rx="6" fill="#faf5ff" stroke="#d8b4fe" stroke-width="1" />
+        <circle cx="16" cy="17" r="4" fill="#a855f7" />
+        <text x="28" y="21" fill="#7e22ce" font-size="11" font-weight="700">rekuiper-mcp</text>
+        <rect x="180" y="8" width="62" height="18" rx="3" fill="#f3e8ff" stroke="#d8b4fe" stroke-width="1" />
+        <text x="211" y="20" fill="#7e22ce" class="code-badge" text-anchor="middle">AI AGENT</text>
       </g>
     </g>
   </g>
 
-  <!-- Connectors Engine -> Sinks with solid userSpaceOnUse gradients and clear tails -->
-  <path d="M 632 170 C 665 170, 675 93, 710 93" fill="none" stroke="url(#flow2)" stroke-width="2.5" marker-end="url(#arrE)" />
-  <path d="M 632 185 C 665 185, 675 163, 710 163" fill="none" stroke="url(#flow2)" stroke-width="2.5" marker-end="url(#arrE)" />
-  <path d="M 632 200 C 665 200, 675 233, 710 233" fill="none" stroke="url(#flow2)" stroke-width="2.5" marker-end="url(#arrE)" />
-  <path d="M 632 215 C 665 215, 675 303, 710 303" fill="none" stroke="url(#flow2)" stroke-width="2.5" marker-end="url(#arrE)" />
+  <!-- Flow Engine -> Sinks -->
+  <path d="M 640 120 C 685 120, 690 92, 726 92" fill="none" stroke="url(#streamOut)" stroke-width="2.2" marker-end="url(#arrEmerald)" />
+  <path d="M 640 160 C 685 160, 690 164, 726 164" fill="none" stroke="url(#streamOut)" stroke-width="2.2" marker-end="url(#arrEmerald)" />
+  <path d="M 640 200 C 685 200, 690 236, 726 236" fill="none" stroke="url(#streamOut)" stroke-width="2.2" marker-end="url(#arrEmerald)" />
+  <path d="M 640 240 C 685 240, 690 308, 726 308" fill="none" stroke="url(#streamOut)" stroke-width="2.2" marker-end="url(#arrEmerald)" />
 
-  <!-- ==================== 3. SINKS ==================== -->
-  <g transform="translate(716, 24)">
-    <rect x="0" y="0" width="200" height="28" rx="6" fill="url(#emeraldHdr)" stroke="#059669" stroke-width="1" stroke-opacity="0.4" />
-    <circle cx="14" cy="14" r="4" fill="#34d399" />
-    <text x="26" y="18" fill="#34d399" class="hdr">3. Egress &amp; Sinks</text>
+  <!-- ==================== COLUMN 3: EGRESS & SINKS ==================== -->
+  <g transform="translate(726, 20)">
+    <rect x="0" y="0" width="210" height="30" rx="6" fill="url(#emeraldHdrLight)" stroke="#a7f3d0" stroke-width="1" />
+    <circle cx="14" cy="15" r="4" fill="#059669" />
+    <text x="26" y="19" fill="#047857" class="cat-hdr">3. Egress &amp; Sinks</text>
 
-    <g transform="translate(0, 40)">
-      <rect x="0" y="0" width="200" height="58" rx="8" fill="url(#cardGrad2)" stroke="#334155" stroke-width="1" filter="url(#shadow2)" />
-      <text x="14" y="24" class="node-title">Log &amp; Local Files</text>
-      <text x="14" y="42" class="node-sub">Rotating files, console stdout</text>
+    <!-- Sinks Cards -->
+    <g transform="translate(0, 42)" filter="url(#softShadow)">
+      <rect x="0" y="0" width="210" height="60" rx="8" fill="#ffffff" stroke="#e2e8f0" stroke-width="1" />
+      <text x="14" y="25" class="card-title">Filtered MQTT Broker</text>
+      <text x="14" y="44" class="card-sub">Dynamic topics, QoS 0-2</text>
     </g>
 
-    <g transform="translate(0, 110)">
-      <rect x="0" y="0" width="200" height="58" rx="8" fill="url(#cardGrad2)" stroke="#334155" stroke-width="1" filter="url(#shadow2)" />
-      <text x="14" y="24" class="node-title">Filtered MQTT Broker</text>
-      <text x="14" y="42" class="node-sub">Dynamic topics via templating</text>
+    <g transform="translate(0, 114)" filter="url(#softShadow)">
+      <rect x="0" y="0" width="210" height="60" rx="8" fill="#ffffff" stroke="#e2e8f0" stroke-width="1" />
+      <text x="14" y="25" class="card-title">External REST / Webhooks</text>
+      <text x="14" y="44" class="card-sub">HTTP POST with custom headers</text>
     </g>
 
-    <g transform="translate(0, 180)">
-      <rect x="0" y="0" width="200" height="58" rx="8" fill="url(#cardGrad2)" stroke="#334155" stroke-width="1" filter="url(#shadow2)" />
-      <text x="14" y="24" class="node-title">SQL / SQLite Database</text>
-      <text x="14" y="42" class="node-sub">Batch inserts &amp; upserts</text>
+    <g transform="translate(0, 186)" filter="url(#softShadow)">
+      <rect x="0" y="0" width="210" height="60" rx="8" fill="#ffffff" stroke="#e2e8f0" stroke-width="1" />
+      <text x="14" y="25" class="card-title">SQL &amp; Time-Series DB</text>
+      <text x="14" y="44" class="card-sub">SQLite, TimescaleDB, InfluxDB</text>
     </g>
 
-    <g transform="translate(0, 250)">
-      <rect x="0" y="0" width="200" height="58" rx="8" fill="url(#cardGrad2)" stroke="#334155" stroke-width="1" filter="url(#shadow2)" />
-      <text x="14" y="24" class="node-title">External REST / Webhooks</text>
-      <text x="14" y="42" class="node-sub">HTTP POST with custom headers</text>
+    <g transform="translate(0, 258)" filter="url(#softShadow)">
+      <rect x="0" y="0" width="210" height="60" rx="8" fill="#ffffff" stroke="#e2e8f0" stroke-width="1" />
+      <text x="14" y="25" class="card-title">Enterprise Event Streams</text>
+      <text x="14" y="44" class="card-sub">Kafka, Redis, Parquet on disk</text>
     </g>
 
-    <g transform="translate(0, 320)">
-      <rect x="0" y="0" width="200" height="58" rx="8" fill="url(#cardGrad2)" stroke="#334155" stroke-width="1" filter="url(#shadow2)" />
-      <text x="14" y="24" class="node-title">Kafka &amp; Redis Streams</text>
-      <text x="14" y="42" class="node-sub">Cloud cluster integration</text>
+    <g transform="translate(0, 330)" filter="url(#softShadow)">
+      <rect x="0" y="0" width="210" height="52" rx="8" fill="#ffffff" stroke="#e2e8f0" stroke-width="1" />
+      <text x="14" y="22" class="card-title">Offline Cache &amp; DLQ</text>
+      <text x="14" y="39" class="card-sub">Disk buffer during WAN disconnects</text>
     </g>
   </g>
 </svg>

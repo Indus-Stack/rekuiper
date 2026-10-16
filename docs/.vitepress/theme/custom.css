@@ -1,0 +1,117 @@
+/* Custom Theme Variables based on design.md (Light Mode Default) */
+:root {
+  --vp-c-brand-1: #ea580c; /* Rust Orange */
+  --vp-c-brand-2: #f97316;
+  --vp-c-brand-3: #c2410c;
+  --vp-c-brand-soft: rgba(234, 88, 12, 0.10);
+
+  --vp-c-bg: #ffffff;
+  --vp-c-bg-alt: #f8fafc;
+  --vp-c-bg-elv: #ffffff;
+  --vp-c-border: #e2e8f0;
+  --vp-c-divider: #e2e8f0;
+  --vp-c-text-1: #0f172a;
+  --vp-c-text-2: #334155;
+  --vp-c-text-3: #64748b;
+  --vp-code-block-bg: #0b1120;
+  --vp-code-block-color: #f8fafc;
+}
+
+/* Dark Mode Overrides */
+.dark {
+  --vp-c-brand-1: #fb923c;
+  --vp-c-brand-2: #f97316;
+  --vp-c-brand-3: #ea580c;
+  --vp-c-brand-soft: rgba(251, 146, 60, 0.16);
+
+  --vp-c-bg: #090d16;
+  --vp-c-bg-alt: #0f172a;
+  --vp-c-bg-elv: #1e293b;
+  --vp-c-border: #334155;
+  --vp-c-divider: #1e293b;
+  --vp-c-text-1: #f8fafc;
+  --vp-c-text-2: #cbd5e1;
+  --vp-c-text-3: #94a3b8;
+  --vp-code-block-bg: #0b1120;
+}
+
+/* Metric Callout Card Styles */
+.metric-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px;
+  margin: 28px 0 36px 0;
+}
+
+.metric-card {
+  background: var(--vp-c-bg);
+  border: 1px solid var(--vp-c-border);
+  border-radius: 10px;
+  padding: 20px;
+  transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+  box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.05);
+}
+
+.metric-card:hover {
+  transform: translateY(-2px);
+  border-color: var(--vp-c-brand-1);
+  box-shadow: 0 4px 12px 0 rgb(234 88 12 / 0.12);
+}
+
+.metric-value {
+  font-size: 28px;
+  font-weight: 800;
+  line-height: 1.15;
+  color: var(--vp-c-brand-1);
+  margin-bottom: 6px;
+  font-family: var(--vp-font-family-mono);
+}
+
+.metric-label {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--vp-c-text-1);
+  margin-bottom: 4px;
+}
+
+.metric-desc {
+  font-size: 12.5px;
+  color: var(--vp-c-text-3);
+  line-height: 1.45;
+}
+
+/* Hero Badge */
+.hero-badge {
+  display: inline-block;
+  padding: 5px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  border-radius: 9999px;
+  background: var(--vp-c-brand-soft);
+  color: var(--vp-c-brand-1);
+  border: 1px solid var(--vp-c-brand-1);
+  margin-bottom: 16px;
+}
+
+/* High-Contrast Code Blocks */
+div[class*='language-'] {
+  border: 1px solid #1e293b !important;
+  border-radius: 8px !important;
+  box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+}
+
+div[class*='language-'] pre,
+div[class*='language-'] code {
+  color: #f8fafc;
+  font-family: var(--vp-font-family-mono);
+}
+
+html:not(.dark) .vp-doc div[class*='language-'] span {
+  color: var(--shiki-dark) !important;
+}
+
+

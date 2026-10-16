@@ -6,7 +6,7 @@ When managing large device fleets, central brokers encounter heavy transmission 
 
 ## Fleet Architecture
 
-![ESPHome Fleet Telemetry Architecture](../public/diagrams/esphome_fleet.svg)
+![ESPHome Fleet Telemetry Architecture](/diagrams/esphome_fleet.svg)
 
 ## High-Throughput Topic Extraction with meta(topic)
 

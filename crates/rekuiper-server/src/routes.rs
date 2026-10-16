@@ -88,6 +88,7 @@ pub fn create_router(state: AppState) -> Router {
             get(rule_tags_match).post(rule_tags_match),
         )
         .route("/configs", get(get_configs).patch(patch_configs))
+        .route("/config", get(get_configs).patch(patch_configs))
         .route(
             "/config/uploads",
             get(get_config_uploads).post(upload_config_file),

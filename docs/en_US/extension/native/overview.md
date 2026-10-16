@@ -2,6 +2,10 @@
 
 rekuiper provides an extensible user-defined function (UDF) and plugin subsystem implemented in `rekuiper-core` (`crates/rekuiper-core/src/plugin.rs`).
 
+::: tip Recommended Extension Mechanisms
+For dynamic extensions without recompiling the engine binary, use **[WebAssembly (Wasm)](../wasm/overview.md)** or **[External Services](../external/external_func.md)**. These mechanisms replace fragile dynamic `.so` libraries with memory-isolated bytecode and standardized RPC interfaces.
+:::
+
 ---
 
 ## Architectural Principles

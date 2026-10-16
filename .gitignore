@@ -3,7 +3,8 @@
 *.dll
 *.so
 *.dylib
-/target/
+**/target/
+brag-output/
 /bin/*
 !/bin/README.md
 

@@ -14,6 +14,14 @@
           "path": "concepts/ekuiper_compatibility"
         },
         {
+          "title": "Migration & Modernization Guide",
+          "path": "operation/migration"
+        },
+        {
+          "title": "Interactive OpenAPI / Swagger UI",
+          "path": "api/swagger"
+        },
+        {
           "title": "Stream Processing",
           "path": "concepts/streaming/overview",
           "collapsed": true,
@@ -83,12 +91,20 @@
           "path": "getting_started/quick_start_docker"
         },
         {
+          "title": "Migration & Modernization Guide",
+          "path": "operation/migration"
+        },
+        {
           "title": "Run rekuiper with EdgeX Foundry",
           "path": "edgex/edgex_rule_engine_tutorial"
         },
         {
           "title": "How to Debug Rules",
           "path": "getting_started/debug_rules"
+        },
+        {
+          "title": "Reliability & Qualification Scope",
+          "path": "reliability/qualification_and_scope"
         },
         {
           "title": "Differential Qualification & Chaos Testing",
@@ -115,6 +131,24 @@
         {
           "title": "Concurrent Parallel Rules",
           "path": "benchmarks/parallel_rules"
+        }
+      ]
+    },
+    {
+      "title": "Compare",
+      "collapsed": false,
+      "children": [
+        {
+          "title": "rekuiper vs. LF Edge eKuiper",
+          "path": "compare/rekuiper-vs-ekuiper"
+        },
+        {
+          "title": "rekuiper vs. Node-RED & Vector",
+          "path": "compare/rekuiper-vs-nodered-vector"
+        },
+        {
+          "title": "Migration & Modernization Guide",
+          "path": "operation/migration"
         }
       ]
     },
@@ -158,7 +192,7 @@
           "path": "guide/rules/incremental"
         },
         {
-          "title": "Dead-Letter Queues (DLQ) & Error Routing",
+          "title": "Dead-Letter Queues (DLQ) & Poison-Pill Isolation",
           "path": "guide/rules/error_handling_dlq"
         },
         {
@@ -187,7 +221,7 @@
               "path": "guide/sources/down_sample"
             },
             {
-              "title": "Built-in Sources",
+              "title": "Built-in & Native Sources",
               "collapsed": true,
               "children": [
                 {
@@ -275,7 +309,7 @@
               "path": "guide/sinks/data_template"
             },
             {
-              "title": "Built-in Sinks",
+              "title": "Built-in & Native Sinks",
               "collapsed": true,
               "children": [
                 {
@@ -461,9 +495,43 @@
       ]
     },
     {
-      "title": "Admin Guide",
+      "title": "Solutions",
+      "collapsed": false,
+      "children": [
+        {
+          "title": "Reduce Cloud IoT Ingestion Costs by 95%",
+          "path": "solutions/reduce-cloud-iot-costs"
+        },
+        {
+          "title": "Industrial AI Agents with MCP",
+          "path": "solutions/mcp-industrial-ai-agents"
+        }
+      ]
+    },
+    {
+      "title": "Operations & Fleet Administration",
       "path": "operation/overview",
       "children": [
+        {
+          "title": "Migration & Modernization Guide",
+          "path": "operation/migration"
+        },
+        {
+          "title": "Declarative GitOps Mode",
+          "path": "operation/declarative_gitops"
+        },
+        {
+          "title": "Built-in Web UI & Live Top",
+          "path": "operation/observability_ui_top"
+        },
+        {
+          "title": "Monitor with Prometheus",
+          "path": "operation/usage/monitor_with_prometheus"
+        },
+        {
+          "title": "Tracing Data & OpenTelemetry",
+          "path": "operation/usage/trace_data"
+        },
         {
           "title": "Configuration Guide",
           "path": "configuration/configuration",
@@ -478,22 +546,6 @@
               "path": "configuration/secrets"
             }
           ]
-        },
-        {
-          "title": "Monitor",
-          "path": "operation/usage/monitor_with_prometheus"
-        },
-        {
-          "title": "Tracing Data",
-          "path": "operation/usage/trace_data"
-        },
-        {
-          "title": "Declarative GitOps Mode",
-          "path": "operation/declarative_gitops"
-        },
-        {
-          "title": "Zero-Container Observability (UI & Top)",
-          "path": "operation/observability_ui_top"
         }
       ]
     },
@@ -608,8 +660,18 @@
       ]
     },
     {
-      "title": "Model Context Protocol (MCP)",
-      "path": "mcp/overview"
+      "title": "AI & MCP Integration (rekuiper-mcp)",
+      "path": "mcp/overview",
+      "children": [
+        {
+          "title": "Model Context Protocol Overview",
+          "path": "mcp/overview"
+        },
+        {
+          "title": "Industrial AI Agents Guide",
+          "path": "solutions/mcp-industrial-ai-agents"
+        }
+      ]
     },
     {
       "title": "Extension Architecture",
@@ -748,25 +810,6 @@
         {
           "title": "Windowing",
           "path": "sqls/windows"
-        }
-      ]
-    },
-    {
-      "title": "Benchmarks",
-      "path": "benchmarks/overview",
-      "collapsed": false,
-      "children": [
-        {
-          "title": "Benchmark Overview",
-          "path": "benchmarks/overview"
-        },
-        {
-          "title": "Single-Rule MQTT Throughput",
-          "path": "benchmarks/throughput"
-        },
-        {
-          "title": "Concurrent Parallel Rules",
-          "path": "benchmarks/parallel_rules"
         }
       ]
     }

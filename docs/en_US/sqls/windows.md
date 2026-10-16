@@ -29,7 +29,7 @@ Temporal windows align to natural clock boundaries. For example, a 10-second win
 
 Tumbling windows divide streams into fixed, non-overlapping, contiguous time intervals. Each event belongs to exactly one window:
 
-![Tumbling Window Diagram](./resources/tumblingWindow.png)
+![Tumbling Window Diagram](/diagrams/windows/tumbling_window.svg)
 
 ```sql
 SELECT count(*) FROM demo GROUP BY ID, TUMBLINGWINDOW(ss, 10);
@@ -39,7 +39,7 @@ SELECT count(*) FROM demo GROUP BY ID, TUMBLINGWINDOW(ss, 10);
 
 Hopping windows advance forward in time by a fixed hop interval. Windows can overlap, allowing events to belong to multiple windows:
 
-![Hopping Window Diagram](./resources/hoppingWindow.png)
+![Hopping Window Diagram](/diagrams/windows/hopping_window.svg)
 
 ```sql
 SELECT count(*) FROM demo GROUP BY ID, HOPPINGWINDOW(ss, 10, 5);
@@ -49,7 +49,7 @@ SELECT count(*) FROM demo GROUP BY ID, HOPPINGWINDOW(ss, 10, 5);
 
 Sliding windows evaluate and emit results only when a new event arrives. Each window contains the events that occurred within the specified duration preceding the trigger event:
 
-![Sliding Window Diagram](./resources/slidingWindow.png)
+![Sliding Window Diagram](/diagrams/windows/sliding_window.svg)
 
 ```sql
 SELECT count(*) FROM demo GROUP BY ID, SLIDINGWINDOW(mi, 1);
@@ -59,7 +59,7 @@ SELECT count(*) FROM demo GROUP BY ID, SLIDINGWINDOW(mi, 1);
 
 Sliding windows support delayed evaluation. When configured with a delay parameter, the window evaluates after the specified delay elapses, capturing events across both forward and backward intervals:
 
-![Sliding Window with Delay Diagram](./resources/slidingWindow-delay.png)
+![Sliding Window with Delay Diagram](/diagrams/windows/sliding_window_delay.svg)
 
 ```sql
 SELECT count(*) FROM demo GROUP BY ID, SLIDINGWINDOW(ss, 5, 5);
@@ -69,7 +69,7 @@ SELECT count(*) FROM demo GROUP BY ID, SLIDINGWINDOW(ss, 5, 5);
 
 Session windows group events that arrive close together in time and close after a period of inactivity:
 
-![Session Window Diagram](./resources/sessionWindow.png)
+![Session Window Diagram](/diagrams/windows/session_window.svg)
 
 ```sql
 SELECT count(*) FROM demo GROUP BY ID, SESSIONWINDOW(mi, 2, 1);
@@ -150,7 +150,7 @@ Count windows segment streams based on event counts rather than time intervals.
 
 Tumbling count windows group records into fixed-size batches of events:
 
-![Tumbling Count Window Diagram](./resources/tumblingCountWindow.png)
+![Tumbling Count Window Diagram](/diagrams/windows/tumbling_count_window.svg)
 
 ```sql
 SELECT * FROM demo WHERE temperature > 20 GROUP BY COUNTWINDOW(5);
@@ -163,8 +163,8 @@ Sliding count windows take a window size and a trigger interval: `COUNTWINDOW(si
 - When `interval` is `1`, every incoming event triggers a window evaluation.
 - `interval` must be less than or equal to `size`.
 
-![Sliding Count Window Diagram with Interval 1](./resources/slidingCountWindow_1.png)
-![Sliding Count Window Diagram with Interval 2](./resources/slidingCountWindow_2.png)
+![Sliding Count Window Diagram with Interval 1](/diagrams/windows/sliding_count_window_1.svg)
+![Sliding Count Window Diagram with Interval 2](/diagrams/windows/sliding_count_window_2.svg)
 
 ```sql
 SELECT * FROM demo

@@ -131,23 +131,12 @@ docker logs rekuiper | grep "LOG SINK"
 
 ## 6. Web Console and API Documentation
 
-rekuiper includes an embedded web console and an interactive OpenAPI interface.
+rekuiper includes an embedded web console and an interactive OpenAPI 3.0 interface.
 
-Open the web console in a web browser:
-```text
-http://localhost:9081/ui
-```
+- **Embedded Web Console**: Open `http://localhost:9081/ui` to monitor live throughput, active rules, and Dead-Letter Queue (DLQ) errors.
+- **Interactive OpenAPI Explorer**: Open `http://localhost:9081/api-docs` (or load `http://localhost:9081/openapi.json`) to test REST endpoints and validate SQL rules.
 
-Open the OpenAPI interface in a web browser:
-```text
-http://localhost:9081/
-```
-
-Use these interfaces to do these tasks:
-- Test REST API endpoints.
-- Inspect stream schemas.
-- Create and edit rules.
-- Monitor engine status and errors.
+For a complete walkthrough with screenshots, see [Management with the Interactive OpenAPI / Swagger UI](getting_started.md#5-method-c-management-with-the-interactive-openapi-swagger-ui).
 
 
 ---
