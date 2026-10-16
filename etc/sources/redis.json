@@ -8,8 +8,8 @@
       "website": "https://i-dacs.com"
     },
     "helpUrl": {
-      "en_US": "https://github.com/ankur-paan/rekuiper/blob/main/docs/en_US/guide/sources/builtin/redis.html",
-      "zh_CN": "https://github.com/ankur-paan/rekuiper/blob/main/docs/zh_CN/guide/sources/builtin/redis.html"
+      "en_US": "https://github.com/Indus-Stack/rekuiper/blob/main/docs/en_US/guide/sources/builtin/redis.html",
+      "zh_CN": "https://github.com/Indus-Stack/rekuiper/blob/main/docs/zh_CN/guide/sources/builtin/redis.html"
     },
     "description": {
       "en_US": "Read message from Redis",

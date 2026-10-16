@@ -15,8 +15,8 @@ All contributors to `rekuiper` must follow professional conduct. Treat all commu
 ## Report Defects and Security Vulnerabilities
 
 ### Report a Defect
-1. Search existing issues in the [GitHub Issues](https://github.com/ankur-paan/rekuiper/issues) tracker before you create a new issue.
-2. If an issue does not exist, open a [New Issue](https://github.com/ankur-paan/rekuiper/issues/new).
+1. Search existing issues in the [GitHub Issues](https://github.com/Indus-Stack/rekuiper/issues) tracker before you create a new issue.
+2. If an issue does not exist, open a [New Issue](https://github.com/Indus-Stack/rekuiper/issues/new).
 3. Include these items in your report:
    - Clear title and summary of the defect.
    - Operating system, hardware architecture, and Rust compiler version.
@@ -53,7 +53,7 @@ Report security vulnerabilities privately to the **I-Dacs Labs Security Team**:
    ```
 3. Add the upstream repository remote:
    ```bash
-   git remote add upstream https://github.com/ankur-paan/rekuiper.git
+   git remote add upstream https://github.com/Indus-Stack/rekuiper.git
    ```
 
 ---

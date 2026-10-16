@@ -4,8 +4,8 @@
 
 rekuiper is a small SQL engine that sits between your devices and your cloud. It filters, aggregates, and routes live data on the gateway itself, so you send upstream only what matters.
 
-[![Release](https://img.shields.io/badge/release-v1.0.0--rc4-blue.svg)](https://github.com/ankur-paan/rekuiper/releases)
-[![Rust CI](https://img.shields.io/badge/Rust%20CI-passing-brightgreen.svg)](https://github.com/ankur-paan/rekuiper/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/badge/release-v1.0.0--rc4-blue.svg)](https://github.com/Indus-Stack/rekuiper/releases)
+[![Rust CI](https://img.shields.io/badge/Rust%20CI-passing-brightgreen.svg)](https://github.com/Indus-Stack/rekuiper/actions/workflows/ci.yml)
 [![License: MIT or Apache-2.0](https://img.shields.io/badge/license-MIT%20%2F%20Apache--2.0-yellow.svg)](LICENSE)
 [![Docker Pulls](https://img.shields.io/docker/pulls/ankurkrp/rekuiper?color=blue&logo=docker)](https://hub.docker.com/r/ankurkrp/rekuiper)
 
@@ -187,7 +187,7 @@ rekuiper implements the eKuiper REST API, SQL dialect, rule format, and `kuiper`
 | Docker | `docker run -d -p 9081:9081 ankurkrp/rekuiper:1.0.0-rc4` |
 | Docker Compose | `docker compose -f deploy/docker/docker-compose.yml up -d` |
 | Kubernetes | `helm install rekuiper deploy/chart/ekuiper` ([chart docs](deploy/chart/ekuiper/README.md)) |
-| Binaries | [Releases](https://github.com/ankur-paan/rekuiper/releases) |
+| Binaries | [Releases](https://github.com/Indus-Stack/rekuiper/releases) |
 | Source | `cargo build --release -p kuiperd` |
 
 The Docker image listens on all interfaces. A binary that you run directly listens on `127.0.0.1` by default. Ports, TLS, and authentication: [Installation and Deployment](docs/en_US/installation.md).

@@ -1,8 +1,8 @@
 # ankurkrp/rekuiper
 
 [![Docker Pulls](https://img.shields.io/docker/pulls/ankurkrp/rekuiper?color=blue&logo=docker)](https://hub.docker.com/r/ankurkrp/rekuiper)
-[![Release](https://img.shields.io/badge/release-v1.0.0--rc4-blue.svg)](https://github.com/ankur-paan/rekuiper/releases)
-[![License: MIT or Apache-2.0](https://img.shields.io/badge/license-MIT%20%2F%20Apache--2.0-yellow.svg)](https://github.com/ankur-paan/rekuiper/blob/main/LICENSE)
+[![Release](https://img.shields.io/badge/release-v1.0.0--rc4-blue.svg)](https://github.com/Indus-Stack/rekuiper/releases)
+[![License: MIT or Apache-2.0](https://img.shields.io/badge/license-MIT%20%2F%20Apache--2.0-yellow.svg)](https://github.com/Indus-Stack/rekuiper/blob/main/LICENSE)
 
 `rekuiper` is a lightweight streaming SQL engine written in Rust for edge computing, IIoT gateways, connected vehicles, and robotics. It is a drop-in replacement for eKuiper. It processes 150k–200k messages per second per CPU core with a low memory footprint.
 
@@ -43,7 +43,7 @@ http://localhost:9081/
 Clone the repository and start the multi-service stack:
 
 ```bash
-git clone https://github.com/ankur-paan/rekuiper.git
+git clone https://github.com/Indus-Stack/rekuiper.git
 cd rekuiper
 docker compose -f deploy/docker/docker-compose.yml up -d
 ```
@@ -178,7 +178,7 @@ Official images support:
 
 ## Links
 
-- **GitHub Repository**: [https://github.com/ankur-paan/rekuiper](https://github.com/ankur-paan/rekuiper)
-- **Releases & Binary Downloads**: [https://github.com/ankur-paan/rekuiper/releases](https://github.com/ankur-paan/rekuiper/releases)
-- **Model Context Protocol Guide**: [crates/rekuiper-mcp](https://github.com/ankur-paan/rekuiper/tree/main/crates/rekuiper-mcp)
-- **Issue Tracker**: [https://github.com/ankur-paan/rekuiper/issues](https://github.com/ankur-paan/rekuiper/issues)
+- **GitHub Repository**: [https://github.com/Indus-Stack/rekuiper](https://github.com/Indus-Stack/rekuiper)
+- **Releases & Binary Downloads**: [https://github.com/Indus-Stack/rekuiper/releases](https://github.com/Indus-Stack/rekuiper/releases)
+- **Model Context Protocol Guide**: [crates/rekuiper-mcp](https://github.com/Indus-Stack/rekuiper/tree/main/crates/rekuiper-mcp)
+- **Issue Tracker**: [https://github.com/Indus-Stack/rekuiper/issues](https://github.com/Indus-Stack/rekuiper/issues)

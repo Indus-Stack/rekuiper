@@ -130,4 +130,4 @@ Run the automated test script in the repository:
 python3 test/benchmark/multiple_rules/run_benchmark.py
 ```
 
-Raw telemetry logs are in [test/benchmark/multiple_rules/](https://github.com/ankur-paan/rekuiper/tree/main/test/benchmark/multiple_rules).
+Raw telemetry logs are in [test/benchmark/multiple_rules/](https://github.com/Indus-Stack/rekuiper/tree/main/test/benchmark/multiple_rules).

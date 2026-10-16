@@ -253,5 +253,5 @@ In addition to the OpenAPI Explorer, rekuiper includes a zero-dependency HTML5 W
 - Read the [SQL Reference and Built-in Functions](../sqls/overview.md).
 - Configure [Persistent Connections](../guide/connections/overview.md).
 - Read [Production Deployment and Configuration](../installation.md).
-- Connect to [AI Agents through MCP](https://github.com/ankur-paan/rekuiper/tree/main/crates/rekuiper-mcp).
+- Connect to [AI Agents through MCP](https://github.com/Indus-Stack/rekuiper/tree/main/crates/rekuiper-mcp).
 

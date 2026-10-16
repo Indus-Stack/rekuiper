@@ -161,7 +161,7 @@ Use the rekuiper Helm chart to deploy rekuiper on the edge node.
 1. Clone the repository and navigate to the chart directory:
 
    ```shell
-   git clone https://github.com/ankur-paan/rekuiper.git
+   git clone https://github.com/Indus-Stack/rekuiper.git
    cd rekuiper/deploy/chart/ekuiper
    ```
 

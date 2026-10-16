@@ -6,7 +6,7 @@ A lightweight, high-performance edge streaming SQL engine for Kubernetes.
 ## Install the Chart
 
 ```bash
-git clone https://github.com/ankur-paan/rekuiper.git
+git clone https://github.com/Indus-Stack/rekuiper.git
 cd rekuiper
 helm install rekuiper deploy/chart/rekuiper
 ```

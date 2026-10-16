@@ -113,7 +113,7 @@ export default withMermaid(
     ],
     sidebar: transformSidebar((directory as any).en || []),
     socialLinks: [
-      { icon: 'github', link: 'https://github.com/ankur-paan/rekuiper' }
+      { icon: 'github', link: 'https://github.com/Indus-Stack/rekuiper' }
     ],
     search: {
       provider: 'local'

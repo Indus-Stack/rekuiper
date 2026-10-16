@@ -188,4 +188,4 @@ The time window aligns with natural wall-clock intervals (500 ms, 1000 ms, 1500 
 
 ### Additional Merge Scenarios
 
-For further discussion of custom merging patterns, visit the [GitHub Discussions](https://github.com/ankur-paan/rekuiper/discussions) forum.
+For further discussion of custom merging patterns, visit the [GitHub Discussions](https://github.com/Indus-Stack/rekuiper/discussions) forum.
