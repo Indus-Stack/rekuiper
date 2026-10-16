@@ -189,7 +189,7 @@ jobs:
           DOCKER_USER="${{ secrets.DOCKERHUB_USERNAME }}"
           RAW_TAG="${{ inputs.tag || github.ref_name }}"
           VERSION_TAG="${RAW_TAG#v}"
-          echo "tags=${DOCKER_USER}/rekuiper:${VERSION_TAG},${DOCKER_USER}/rekuiper:${RAW_TAG},${DOCKER_USER}/rekuiper:latest" >> $GITHUB_OUTPUT
+          echo "tags=${DOCKER_USER}/rekuiper:${VERSION_TAG},${DOCKER_USER}/rekuiper:latest" >> $GITHUB_OUTPUT
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v6

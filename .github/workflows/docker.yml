@@ -119,7 +119,7 @@ jobs:
           if [ -n "${{ inputs.tag }}" ]; then
             RAW_TAG="${{ inputs.tag }}"
             VERSION_TAG="${RAW_TAG#v}"
-            echo "tags=${DOCKER_USER}/rekuiper:${VERSION_TAG},${DOCKER_USER}/rekuiper:${RAW_TAG},${DOCKER_USER}/rekuiper:latest" >> $GITHUB_OUTPUT
+            echo "tags=${DOCKER_USER}/rekuiper:${VERSION_TAG},${DOCKER_USER}/rekuiper:latest" >> $GITHUB_OUTPUT
           else
             VERSION=$(grep -m 1 '^version = ' Cargo.toml | cut -d '"' -f 2)
             echo "tags=${DOCKER_USER}/rekuiper:${VERSION},${DOCKER_USER}/rekuiper:latest" >> $GITHUB_OUTPUT
