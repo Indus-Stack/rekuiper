@@ -187,6 +187,39 @@ rules:
         .unwrap();
     assert_eq!(res.status(), StatusCode::FORBIDDEN);
 
+    let res = client
+        .post(format!("{}/data/import", server.base_url))
+        .json(&json!({"streams": {}}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::FORBIDDEN);
+
+    let res = client
+        .post(format!("{}/v2/data/import", server.base_url))
+        .json(&json!({"streams": {}}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::FORBIDDEN);
+
+    let res = client
+        .post(format!("{}/async/data/import", server.base_url))
+        .json(&json!({"streams": {}}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::FORBIDDEN);
+
+    // Data-plane stream push (/streams/:name/data) is allowed in declarative mode
+    let res = client
+        .post(format!("{}/streams/demo_stream/data", server.base_url))
+        .json(&json!({"temperature": 42.0, "humidity": 65.0}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
     // 3. Verify Allowlisted mutation paths: data ingestion plane & ruletest
     server.state.http_push_endpoints.write().insert(
         "/data/demo_stream".to_string(),

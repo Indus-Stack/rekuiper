@@ -4,19 +4,8 @@
 
 | Version | Supported |
 | :--- | :--- |
-| v1.0.0-rc3 (Latest) | :white_check_mark: |
-| v1.0.0-rc2 | :white_check_mark: |
-| v1.0.0-rc1 | :white_check_mark: |
-| v0.509-beta | :white_check_mark: |
-| < v0.509-beta | :x: |
-
-# Security Policy
-
-## Supported Versions
-
-| Version | Supported |
-| :--- | :--- |
-| v1.0.0-rc3 (Latest) | :white_check_mark: |
+| v1.0.0-rc4 (Latest) | :white_check_mark: |
+| v1.0.0-rc3 | :white_check_mark: |
 | v1.0.0-rc2 | :white_check_mark: |
 | v1.0.0-rc1 | :white_check_mark: |
 | v0.509-beta | :white_check_mark: |

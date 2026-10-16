@@ -60,24 +60,7 @@ pub struct TraceManager {
 
 impl TraceManager {
     pub fn new() -> Self {
-        let mgr = Self::default();
-        let now = chrono::Utc::now();
-        let start_time = now.to_rfc3339();
-        let end_time = (now + chrono::Duration::microseconds(150)).to_rfc3339();
-        let span = TraceSpan {
-            name: "rule_openapi".to_string(),
-            trace_id: "trace_1".to_string(),
-            span_id: "0000000000000001".to_string(),
-            parent_span_id: "0000000000000000".to_string(),
-            attribute: None,
-            links: None,
-            start_time,
-            end_time,
-            rule_id: Some("rule_openapi".to_string()),
-            child_span: vec![],
-        };
-        mgr.record_trace("rule_openapi", span);
-        mgr
+        Self::default()
     }
 
     pub fn start_trace(&self, rule_id: &str, strategy: String) {
@@ -254,19 +237,7 @@ pub struct TaskManager {
 
 impl TaskManager {
     pub fn new() -> Self {
-        let mgr = Self::default();
-        let now = chrono::Utc::now().timestamp_millis();
-        mgr.tasks.write().insert(
-            "task_1".to_string(),
-            TaskInfo {
-                id: "task_1".to_string(),
-                status: "completed".to_string(),
-                message: "seeded task".to_string(),
-                created_timestamp: now,
-                updated_timestamp: now,
-            },
-        );
-        mgr
+        Self::default()
     }
 
     pub fn register_task(&self, id: String) -> tokio::sync::watch::Receiver<bool> {
@@ -373,6 +344,8 @@ pub struct HttpPushEndpoint {
 pub type StreamFieldMaskMap =
     HashMap<String, Arc<parking_lot::RwLock<Option<rekuiper_connectors::codec::JsonFieldMask>>>>;
 
+pub type StreamRuleFieldMasksMap = HashMap<String, HashMap<String, Option<HashSet<String>>>>;
+
 #[allow(clippy::type_complexity)]
 #[derive(Clone)]
 pub struct AppState {
@@ -394,6 +367,7 @@ pub struct AppState {
     pub rule_streams: Arc<RwLock<HashMap<String, HashSet<String>>>>,
     pub stream_attach_meta: Arc<RwLock<HashMap<String, Arc<std::sync::atomic::AtomicBool>>>>,
     pub stream_field_masks: Arc<RwLock<StreamFieldMaskMap>>,
+    pub stream_rule_field_masks: Arc<RwLock<StreamRuleFieldMasksMap>>,
     pub http_push_endpoints: Arc<RwLock<HashMap<String, HttpPushEndpoint>>>,
     pub http_client: reqwest::Client,
     pub schema_manager: SchemaManager,
@@ -507,6 +481,7 @@ impl AppState {
             rule_streams: Arc::new(RwLock::new(HashMap::new())),
             stream_attach_meta: Arc::new(RwLock::new(HashMap::new())),
             stream_field_masks: Arc::new(RwLock::new(HashMap::new())),
+            stream_rule_field_masks: Arc::new(RwLock::new(HashMap::new())),
             http_push_endpoints: Arc::new(RwLock::new(HashMap::new())),
             schema_manager: SchemaManager::new(),
             plugin_manager: PluginManager::new(),
@@ -709,9 +684,9 @@ pub async fn auth_guard(
 }
 
 /// Verify a raw RS256 JWT against a PKCS#1 DER public key: exactly three
-/// dot-separated segments, a JSON payload whose optional `exp` (seconds)
-/// must lie in the future, and a PKCS#1 v1.5 SHA-256 signature over
-/// `header_b64.payload_b64`.
+/// dot-separated segments, a JSON header declaring `"alg": "RS256"`, a JSON
+/// payload whose optional `exp` (seconds) must lie in the future, and a
+/// PKCS#1 v1.5 SHA-256 signature over `header_b64.payload_b64`.
 pub fn verify_jwt_raw(token: &str, public_key_der: &[u8]) -> Result<(), &'static str> {
     use base64::Engine;
     let mut parts = token.split('.');
@@ -721,6 +696,14 @@ pub fn verify_jwt_raw(token: &str, public_key_der: &[u8]) -> Result<(), &'static
         return Err("Invalid JWT format\n");
     };
     let engine = base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    let header_bytes = engine
+        .decode(header_b64)
+        .map_err(|_| "Invalid JWT format\n")?;
+    let header: serde_json::Value =
+        serde_json::from_slice(&header_bytes).map_err(|_| "Invalid JWT format\n")?;
+    if header.get("alg").and_then(|v| v.as_str()) != Some("RS256") {
+        return Err("Invalid JWT format\n");
+    }
     let payload_bytes = engine
         .decode(payload_b64)
         .map_err(|_| "Invalid JWT format\n")?;
@@ -816,37 +799,57 @@ pub fn spki_to_pkcs1(spki: &[u8]) -> Option<Vec<u8>> {
     Some(pkcs1.to_vec())
 }
 
-static AUTH_KEY_CACHE: parking_lot::RwLock<Option<Option<Vec<u8>>>> =
-    parking_lot::RwLock::new(None);
+struct CachedAuthKey {
+    path: std::path::PathBuf,
+    modified: Option<std::time::SystemTime>,
+    der: Vec<u8>,
+}
+
+static AUTH_KEY_CACHE: parking_lot::RwLock<Option<CachedAuthKey>> = parking_lot::RwLock::new(None);
 
 pub fn load_auth_public_key() -> Option<Vec<u8>> {
-    if let Some(cached) = AUTH_KEY_CACHE.read().as_ref() {
-        return cached.clone();
-    }
     let mut candidates = Vec::new();
     if let Ok(path) = std::env::var("REKUIPER_AUTH_PUBLIC_KEY_FILE") {
         if !path.trim().is_empty() {
-            candidates.push(path);
+            candidates.push(std::path::PathBuf::from(path));
         }
     }
     if let Ok(path) = std::env::var("KUIPER_AUTH_PUBLIC_KEY_FILE") {
         if !path.trim().is_empty() {
-            candidates.push(path);
+            candidates.push(std::path::PathBuf::from(path));
         }
     }
-    candidates.push("etc/mgmt/public.pem".to_string());
-    candidates.push("etc/public.pem".to_string());
-    let der = candidates.into_iter().find_map(|path| {
-        let bytes = std::fs::read(&path).ok()?;
-        let (label, der) = parse_pem_block(&bytes)?;
-        match label.as_str() {
-            "PUBLIC KEY" => spki_to_pkcs1(&der),
-            "RSA PUBLIC KEY" => Some(der),
-            _ => None,
+    candidates.push(std::path::PathBuf::from("etc/mgmt/public.pem"));
+    candidates.push(std::path::PathBuf::from("etc/public.pem"));
+
+    let (active_path, modified) = candidates.into_iter().find_map(|p| {
+        let meta = std::fs::metadata(&p).ok()?;
+        if !meta.is_file() {
+            return None;
         }
+        Some((p, meta.modified().ok()))
+    })?;
+
+    if let Some(cached) = AUTH_KEY_CACHE.read().as_ref() {
+        if cached.path == active_path && cached.modified == modified {
+            return Some(cached.der.clone());
+        }
+    }
+
+    let bytes = std::fs::read(&active_path).ok()?;
+    let (label, der) = parse_pem_block(&bytes)?;
+    let pkcs1_der = match label.as_str() {
+        "PUBLIC KEY" => spki_to_pkcs1(&der)?,
+        "RSA PUBLIC KEY" => der,
+        _ => return None,
+    };
+
+    *AUTH_KEY_CACHE.write() = Some(CachedAuthKey {
+        path: active_path,
+        modified,
+        der: pkcs1_der.clone(),
     });
-    *AUTH_KEY_CACHE.write() = Some(der.clone());
-    der
+    Some(pkcs1_der)
 }
 
 /// Check whether an IP address belongs to private/internal networks:
@@ -976,6 +979,24 @@ pub struct ServiceDetail {
     pub functions: Vec<ExternalFunction>,
 }
 
+fn new_bounded_boa_context() -> boa_engine::Context {
+    let mut ctx = boa_engine::Context::default();
+    ctx.runtime_limits_mut().set_loop_iteration_limit(100_000);
+    ctx.runtime_limits_mut().set_recursion_limit(256);
+    ctx
+}
+
+fn is_valid_js_identifier(name: &str) -> bool {
+    let mut chars = name.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    if !(first.is_ascii_alphabetic() || first == '_' || first == '$') {
+        return false;
+    }
+    chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$')
+}
+
 pub fn compile_and_register_js_udf(udf: &JavascriptUdf) -> Result<(), String> {
     let script = udf.script.trim();
     if script.is_empty() {
@@ -985,10 +1006,16 @@ pub fn compile_and_register_js_udf(udf: &JavascriptUdf) -> Result<(), String> {
     if fn_name.is_empty() {
         return Err("id cannot be empty".to_string());
     }
+    if !is_valid_js_identifier(fn_name) {
+        return Err(format!(
+            "invalid JavaScript UDF identifier '{}': must match [A-Za-z_$][A-Za-z0-9_$]*",
+            fn_name
+        ));
+    }
 
-    // Validate syntax once up front before registering
+    // Validate syntax and top-level execution with bounded runtime limits up front
     {
-        let mut ctx = boa_engine::Context::default();
+        let mut ctx = new_bounded_boa_context();
         if let Err(e) = ctx.eval(boa_engine::Source::from_bytes(script.as_bytes())) {
             return Err(format!("JavaScript compilation error: {:?}", e));
         }
@@ -1009,7 +1036,7 @@ pub fn compile_and_register_js_udf(udf: &JavascriptUdf) -> Result<(), String> {
             boa_engine::Context,
             std::collections::HashMap<String, u64>,
         )> = std::cell::RefCell::new((
-            boa_engine::Context::default(),
+            new_bounded_boa_context(),
             std::collections::HashMap::new(),
         ));
     }
@@ -1019,7 +1046,8 @@ pub fn compile_and_register_js_udf(udf: &JavascriptUdf) -> Result<(), String> {
         TLS_BOA.with(|cell| {
             let (context, loaded_scripts) = &mut *cell.borrow_mut();
             if loaded_scripts.get(&fn_name_owned).copied() != Some(script_hash) {
-                if let Err(e) = context.eval(boa_engine::Source::from_bytes(script_owned.as_bytes()))
+                if let Err(e) =
+                    context.eval(boa_engine::Source::from_bytes(script_owned.as_bytes()))
                 {
                     tracing::warn!("JS UDF {} script init error: {:?}", fn_name_owned, e);
                     return Value::Null;

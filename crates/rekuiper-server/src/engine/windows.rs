@@ -34,6 +34,7 @@ pub(crate) async fn emit_window_batch(
                 .insert("__window_end__".to_string(), Value::from(end_ms));
         }
     }
+    let eval_start = std::time::Instant::now();
     let outputs = if select_stmt.joins.is_empty() {
         let rows: Vec<HashMap<String, Value>> =
             batch.into_iter().map(|r| r.data.into_inner()).collect();
@@ -52,6 +53,9 @@ pub(crate) async fn emit_window_batch(
         )
         .await
     };
+    counters
+        .op_latency
+        .observe(eval_start.elapsed().as_micros() as u64);
     emit_window_outputs(counters, sink, outputs).await;
 }
 
@@ -151,7 +155,12 @@ impl WindowRows {
         match self {
             WindowRows::Incremental(inc) => {
                 if !inc.is_empty() {
-                    emit_window_outputs(counters, sink, inc.take()).await;
+                    let eval_start = std::time::Instant::now();
+                    let outputs = inc.take();
+                    counters
+                        .op_latency
+                        .observe(eval_start.elapsed().as_micros() as u64);
+                    emit_window_outputs(counters, sink, outputs).await;
                 }
             }
             WindowRows::Buffered(rows) => {
@@ -1050,6 +1059,11 @@ pub(crate) async fn run_sliding_window_rule(
         .write()
         .insert("__rule_start__".to_string(), Value::from(start_time_ms));
     let mut buffer: Vec<(std::time::Instant, TaggedRow)> = Vec::new();
+    let mut pending_pt_triggers: std::collections::VecDeque<(
+        std::time::Instant,
+        std::time::Instant,
+        i64,
+    )> = std::collections::VecDeque::new();
     let mut sliding_inc =
         (!event_time.enabled && select_stmt.window_trigger_condition.is_none() && delay.is_none())
             .then(|| rekuiper_sql::SlidingIncrementalWindow::try_new(&select_stmt))
@@ -1193,8 +1207,11 @@ pub(crate) async fn run_sliding_window_rule(
             } else {
                 let now = std::time::Instant::now();
                 buffer.push((now, tagged.clone()));
-                let eval_time = std::time::Instant::now();
-                buffer.retain(|(ts, _)| eval_time.duration_since(*ts) <= length);
+                let anchor = pending_pt_triggers
+                    .front()
+                    .map(|(t, _, _)| *t)
+                    .unwrap_or(now);
+                buffer.retain(|(ts, _)| anchor.saturating_duration_since(*ts) <= length);
 
                 let should_trigger = match &select_stmt.window_trigger_condition {
                     Some(cond) => Evaluator::eval_bool(cond, &tagged.data),
@@ -1202,26 +1219,26 @@ pub(crate) async fn run_sliding_window_rule(
                 };
 
                 if should_trigger && !buffer.is_empty() {
-                    if let Some(delay_dur) = delay {
-                        if !delay_dur.is_zero() {
-                            tokio::time::sleep(delay_dur).await;
-                        }
-                    }
                     let now_ms = chrono::Utc::now().timestamp_millis();
-                    let start_ms = now_ms.saturating_sub(window_millis);
-                    let batch: Vec<TaggedRow> = buffer.iter().map(|(_, row)| row.clone()).collect();
-                    emit_window_batch(
-                        &counters,
-                        &table_manager,
-                        &source_configs,
-                        &select_stmt,
-                        batch,
-                        true,
-                        Some((start_ms, now_ms)),
-                        &sink,
-                        Some(&rule_state),
-                    )
-                    .await;
+                    if let Some(delay_dur) = delay.filter(|d| !d.is_zero()) {
+                        pending_pt_triggers.push_back((now, now + delay_dur, now_ms));
+                    } else {
+                        let start_ms = now_ms.saturating_sub(window_millis);
+                        let batch: Vec<TaggedRow> =
+                            buffer.iter().map(|(_, row)| row.clone()).collect();
+                        emit_window_batch(
+                            &counters,
+                            &table_manager,
+                            &source_configs,
+                            &select_stmt,
+                            batch,
+                            true,
+                            Some((start_ms, now_ms)),
+                            &sink,
+                            Some(&rule_state),
+                        )
+                        .await;
+                    }
                 }
             }
         }};
@@ -1269,6 +1286,56 @@ pub(crate) async fn run_sliding_window_rule(
                         }
                     }
                 }
+            }
+            _ = async {
+                if let Some(&(_, deadline, _)) = pending_pt_triggers.front() {
+                    tokio::time::sleep_until(tokio::time::Instant::from_std(deadline)).await;
+                } else {
+                    std::future::pending::<()>().await;
+                }
+            }, if !pending_pt_triggers.is_empty() => {
+                let now = std::time::Instant::now();
+                while let Some(&(trigger_inst, deadline, trigger_ms)) = pending_pt_triggers.front() {
+                    if now < deadline {
+                        break;
+                    }
+                    pending_pt_triggers.pop_front();
+                    if !is_rule_running(&running) {
+                        continue;
+                    }
+                    let batch: Vec<TaggedRow> = buffer
+                        .iter()
+                        .filter(|(ts, _)| {
+                            if *ts <= trigger_inst {
+                                trigger_inst.saturating_duration_since(*ts) <= length
+                            } else {
+                                *ts <= deadline
+                            }
+                        })
+                        .map(|(_, row)| row.clone())
+                        .collect();
+                    if !batch.is_empty() {
+                        let end_ms = chrono::Utc::now().timestamp_millis();
+                        let start_ms = trigger_ms.saturating_sub(window_millis);
+                        emit_window_batch(
+                            &counters,
+                            &table_manager,
+                            &source_configs,
+                            &select_stmt,
+                            batch,
+                            true,
+                            Some((start_ms, end_ms)),
+                            &sink,
+                            Some(&rule_state),
+                        )
+                        .await;
+                    }
+                }
+                let anchor = pending_pt_triggers
+                    .front()
+                    .map(|(t, _, _)| *t)
+                    .unwrap_or_else(std::time::Instant::now);
+                buffer.retain(|(ts, _)| anchor.saturating_duration_since(*ts) <= length);
             }
         }
     }

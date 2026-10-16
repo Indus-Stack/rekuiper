@@ -9,25 +9,19 @@ use rekuiper_core::model::StreamRecord;
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 /// Infers an Arrow schema and writes a batch of [`StreamRecord`]s to a Parquet file.
-/// If the file already exists, existing records are read first and combined to preserve history.
+/// If the file already exists and its schema matches the incoming batch, existing Arrow
+/// [`RecordBatch`]es are copied directly without decoding to [`StreamRecord`] maps;
+/// if the schema evolved, existing rows are merged and widened. Writes go to a temporary
+/// file and atomically replace `path`.
 pub fn write_records_to_parquet(records: &[StreamRecord], path: &Path) -> Result<()> {
     if records.is_empty() {
         return Ok(());
     }
 
-    let all_records = if path.exists() && std::fs::metadata(path)?.len() > 0 {
-        let mut existing = read_parquet_file(path).unwrap_or_default();
-        existing.extend(records.iter().cloned());
-        existing
-    } else {
-        records.to_vec()
-    };
-
-    let batch = records_to_record_batch(&all_records)?;
     if let Some(parent) = path.parent() {
         if !parent.as_os_str().is_empty() {
             std::fs::create_dir_all(parent)
@@ -35,25 +29,82 @@ pub fn write_records_to_parquet(records: &[StreamRecord], path: &Path) -> Result
         }
     }
 
-    let file = File::create(path)
-        .with_context(|| format!("Failed to create Parquet file at {:?}", path))?;
+    let new_batch = records_to_record_batch(records)?;
 
-    let props = WriterProperties::builder()
-        .set_compression(parquet::basic::Compression::SNAPPY)
-        .build();
+    let batches_to_write: Vec<RecordBatch> = if path.exists()
+        && std::fs::metadata(path)
+            .map(|m| m.len() > 0)
+            .unwrap_or(false)
+    {
+        match read_raw_record_batches(path) {
+            Ok(existing_batches) if !existing_batches.is_empty() => {
+                if existing_batches[0].schema() == new_batch.schema() {
+                    let mut all = Vec::with_capacity(existing_batches.len() + 1);
+                    all.extend(existing_batches);
+                    all.push(new_batch);
+                    all
+                } else {
+                    let mut all_records = Vec::new();
+                    for b in &existing_batches {
+                        all_records.extend(record_batch_to_records(b)?);
+                    }
+                    all_records.extend(records.iter().cloned());
+                    vec![records_to_record_batch(&all_records)?]
+                }
+            }
+            _ => vec![new_batch],
+        }
+    } else {
+        vec![new_batch]
+    };
 
-    let mut writer = ArrowWriter::try_new(file, batch.schema(), Some(props))
-        .context("Failed to initialize ArrowWriter for Parquet")?;
+    let schema = batches_to_write[0].schema();
+    let tmp_path = path.with_extension(format!("parquet.{}.tmp", uuid::Uuid::new_v4().simple()));
 
-    writer
-        .write(&batch)
-        .context("Failed to write RecordBatch to Parquet file")?;
+    let write_res = (|| -> Result<()> {
+        let file = File::create(&tmp_path)
+            .with_context(|| format!("Failed to create temp Parquet file at {:?}", tmp_path))?;
 
-    writer
-        .close()
-        .context("Failed to close Parquet ArrowWriter")?;
+        let props = WriterProperties::builder()
+            .set_compression(parquet::basic::Compression::SNAPPY)
+            .build();
+
+        let mut writer = ArrowWriter::try_new(file, schema, Some(props))
+            .context("Failed to initialize ArrowWriter for Parquet")?;
+
+        for batch in &batches_to_write {
+            writer
+                .write(batch)
+                .context("Failed to write RecordBatch to Parquet file")?;
+        }
+
+        writer
+            .close()
+            .context("Failed to close Parquet ArrowWriter")?;
+        Ok(())
+    })();
+
+    if let Err(e) = write_res {
+        let _ = std::fs::remove_file(&tmp_path);
+        return Err(e);
+    }
+
+    std::fs::rename(&tmp_path, path).with_context(|| {
+        let _ = std::fs::remove_file(&tmp_path);
+        format!("Failed to atomically rename {:?} to {:?}", tmp_path, path)
+    })?;
 
     Ok(())
+}
+
+/// Offloads [`write_records_to_parquet`] to Tokio's blocking thread pool.
+pub async fn write_records_to_parquet_async(
+    records: Vec<StreamRecord>,
+    path: PathBuf,
+) -> Result<()> {
+    tokio::task::spawn_blocking(move || write_records_to_parquet(&records, &path))
+        .await
+        .context("Parquet write blocking task panicked")?
 }
 
 /// Appends a single [`StreamRecord`] to the Parquet file at `path`.
@@ -61,8 +112,15 @@ pub fn append_record_to_parquet(record: &StreamRecord, path: &Path) -> Result<()
     write_records_to_parquet(std::slice::from_ref(record), path)
 }
 
-/// Reads all [`StreamRecord`] rows from a Parquet file.
-pub fn read_parquet_file(path: &Path) -> Result<Vec<StreamRecord>> {
+/// Offloads [`append_record_to_parquet`] to Tokio's blocking thread pool.
+pub async fn append_record_to_parquet_async(record: StreamRecord, path: PathBuf) -> Result<()> {
+    tokio::task::spawn_blocking(move || append_record_to_parquet(&record, &path))
+        .await
+        .context("Parquet append blocking task panicked")?
+}
+
+/// Reads raw Arrow [`RecordBatch`]es from a Parquet file, closing the file handle before returning.
+fn read_raw_record_batches(path: &Path) -> Result<Vec<RecordBatch>> {
     let file =
         File::open(path).with_context(|| format!("Failed to open Parquet file at {:?}", path))?;
 
@@ -73,13 +131,28 @@ pub fn read_parquet_file(path: &Path) -> Result<Vec<StreamRecord>> {
         .build()
         .context("Failed to build ParquetRecordBatchReader")?;
 
-    let mut records = Vec::new();
+    let mut batches = Vec::new();
     for batch_result in reader {
-        let batch = batch_result.context("Failed reading RecordBatch from Parquet")?;
-        records.extend(record_batch_to_records(&batch)?);
+        batches.push(batch_result.context("Failed reading RecordBatch from Parquet")?);
     }
+    Ok(batches)
+}
 
+/// Reads all [`StreamRecord`] rows from a Parquet file.
+pub fn read_parquet_file(path: &Path) -> Result<Vec<StreamRecord>> {
+    let batches = read_raw_record_batches(path)?;
+    let mut records = Vec::new();
+    for batch in &batches {
+        records.extend(record_batch_to_records(batch)?);
+    }
     Ok(records)
+}
+
+/// Offloads [`read_parquet_file`] to Tokio's blocking thread pool.
+pub async fn read_parquet_file_async(path: PathBuf) -> Result<Vec<StreamRecord>> {
+    tokio::task::spawn_blocking(move || read_parquet_file(&path))
+        .await
+        .context("Parquet read blocking task panicked")?
 }
 
 /// Convert a slice of StreamRecords into an Arrow RecordBatch.

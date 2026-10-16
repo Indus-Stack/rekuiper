@@ -23,6 +23,7 @@ impl Evaluator {
         if offset <= 0 {
             return args[0].clone();
         }
+        let max_keep = (offset as usize).min(10_000);
         let default = args.get(2).cloned().unwrap_or(Value::Null);
         let ignore_null = args.get(3).and_then(|v| v.as_bool()).unwrap_or(false);
         let state_key = format!("lag:{}:{}", call_id, partition_key);
@@ -31,14 +32,18 @@ impl Evaluator {
             Some(Value::Array(arr)) => arr.clone(),
             _ => Vec::new(),
         };
-        let out = if (history.len() as i64) >= offset {
-            history[history.len() - offset as usize].clone()
+        let out = if history.len() >= max_keep {
+            history[history.len() - max_keep].clone()
         } else {
             default
         };
         if !skip_update && (!ignore_null || !args[0].is_null()) {
+            if history.len() >= max_keep {
+                let drain_count = history.len() - max_keep + 1;
+                history.drain(0..drain_count);
+            }
             history.push(args[0].clone());
-            guard.insert(state_key, Value::Array(history));
+            RuleState::insert_bounded(&mut guard, state_key, Value::Array(history));
         }
         out
     }
@@ -79,7 +84,8 @@ impl Evaluator {
                 Some(p) => !Self::values_equal(p, current),
             };
             if changed {
-                state.state.write().insert(state_key, current.clone());
+                let mut guard = state.state.write();
+                RuleState::insert_bounded(&mut guard, state_key, current.clone());
                 any_changed = true;
                 if first_val.is_null() {
                     first_val = current.clone();

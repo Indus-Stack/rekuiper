@@ -286,11 +286,38 @@ pub async fn declarative_mutation_guard(
             return next.run(req).await;
         }
 
-        // Allow: POST /data/* and PUT /data/* (httppush data plane)
-        if (method == axum::http::Method::POST || method == axum::http::Method::PUT)
-            && path.starts_with("/data/")
+        // Allow: POST /streams/:name/data and POST /tables/:name/data (data plane ingestion)
+        if method == axum::http::Method::POST
+            && (path.starts_with("/streams/") || path.starts_with("/tables/"))
+            && path.ends_with("/data")
         {
             return next.run(req).await;
+        }
+
+        // Allow: POST /data/* and PUT /data/* (httppush data plane and selective export),
+        // but strictly block /data/import control-plane mutations.
+        if (method == axum::http::Method::POST || method == axum::http::Method::PUT)
+            && path.starts_with("/data/")
+            && path != "/data/import"
+            && !path.starts_with("/data/import/")
+        {
+            return next.run(req).await;
+        }
+
+        // Allow: registered custom HTTP push endpoints
+        if method == axum::http::Method::POST || method == axum::http::Method::PUT {
+            let normalized = if path.len() > 1 && path.ends_with('/') {
+                path.trim_end_matches('/')
+            } else {
+                path
+            };
+            let is_push_ep = {
+                let guard = state.http_push_endpoints.read();
+                guard.contains_key(normalized) || guard.contains_key(path)
+            };
+            if is_push_ep {
+                return next.run(req).await;
+            }
         }
 
         // Allow: POST /v1/* and POST /otlp/v1/* (OTLP data ingestion)

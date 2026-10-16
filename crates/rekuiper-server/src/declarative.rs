@@ -7,10 +7,20 @@ use rekuiper_core::model::{
 use rekuiper_sql::parser::Parser;
 use rekuiper_sql::validator::validate_manifest;
 use serde::{Deserialize, Serialize};
-use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
-use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
+
+fn update_ctx_str(ctx: &mut ring::digest::Context, s: &str) {
+    ctx.update(&(s.len() as u64).to_le_bytes());
+    ctx.update(s.as_bytes());
+}
+
+fn finish_ctx_u64(ctx: ring::digest::Context) -> u64 {
+    let digest = ctx.finish();
+    let mut bytes = [0u8; 8];
+    bytes.copy_from_slice(&digest.as_ref()[..8]);
+    u64::from_le_bytes(bytes)
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReconcileReport {
@@ -45,23 +55,41 @@ impl Default for ReconcileReport {
     }
 }
 
-/// Compute a composite content hash for a rule taking into account:
-/// 1. Rule definition (id, sql, actions, options)
+/// Compute a deterministic SHA-256 composite content hash for a rule taking into account:
+/// 1. Rule definition (id, name, version, sql, canonicalized actions, canonicalized options, graph, tags)
 /// 2. Referenced stream DDLs
 /// 3. Referenced table DDLs
 /// 4. Referenced connection configurations
 /// 5. Referenced schemas
 pub fn compute_rule_effective_hash(rule: &RuleDefinition, manifest: &DeclarativeManifest) -> u64 {
-    let mut hasher = DefaultHasher::new();
+    let mut ctx = ring::digest::Context::new(&ring::digest::SHA256);
 
-    // 1. Rule definition
-    rule.id.hash(&mut hasher);
-    rule.sql.hash(&mut hasher);
-    if let Ok(actions_json) = serde_json::to_string(&rule.actions) {
-        actions_json.hash(&mut hasher);
+    // 1. Rule definition (convert HashMaps via serde_json::to_value first so keys are sorted in BTreeMap order)
+    update_ctx_str(&mut ctx, &rule.id);
+    if let Some(ref name) = rule.name {
+        update_ctx_str(&mut ctx, name);
     }
-    if let Ok(options_json) = serde_json::to_string(&rule.options) {
-        options_json.hash(&mut hasher);
+    if let Some(ref version) = rule.version {
+        update_ctx_str(&mut ctx, version);
+    }
+    update_ctx_str(&mut ctx, &rule.sql);
+    if let Ok(actions_val) = serde_json::to_value(&rule.actions) {
+        if let Ok(actions_json) = serde_json::to_string(&actions_val) {
+            update_ctx_str(&mut ctx, &actions_json);
+        }
+    }
+    if let Ok(options_val) = serde_json::to_value(&rule.options) {
+        if let Ok(options_json) = serde_json::to_string(&options_val) {
+            update_ctx_str(&mut ctx, &options_json);
+        }
+    }
+    if let Ok(graph_val) = serde_json::to_value(&rule.graph) {
+        if let Ok(graph_json) = serde_json::to_string(&graph_val) {
+            update_ctx_str(&mut ctx, &graph_json);
+        }
+    }
+    for tag in &rule.tags {
+        update_ctx_str(&mut ctx, tag);
     }
 
     // 2. Parse rule SQL to find referenced streams and tables
@@ -69,17 +97,17 @@ pub fn compute_rule_effective_hash(rule: &RuleDefinition, manifest: &Declarative
     if let Ok(stmt) = parser.parse_select() {
         let from_source = stmt.from.trim().trim_matches('`').trim_matches('"');
         let from_lower = from_source.to_ascii_lowercase();
-        from_lower.hash(&mut hasher);
+        update_ctx_str(&mut ctx, &from_lower);
 
         // Check if stream DDL declared
         for (s_name, s_ddl) in &manifest.streams {
             if s_name.eq_ignore_ascii_case(&from_lower) {
-                s_ddl.hash(&mut hasher);
+                update_ctx_str(&mut ctx, s_ddl);
             }
         }
         for (t_name, t_ddl) in &manifest.tables {
             if t_name.eq_ignore_ascii_case(&from_lower) {
-                t_ddl.hash(&mut hasher);
+                update_ctx_str(&mut ctx, t_ddl);
             }
         }
 
@@ -87,33 +115,35 @@ pub fn compute_rule_effective_hash(rule: &RuleDefinition, manifest: &Declarative
         for join in &stmt.joins {
             let target = join.target.trim().trim_matches('`').trim_matches('"');
             let target_lower = target.to_ascii_lowercase();
-            target_lower.hash(&mut hasher);
+            update_ctx_str(&mut ctx, &target_lower);
             for (s_name, s_ddl) in &manifest.streams {
                 if s_name.eq_ignore_ascii_case(&target_lower) {
-                    s_ddl.hash(&mut hasher);
+                    update_ctx_str(&mut ctx, s_ddl);
                 }
             }
             for (t_name, t_ddl) in &manifest.tables {
                 if t_name.eq_ignore_ascii_case(&target_lower) {
-                    t_ddl.hash(&mut hasher);
+                    update_ctx_str(&mut ctx, t_ddl);
                 }
             }
         }
     }
 
-    // 3. Hash connections and schemas
+    // 3. Hash connections and schemas (BTreeMap in DeclarativeManifest iterates in deterministic sorted key order)
     for (conn_name, conn_val) in &manifest.connections {
-        conn_name.to_ascii_lowercase().hash(&mut hasher);
+        update_ctx_str(&mut ctx, &conn_name.to_ascii_lowercase());
         if let Ok(s) = serde_json::to_string(conn_val) {
-            s.hash(&mut hasher);
+            update_ctx_str(&mut ctx, &s);
         }
     }
     for (schema_name, schema_def) in &manifest.schemas {
-        schema_name.to_ascii_lowercase().hash(&mut hasher);
-        schema_def.content.hash(&mut hasher);
+        update_ctx_str(&mut ctx, &schema_name.to_ascii_lowercase());
+        if let Some(ref content) = schema_def.content {
+            update_ctx_str(&mut ctx, content);
+        }
     }
 
-    hasher.finish()
+    finish_ctx_u64(ctx)
 }
 
 /// Atomically validates and reconciles an incoming DeclarativeManifest against current AppState.
@@ -309,12 +339,18 @@ pub async fn reconcile_manifest(
     Ok(report)
 }
 
-/// Load manifest from path and reconcile against state.
+/// Load manifest from path on a blocking thread and reconcile against state.
 pub async fn reconcile_declarative_path(
     state: &AppState,
     path: &Path,
 ) -> Result<ReconcileReport, String> {
-    let manifest = DeclarativeManifest::load_from_path(path, false).map_err(|diagnostics| {
+    let path_buf = path.to_path_buf();
+    let load_res =
+        tokio::task::spawn_blocking(move || DeclarativeManifest::load_from_path(&path_buf, false))
+            .await
+            .map_err(|e| format!("Manifest loader task panicked: {}", e))?;
+
+    let manifest = load_res.map_err(|diagnostics| {
         let msgs: Vec<String> = diagnostics.into_iter().map(|d| d.to_string()).collect();
         format!(
             "Failed to load manifest at {:?}:\n{}",
@@ -326,18 +362,16 @@ pub async fn reconcile_declarative_path(
     reconcile_manifest(state, &manifest).await
 }
 
-/// Compute a fingerprint of a path (handles atomic rename / inode swaps and directory additions)
+/// Compute a SHA-256 fingerprint of a path (handles atomic rename / inode swaps and directory additions).
 pub fn compute_path_fingerprint(path: &Path) -> u64 {
-    let mut hasher = DefaultHasher::new();
+    let mut ctx = ring::digest::Context::new(&ring::digest::SHA256);
+    let mut any_hashed = false;
+
     if path.is_file() {
-        if let Ok(meta) = path.metadata() {
-            meta.len().hash(&mut hasher);
-            if let Ok(mtime) = meta.modified() {
-                mtime.hash(&mut hasher);
-            }
-        }
         if let Ok(bytes) = std::fs::read(path) {
-            bytes.hash(&mut hasher);
+            ctx.update(&(bytes.len() as u64).to_le_bytes());
+            ctx.update(&bytes);
+            any_hashed = true;
         }
     } else if path.is_dir() {
         if let Ok(entries) = std::fs::read_dir(path) {
@@ -352,34 +386,43 @@ pub fn compute_path_fingerprint(path: &Path) -> u64 {
                         || ext_lower == "json"
                         || ext_lower == "toml"
                     {
-                        f.file_name().hash(&mut hasher);
-                        if let Ok(meta) = f.metadata() {
-                            meta.len().hash(&mut hasher);
-                            if let Ok(mtime) = meta.modified() {
-                                mtime.hash(&mut hasher);
-                            }
+                        if let Some(fname) = f.file_name().and_then(|n| n.to_str()) {
+                            update_ctx_str(&mut ctx, fname);
                         }
                         if let Ok(bytes) = std::fs::read(&f) {
-                            bytes.hash(&mut hasher);
+                            ctx.update(&(bytes.len() as u64).to_le_bytes());
+                            ctx.update(&bytes);
+                            any_hashed = true;
                         }
                     }
                 }
             }
         }
     }
-    hasher.finish()
+
+    if !any_hashed {
+        return 0;
+    }
+    finish_ctx_u64(ctx)
 }
 
-/// Spawn a background watcher task that polls the target path for modifications / inode swaps.
+/// Spawn a background watcher task that polls the target path via `spawn_blocking`.
 pub fn spawn_declarative_watcher(state: AppState, path: PathBuf) {
     tokio::spawn(async move {
         tracing::info!("Starting declarative manifest watcher on {:?}", path);
         let mut interval = tokio::time::interval(std::time::Duration::from_millis(1000));
-        let mut last_hash = compute_path_fingerprint(&path);
+        let p_init = path.clone();
+        let mut last_hash = tokio::task::spawn_blocking(move || compute_path_fingerprint(&p_init))
+            .await
+            .unwrap_or(0);
 
         loop {
             interval.tick().await;
-            let current_hash = compute_path_fingerprint(&path);
+            let p_check = path.clone();
+            let current_hash =
+                tokio::task::spawn_blocking(move || compute_path_fingerprint(&p_check))
+                    .await
+                    .unwrap_or(0);
             if current_hash != 0 && current_hash != last_hash {
                 tracing::info!(
                     "Declarative manifest change detected at {:?}, triggering hot reload",

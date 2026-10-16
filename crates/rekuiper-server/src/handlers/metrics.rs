@@ -196,6 +196,20 @@ pub async fn prometheus_metrics_handler(State(state): State<AppState>) -> impl I
                 .collect()
         };
 
+        let counters = state
+            .rule_manager
+            .rule_counters(&rule.id)
+            .unwrap_or_default();
+        let (src_last_us, src_buckets, src_sum_us, src_cnt) = counters
+            .source_latency
+            .snapshot(status.source_records_in_total);
+        let (op_last_us, op_buckets, op_sum_us, op_cnt) =
+            counters.op_latency.snapshot(status.sink_records_out_total);
+        let (sink_last_us, sink_buckets, sink_sum_us, sink_cnt) = counters
+            .sink_latency
+            .snapshot(status.sink_records_out_total);
+        let src_buf_len = state.stream_bus.get_or_create(&source_name).backlog_hint();
+
         // 1. Rule status
         rule_status_buf.push_str(&format!(
             "kuiper_rule_status{{rule=\"{}\"}} {}\n",
@@ -217,8 +231,8 @@ pub async fn prometheus_metrics_handler(State(state): State<AppState>) -> impl I
             rule.id, status.exceptions_total
         ));
         src_latency_buf.push_str(&format!(
-            "kuiper_source_process_latency_us{{rule=\"{}\"}} 0\n",
-            rule.id
+            "kuiper_source_process_latency_us{{rule=\"{}\"}} {}\n",
+            rule.id, src_last_us
         ));
 
         // Full labels for source:
@@ -239,36 +253,38 @@ pub async fn prometheus_metrics_handler(State(state): State<AppState>) -> impl I
             source_name, rule.id, status.exceptions_total
         ));
         src_buffer_len_buf.push_str(&format!(
-            "kuiper_source_buffer_length{{op=\"{}\",op_instance=\"0\",rule=\"{}\",type=\"source\"}} 0\n",
-            source_name, rule.id
+            "kuiper_source_buffer_length{{op=\"{}\",op_instance=\"0\",rule=\"{}\",type=\"source\"}} {}\n",
+            source_name, rule.id, src_buf_len
         ));
         src_conn_status_buf.push_str(&format!(
             "kuiper_source_connection_status{{op=\"{}\",op_instance=\"0\",rule=\"{}\",type=\"source\"}} {}\n",
             source_name, rule.id, if is_running { 1 } else { 0 }
         ));
         src_latency_buf.push_str(&format!(
-            "kuiper_source_process_latency_us{{op=\"{}\",op_instance=\"0\",rule=\"{}\",type=\"source\"}} 0\n",
-            source_name, rule.id
+            "kuiper_source_process_latency_us{{op=\"{}\",op_instance=\"0\",rule=\"{}\",type=\"source\"}} {}\n",
+            source_name, rule.id, src_last_us
         ));
 
         // Source latency histogram:
-        for le in ["100", "500", "1000", "5000"] {
+        for (le, count) in [
+            ("100", src_buckets[0]),
+            ("500", src_buckets[1]),
+            ("1000", src_buckets[2]),
+            ("5000", src_buckets[3]),
+            ("+Inf", src_buckets[4]),
+        ] {
             src_latency_hist_buf.push_str(&format!(
-                "kuiper_source_process_latency_us_hist_bucket{{le=\"{}\",op=\"{}\",op_instance=\"0\",rule=\"{}\",type=\"source\"}} 0\n",
-                le, source_name, rule.id
+                "kuiper_source_process_latency_us_hist_bucket{{le=\"{}\",op=\"{}\",op_instance=\"0\",rule=\"{}\",type=\"source\"}} {}\n",
+                le, source_name, rule.id, count
             ));
         }
         src_latency_hist_buf.push_str(&format!(
-            "kuiper_source_process_latency_us_hist_bucket{{le=\"+Inf\",op=\"{}\",op_instance=\"0\",rule=\"{}\",type=\"source\"}} {}\n",
-            source_name, rule.id, status.source_records_in_total
-        ));
-        src_latency_hist_buf.push_str(&format!(
-            "kuiper_source_process_latency_us_hist_sum{{op=\"{}\",op_instance=\"0\",rule=\"{}\",type=\"source\"}} 0\n",
-            source_name, rule.id
+            "kuiper_source_process_latency_us_hist_sum{{op=\"{}\",op_instance=\"0\",rule=\"{}\",type=\"source\"}} {}\n",
+            source_name, rule.id, src_sum_us
         ));
         src_latency_hist_buf.push_str(&format!(
             "kuiper_source_process_latency_us_hist_count{{op=\"{}\",op_instance=\"0\",rule=\"{}\",type=\"source\"}} {}\n",
-            source_name, rule.id, status.source_records_in_total
+            source_name, rule.id, src_cnt
         ));
 
         // 3. Operator metrics
@@ -293,28 +309,30 @@ pub async fn prometheus_metrics_handler(State(state): State<AppState>) -> impl I
             op_name, rule.id
         ));
         op_latency_buf.push_str(&format!(
-            "kuiper_op_process_latency_us{{op=\"{}\",op_instance=\"0\",rule=\"{}\",type=\"op\"}} 0\n",
-            op_name, rule.id
+            "kuiper_op_process_latency_us{{op=\"{}\",op_instance=\"0\",rule=\"{}\",type=\"op\"}} {}\n",
+            op_name, rule.id, op_last_us
         ));
 
         // Operator latency histogram:
-        for le in ["100", "500", "1000", "5000"] {
+        for (le, count) in [
+            ("100", op_buckets[0]),
+            ("500", op_buckets[1]),
+            ("1000", op_buckets[2]),
+            ("5000", op_buckets[3]),
+            ("+Inf", op_buckets[4]),
+        ] {
             op_latency_hist_buf.push_str(&format!(
-                "kuiper_op_process_latency_us_hist_bucket{{le=\"{}\",op=\"{}\",op_instance=\"0\",rule=\"{}\",type=\"op\"}} 0\n",
-                le, op_name, rule.id
+                "kuiper_op_process_latency_us_hist_bucket{{le=\"{}\",op=\"{}\",op_instance=\"0\",rule=\"{}\",type=\"op\"}} {}\n",
+                le, op_name, rule.id, count
             ));
         }
         op_latency_hist_buf.push_str(&format!(
-            "kuiper_op_process_latency_us_hist_bucket{{le=\"+Inf\",op=\"{}\",op_instance=\"0\",rule=\"{}\",type=\"op\"}} {}\n",
-            op_name, rule.id, status.sink_records_out_total
-        ));
-        op_latency_hist_buf.push_str(&format!(
-            "kuiper_op_process_latency_us_hist_sum{{op=\"{}\",op_instance=\"0\",rule=\"{}\",type=\"op\"}} 0\n",
-            op_name, rule.id
+            "kuiper_op_process_latency_us_hist_sum{{op=\"{}\",op_instance=\"0\",rule=\"{}\",type=\"op\"}} {}\n",
+            op_name, rule.id, op_sum_us
         ));
         op_latency_hist_buf.push_str(&format!(
             "kuiper_op_process_latency_us_hist_count{{op=\"{}\",op_instance=\"0\",rule=\"{}\",type=\"op\"}} {}\n",
-            op_name, rule.id, status.sink_records_out_total
+            op_name, rule.id, op_cnt
         ));
 
         // 4. Sink metrics
@@ -332,8 +350,8 @@ pub async fn prometheus_metrics_handler(State(state): State<AppState>) -> impl I
             rule.id, status.exceptions_total
         ));
         sink_latency_buf.push_str(&format!(
-            "kuiper_sink_process_latency_us{{rule=\"{}\"}} 0\n",
-            rule.id
+            "kuiper_sink_process_latency_us{{rule=\"{}\"}} {}\n",
+            rule.id, sink_last_us
         ));
 
         // Full labels for sinks:
@@ -363,27 +381,29 @@ pub async fn prometheus_metrics_handler(State(state): State<AppState>) -> impl I
                 sink_name, rule.id, if is_running { 1 } else { 0 }
             ));
             sink_latency_buf.push_str(&format!(
-                "kuiper_sink_process_latency_us{{op=\"{}\",op_instance=\"0\",rule=\"{}\",type=\"sink\"}} 0\n",
-                sink_name, rule.id
+                "kuiper_sink_process_latency_us{{op=\"{}\",op_instance=\"0\",rule=\"{}\",type=\"sink\"}} {}\n",
+                sink_name, rule.id, sink_last_us
             ));
 
-            for le in ["100", "500", "1000", "5000"] {
+            for (le, count) in [
+                ("100", sink_buckets[0]),
+                ("500", sink_buckets[1]),
+                ("1000", sink_buckets[2]),
+                ("5000", sink_buckets[3]),
+                ("+Inf", sink_buckets[4]),
+            ] {
                 sink_latency_hist_buf.push_str(&format!(
-                    "kuiper_sink_process_latency_us_hist_bucket{{le=\"{}\",op=\"{}\",op_instance=\"0\",rule=\"{}\",type=\"sink\"}} 0\n",
-                    le, sink_name, rule.id
+                    "kuiper_sink_process_latency_us_hist_bucket{{le=\"{}\",op=\"{}\",op_instance=\"0\",rule=\"{}\",type=\"sink\"}} {}\n",
+                    le, sink_name, rule.id, count
                 ));
             }
             sink_latency_hist_buf.push_str(&format!(
-                "kuiper_sink_process_latency_us_hist_bucket{{le=\"+Inf\",op=\"{}\",op_instance=\"0\",rule=\"{}\",type=\"sink\"}} {}\n",
-                sink_name, rule.id, status.sink_records_out_total
-            ));
-            sink_latency_hist_buf.push_str(&format!(
-                "kuiper_sink_process_latency_us_hist_sum{{op=\"{}\",op_instance=\"0\",rule=\"{}\",type=\"sink\"}} 0\n",
-                sink_name, rule.id
+                "kuiper_sink_process_latency_us_hist_sum{{op=\"{}\",op_instance=\"0\",rule=\"{}\",type=\"sink\"}} {}\n",
+                sink_name, rule.id, sink_sum_us
             ));
             sink_latency_hist_buf.push_str(&format!(
                 "kuiper_sink_process_latency_us_hist_count{{op=\"{}\",op_instance=\"0\",rule=\"{}\",type=\"sink\"}} {}\n",
-                sink_name, rule.id, status.sink_records_out_total
+                sink_name, rule.id, sink_cnt
             ));
         }
 

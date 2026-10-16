@@ -790,170 +790,463 @@ impl OpcUaClient {
     }
 }
 
+/// Skips an OPC-UA DiagnosticInfo structure (OPC-UA Part 6 §5.2.2.12).
+fn skip_diagnostic_info(buf: &[u8], pos: &mut usize) -> Result<()> {
+    if *pos >= buf.len() {
+        bail!("Unexpected EOF while reading OPC-UA DiagnosticInfo mask");
+    }
+    let mask = buf[*pos];
+    *pos += 1;
+
+    // 0x01: SymbolicId (Int32), 0x02: NamespaceUri (Int32),
+    // 0x04: LocalizedText (Int32), 0x08: Locale (Int32)
+    for bit in [0x01u8, 0x02, 0x04, 0x08] {
+        if (mask & bit) != 0 {
+            if *pos + 4 > buf.len() {
+                bail!("Unexpected EOF in DiagnosticInfo Int32 field");
+            }
+            *pos += 4;
+        }
+    }
+    // 0x10: AdditionalInfo (OPC-UA String)
+    if (mask & 0x10) != 0 {
+        skip_opcua_string(buf, pos)?;
+    }
+    // 0x20: InnerStatusCode (UInt32)
+    if (mask & 0x20) != 0 {
+        if *pos + 4 > buf.len() {
+            bail!("Unexpected EOF in DiagnosticInfo InnerStatusCode");
+        }
+        *pos += 4;
+    }
+    // 0x40: InnerDiagnosticInfo (recursive)
+    if (mask & 0x40) != 0 {
+        skip_diagnostic_info(buf, pos)?;
+    }
+    Ok(())
+}
+
+/// Skips an OPC-UA String or ByteString (4-byte signed length prefix + payload).
+fn skip_opcua_string(buf: &[u8], pos: &mut usize) -> Result<()> {
+    if *pos + 4 > buf.len() {
+        bail!("Unexpected EOF reading OPC-UA string length");
+    }
+    let len = i32::from_le_bytes([buf[*pos], buf[*pos + 1], buf[*pos + 2], buf[*pos + 3]]);
+    *pos += 4;
+    if len > 0 {
+        let len_usize = len as usize;
+        if *pos + len_usize > buf.len() {
+            bail!("Unexpected EOF reading OPC-UA string body of {} bytes", len);
+        }
+        *pos += len_usize;
+    }
+    Ok(())
+}
+
+/// Skips an OPC-UA StringTable (Int32 count + count * String).
+fn skip_string_table(buf: &[u8], pos: &mut usize) -> Result<()> {
+    if *pos + 4 > buf.len() {
+        bail!("Unexpected EOF reading OPC-UA StringTable length");
+    }
+    let count = i32::from_le_bytes([buf[*pos], buf[*pos + 1], buf[*pos + 2], buf[*pos + 3]]);
+    *pos += 4;
+    if count > 0 {
+        for _ in 0..count {
+            skip_opcua_string(buf, pos)?;
+        }
+    }
+    Ok(())
+}
+
+/// Skips an OPC-UA NodeId (OPC-UA Part 6 §5.2.2.9).
+fn skip_node_id(buf: &[u8], pos: &mut usize) -> Result<()> {
+    if *pos >= buf.len() {
+        bail!("Unexpected EOF reading OPC-UA NodeId encoding byte");
+    }
+    let encoding = buf[*pos];
+    *pos += 1;
+    match encoding & 0x0F {
+        0x00 => {
+            // TwoByte: 1 byte identifier
+            if *pos + 1 > buf.len() {
+                bail!("Unexpected EOF in TwoByte NodeId");
+            }
+            *pos += 1;
+        }
+        0x01 => {
+            // FourByte: 1 byte namespace + 2 bytes identifier
+            if *pos + 3 > buf.len() {
+                bail!("Unexpected EOF in FourByte NodeId");
+            }
+            *pos += 3;
+        }
+        0x02 => {
+            // Numeric: 2 bytes namespace + 4 bytes identifier
+            if *pos + 6 > buf.len() {
+                bail!("Unexpected EOF in Numeric NodeId");
+            }
+            *pos += 6;
+        }
+        0x03 | 0x05 => {
+            // String or ByteString: 2 bytes namespace + OPC-UA String
+            if *pos + 2 > buf.len() {
+                bail!("Unexpected EOF in String/Opaque NodeId namespace");
+            }
+            *pos += 2;
+            skip_opcua_string(buf, pos)?;
+        }
+        0x04 => {
+            // Guid: 2 bytes namespace + 16 bytes GUID
+            if *pos + 18 > buf.len() {
+                bail!("Unexpected EOF in Guid NodeId");
+            }
+            *pos += 18;
+        }
+        other => bail!("Unsupported OPC-UA NodeId encoding {:#04x}", other),
+    }
+    if (encoding & 0x80) != 0 {
+        skip_opcua_string(buf, pos)?;
+    }
+    if (encoding & 0x40) != 0 {
+        if *pos + 4 > buf.len() {
+            bail!("Unexpected EOF in NodeId ServerIndex");
+        }
+        *pos += 4;
+    }
+    Ok(())
+}
+
+/// Skips an OPC-UA ExtensionObject (`AdditionalHeader` in `ResponseHeader`).
+fn skip_extension_object(buf: &[u8], pos: &mut usize) -> Result<()> {
+    skip_node_id(buf, pos)?;
+    if *pos >= buf.len() {
+        bail!("Unexpected EOF reading ExtensionObject encoding mask");
+    }
+    let mask = buf[*pos];
+    *pos += 1;
+    match mask {
+        0x00 => Ok(()), // No body
+        0x01 | 0x02 => skip_opcua_string(buf, pos),
+        other => bail!("Unsupported ExtensionObject encoding mask {:#04x}", other),
+    }
+}
+
+/// Deterministically locates the start of the `DataValue` items in a `ReadResponse` body.
+/// Supports both full OPC-UA Part 6 `ResponseHeader` framing and the compact 32-byte
+/// mock header used by local test fixtures.
+fn locate_read_results_slice(body: &[u8], expected_nodes: usize) -> Result<&[u8]> {
+    if body.len() < 36 {
+        bail!(
+            "OPC-UA ReadResponse body too short ({} bytes, need at least 36)",
+            body.len()
+        );
+    }
+
+    // Offset 12..16 is the Service TypeId (FourByte NodeId for ReadResponse = 634, or ServiceFault = 397)
+    if body[12] == 0x01 {
+        let type_id = u16::from_le_bytes([body[14], body[15]]);
+        if type_id == 397 {
+            let service_result = u32::from_le_bytes([body[28], body[29], body[30], body[31]]);
+            bail!(
+                "OPC-UA Server returned ServiceFault (StatusCode {:#010x})",
+                service_result
+            );
+        }
+    }
+
+    // Offset 28..32 is ResponseHeader.ServiceResult
+    let service_result = u32::from_le_bytes([body[28], body[29], body[30], body[31]]);
+    if (service_result & 0x8000_0000) != 0 {
+        bail!(
+            "OPC-UA ReadResponse failed with ServiceResult StatusCode {:#010x}",
+            service_result
+        );
+    }
+
+    // Path A: Standard OPC-UA Part 6 ResponseHeader (ServiceDiagnostics + StringTable + AdditionalHeader)
+    let mut std_pos = 32usize;
+    let std_parse = (|| -> Result<usize> {
+        skip_diagnostic_info(body, &mut std_pos)?;
+        skip_string_table(body, &mut std_pos)?;
+        skip_extension_object(body, &mut std_pos)?;
+        if std_pos + 4 > body.len() {
+            bail!("Unexpected EOF before Results array length");
+        }
+        let count = i32::from_le_bytes([
+            body[std_pos],
+            body[std_pos + 1],
+            body[std_pos + 2],
+            body[std_pos + 3],
+        ]);
+        if count < 0 || count as usize != expected_nodes {
+            bail!(
+                "OPC-UA ReadResponse Results count mismatch: expected {}, got {}",
+                expected_nodes,
+                count
+            );
+        }
+        Ok(std_pos + 4)
+    })();
+
+    if let Ok(results_offset) = std_parse {
+        return Ok(&body[results_offset..]);
+    }
+
+    // Path B: Compact mock header where Results count is placed immediately after ServiceResult at offset 32
+    let compact_count = i32::from_le_bytes([body[32], body[33], body[34], body[35]]);
+    if compact_count >= 0 && compact_count as usize == expected_nodes {
+        return Ok(&body[36..]);
+    }
+
+    Err(std_parse.unwrap_err())
+}
+
+fn decode_scalar_variant(v_type: u8, r: &mut &[u8]) -> Result<OpcUaVariant> {
+    match v_type {
+        0x00 => Ok(OpcUaVariant::Null),
+        0x01 => {
+            if r.is_empty() {
+                bail!("Truncated OPC-UA Boolean Variant");
+            }
+            let b = r[0] != 0;
+            *r = &r[1..];
+            Ok(OpcUaVariant::Boolean(b))
+        }
+        0x02 => {
+            if r.is_empty() {
+                bail!("Truncated OPC-UA SByte Variant");
+            }
+            let v = r[0] as i8;
+            *r = &r[1..];
+            Ok(OpcUaVariant::SByte(v))
+        }
+        0x03 => {
+            if r.is_empty() {
+                bail!("Truncated OPC-UA Byte Variant");
+            }
+            let v = r[0];
+            *r = &r[1..];
+            Ok(OpcUaVariant::Byte(v))
+        }
+        0x04 => {
+            if r.len() < 2 {
+                bail!("Truncated OPC-UA Int16 Variant");
+            }
+            let v = i16::from_le_bytes([r[0], r[1]]);
+            *r = &r[2..];
+            Ok(OpcUaVariant::Int16(v))
+        }
+        0x05 => {
+            if r.len() < 2 {
+                bail!("Truncated OPC-UA UInt16 Variant");
+            }
+            let v = u16::from_le_bytes([r[0], r[1]]);
+            *r = &r[2..];
+            Ok(OpcUaVariant::UInt16(v))
+        }
+        0x06 => {
+            if r.len() < 4 {
+                bail!("Truncated OPC-UA Int32 Variant");
+            }
+            let v = i32::from_le_bytes([r[0], r[1], r[2], r[3]]);
+            *r = &r[4..];
+            Ok(OpcUaVariant::Int32(v))
+        }
+        0x07 => {
+            if r.len() < 4 {
+                bail!("Truncated OPC-UA UInt32 Variant");
+            }
+            let v = u32::from_le_bytes([r[0], r[1], r[2], r[3]]);
+            *r = &r[4..];
+            Ok(OpcUaVariant::UInt32(v))
+        }
+        0x08 => {
+            if r.len() < 8 {
+                bail!("Truncated OPC-UA Int64 Variant");
+            }
+            let v = i64::from_le_bytes([r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7]]);
+            *r = &r[8..];
+            Ok(OpcUaVariant::Int64(v))
+        }
+        0x09 => {
+            if r.len() < 8 {
+                bail!("Truncated OPC-UA UInt64 Variant");
+            }
+            let v = u64::from_le_bytes([r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7]]);
+            *r = &r[8..];
+            Ok(OpcUaVariant::UInt64(v))
+        }
+        0x0A => {
+            if r.len() < 4 {
+                bail!("Truncated OPC-UA Float Variant");
+            }
+            let v = f32::from_le_bytes([r[0], r[1], r[2], r[3]]);
+            *r = &r[4..];
+            Ok(OpcUaVariant::Float(v))
+        }
+        0x0B => {
+            if r.len() < 8 {
+                bail!("Truncated OPC-UA Double Variant");
+            }
+            let v = f64::from_le_bytes([r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7]]);
+            *r = &r[8..];
+            Ok(OpcUaVariant::Double(v))
+        }
+        0x0C => {
+            if r.len() < 4 {
+                bail!("Truncated OPC-UA String Variant length");
+            }
+            let len = i32::from_le_bytes([r[0], r[1], r[2], r[3]]);
+            *r = &r[4..];
+            if len < 0 {
+                Ok(OpcUaVariant::Null)
+            } else if len == 0 {
+                Ok(OpcUaVariant::String(String::new()))
+            } else {
+                let len_usize = len as usize;
+                if r.len() < len_usize {
+                    bail!("Truncated OPC-UA String Variant body");
+                }
+                let s = String::from_utf8_lossy(&r[..len_usize]).to_string();
+                *r = &r[len_usize..];
+                Ok(OpcUaVariant::String(s))
+            }
+        }
+        0x0D => {
+            if r.len() < 8 {
+                bail!("Truncated OPC-UA DateTime Variant");
+            }
+            let dt = i64::from_le_bytes([r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7]]);
+            *r = &r[8..];
+            Ok(OpcUaVariant::DateTime(dt))
+        }
+        0x0F => {
+            if r.len() < 4 {
+                bail!("Truncated OPC-UA ByteString Variant length");
+            }
+            let len = i32::from_le_bytes([r[0], r[1], r[2], r[3]]);
+            *r = &r[4..];
+            if len <= 0 {
+                Ok(OpcUaVariant::ByteString(Vec::new()))
+            } else {
+                let len_usize = len as usize;
+                if r.len() < len_usize {
+                    bail!("Truncated OPC-UA ByteString Variant body");
+                }
+                let bytes = r[..len_usize].to_vec();
+                *r = &r[len_usize..];
+                Ok(OpcUaVariant::ByteString(bytes))
+            }
+        }
+        other => bail!("Unsupported OPC-UA Variant type {:#04x}", other),
+    }
+}
+
 /// Helper function to parse DataValues out of OPC UA ReadResponse PDU.
 fn parse_read_response(
     body: &[u8],
     nodes: &[OpcUaNodeMapping],
 ) -> Result<HashMap<String, OpcUaDataValue>> {
     let mut map = HashMap::new();
-    if body.is_empty() {
+    if body.is_empty() || nodes.is_empty() {
         return Ok(map);
     }
 
-    let mut cursor = 0;
-    // Skip SequenceHeader (8 bytes) + NodeId (4 bytes) + ResponseHeader (~20 bytes)
-    if body.len() > 32 {
-        cursor = 32;
-    }
-
-    // Try finding the results array length (uint32 LE matching nodes.len())
-    let mut found_start = None;
-    for i in cursor..body.len().saturating_sub(4) {
-        let count = u32::from_le_bytes([body[i], body[i + 1], body[i + 2], body[i + 3]]);
-        if count == nodes.len() as u32 && count > 0 {
-            found_start = Some(i + 4);
-            break;
-        }
-    }
-
-    let start_idx = found_start.unwrap_or(cursor);
-    let mut r = &body[start_idx..];
+    let mut r = locate_read_results_slice(body, nodes.len())?;
 
     for m in nodes {
         if r.is_empty() {
-            map.insert(
-                m.name.clone(),
-                OpcUaDataValue {
-                    value: OpcUaVariant::Null,
-                    status_code: 0,
-                    source_timestamp: None,
-                },
+            bail!(
+                "Truncated OPC-UA ReadResponse before node '{}' DataValue",
+                m.name
             );
-            continue;
         }
 
         let mask = r[0];
         r = &r[1..];
 
         let mut variant = OpcUaVariant::Null;
-        if (mask & 0x01) != 0 && !r.is_empty() {
-            let v_type = r[0] & 0x3F;
+        if (mask & 0x01) != 0 {
+            if r.is_empty() {
+                bail!("Truncated OPC-UA Variant header for node '{}'", m.name);
+            }
+            let var_mask = r[0];
             r = &r[1..];
-            variant = match v_type {
-                0x01 => {
-                    // Boolean
-                    if !r.is_empty() {
-                        let b = r[0] != 0;
-                        r = &r[1..];
-                        OpcUaVariant::Boolean(b)
-                    } else {
-                        OpcUaVariant::Null
-                    }
+            let v_type = var_mask & 0x3F;
+            if (var_mask & 0x80) != 0 {
+                // Array Variant: read 4-byte array length and elements
+                if r.len() < 4 {
+                    bail!(
+                        "Truncated OPC-UA Variant array length for node '{}'",
+                        m.name
+                    );
                 }
-                0x04 => {
-                    // Int16
-                    if r.len() >= 2 {
-                        let v = i16::from_le_bytes([r[0], r[1]]);
-                        r = &r[2..];
-                        OpcUaVariant::Int16(v)
-                    } else {
-                        OpcUaVariant::Null
-                    }
+                let arr_len = i32::from_le_bytes([r[0], r[1], r[2], r[3]]).max(0) as usize;
+                r = &r[4..];
+                let mut last_elem = OpcUaVariant::Null;
+                for _ in 0..arr_len {
+                    last_elem = decode_scalar_variant(v_type, &mut r)?;
                 }
-                0x05 => {
-                    // UInt16
-                    if r.len() >= 2 {
-                        let v = u16::from_le_bytes([r[0], r[1]]);
-                        r = &r[2..];
-                        OpcUaVariant::UInt16(v)
-                    } else {
-                        OpcUaVariant::Null
+                if (var_mask & 0x40) != 0 {
+                    if r.len() < 4 {
+                        bail!("Truncated OPC-UA Variant array dimensions length");
                     }
-                }
-                0x06 => {
-                    // Int32
-                    if r.len() >= 4 {
-                        let v = i32::from_le_bytes([r[0], r[1], r[2], r[3]]);
-                        r = &r[4..];
-                        OpcUaVariant::Int32(v)
-                    } else {
-                        OpcUaVariant::Null
+                    let dims_len = i32::from_le_bytes([r[0], r[1], r[2], r[3]]).max(0) as usize;
+                    r = &r[4..];
+                    let dims_bytes = dims_len.saturating_mul(4);
+                    if r.len() < dims_bytes {
+                        bail!("Truncated OPC-UA Variant array dimensions");
                     }
+                    r = &r[dims_bytes..];
                 }
-                0x07 => {
-                    // UInt32
-                    if r.len() >= 4 {
-                        let v = u32::from_le_bytes([r[0], r[1], r[2], r[3]]);
-                        r = &r[4..];
-                        OpcUaVariant::UInt32(v)
-                    } else {
-                        OpcUaVariant::Null
-                    }
-                }
-                0x08 => {
-                    // Int64
-                    if r.len() >= 8 {
-                        let v =
-                            i64::from_le_bytes([r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7]]);
-                        r = &r[8..];
-                        OpcUaVariant::Int64(v)
-                    } else {
-                        OpcUaVariant::Null
-                    }
-                }
-                0x0A => {
-                    // Float
-                    if r.len() >= 4 {
-                        let v = f32::from_le_bytes([r[0], r[1], r[2], r[3]]);
-                        r = &r[4..];
-                        OpcUaVariant::Float(v)
-                    } else {
-                        OpcUaVariant::Null
-                    }
-                }
-                0x0B => {
-                    // Double
-                    if r.len() >= 8 {
-                        let v =
-                            f64::from_le_bytes([r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7]]);
-                        r = &r[8..];
-                        OpcUaVariant::Double(v)
-                    } else {
-                        OpcUaVariant::Null
-                    }
-                }
-                0x0C => {
-                    // String
-                    if r.len() >= 4 {
-                        let len = i32::from_le_bytes([r[0], r[1], r[2], r[3]]);
-                        r = &r[4..];
-                        if len > 0 && r.len() >= len as usize {
-                            let s = String::from_utf8_lossy(&r[..len as usize]).to_string();
-                            r = &r[len as usize..];
-                            OpcUaVariant::String(s)
-                        } else {
-                            OpcUaVariant::String(String::new())
-                        }
-                    } else {
-                        OpcUaVariant::Null
-                    }
-                }
-                _ => OpcUaVariant::Null,
-            };
+                variant = last_elem;
+            } else {
+                variant = decode_scalar_variant(v_type, &mut r)?;
+            }
         }
 
         let mut status = 0u32;
-        if (mask & 0x02) != 0 && r.len() >= 4 {
+        if (mask & 0x02) != 0 {
+            if r.len() < 4 {
+                bail!("Truncated OPC-UA StatusCode for node '{}'", m.name);
+            }
             status = u32::from_le_bytes([r[0], r[1], r[2], r[3]]);
             r = &r[4..];
         }
 
         let mut ts = None;
-        if (mask & 0x04) != 0 && r.len() >= 8 {
+        if (mask & 0x04) != 0 {
+            if r.len() < 8 {
+                bail!("Truncated OPC-UA SourceTimestamp for node '{}'", m.name);
+            }
             ts = Some(i64::from_le_bytes([
                 r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7],
             ]));
             r = &r[8..];
+        }
+
+        // 0x08: ServerTimestamp (DateTime, 8 bytes)
+        if (mask & 0x08) != 0 {
+            if r.len() < 8 {
+                bail!("Truncated OPC-UA ServerTimestamp for node '{}'", m.name);
+            }
+            r = &r[8..];
+        }
+
+        // 0x10: SourcePicoseconds (UInt16, 2 bytes)
+        if (mask & 0x10) != 0 {
+            if r.len() < 2 {
+                bail!("Truncated OPC-UA SourcePicoseconds for node '{}'", m.name);
+            }
+            r = &r[2..];
+        }
+
+        // 0x20: ServerPicoseconds (UInt16, 2 bytes)
+        if (mask & 0x20) != 0 {
+            if r.len() < 2 {
+                bail!("Truncated OPC-UA ServerPicoseconds for node '{}'", m.name);
+            }
+            r = &r[2..];
         }
 
         map.insert(
@@ -976,6 +1269,13 @@ pub async fn opcua_read_snapshot(config: &OpcUaConfig) -> Result<HashMap<String,
 
     let mut record = HashMap::new();
     for (name, dv) in values {
+        if (dv.status_code & 0x8000_0000) != 0 {
+            bail!(
+                "OPC-UA node '{}' returned Bad StatusCode {:#010x}",
+                name,
+                dv.status_code
+            );
+        }
         match dv.value.to_json_value(&name) {
             Ok(val) => {
                 record.insert(name.clone(), val);
@@ -1027,6 +1327,13 @@ impl OpcUaSource {
                         let mut decode_errors = Vec::new();
 
                         for (name, dv) in read_map {
+                            if (dv.status_code & 0x8000_0000) != 0 {
+                                decode_errors.push(format!(
+                                    "OPC-UA node '{}' returned Bad StatusCode {:#010x}",
+                                    name, dv.status_code
+                                ));
+                                continue;
+                            }
                             match dv.value.to_json_value(&name) {
                                 Ok(val) => {
                                     record.insert(name.clone(), val);
@@ -1254,5 +1561,58 @@ mod tests {
         let err_inf = v_inf.to_json_value("d");
         assert!(err_inf.is_err());
         assert!(err_inf.unwrap_err().contains("non-finite double"));
+    }
+
+    #[test]
+    fn test_parse_read_response_standard_header_and_both_timestamps() {
+        let nodes = vec![
+            OpcUaNodeMapping {
+                name: "temp".to_string(),
+                node_id: "ns=2;s=Temp".to_string(),
+            },
+            OpcUaNodeMapping {
+                name: "rpm".to_string(),
+                node_id: "ns=2;s=Rpm".to_string(),
+            },
+        ];
+
+        let mut body = Vec::new();
+        body.extend_from_slice(&1u32.to_le_bytes()); // TokenId
+        body.extend_from_slice(&1u32.to_le_bytes()); // SeqNum
+        body.extend_from_slice(&1u32.to_le_bytes()); // ReqId
+        body.extend_from_slice(&[0x01, 0x00]); // FourByte NodeId
+        body.extend_from_slice(&634u16.to_le_bytes()); // ReadResponse (634)
+        body.extend_from_slice(&0i64.to_le_bytes()); // Timestamp
+        body.extend_from_slice(&1u32.to_le_bytes()); // RequestHandle
+        body.extend_from_slice(&0u32.to_le_bytes()); // ServiceResult = Good (0)
+                                                     // Standard ResponseHeader trailer:
+        body.push(0x00); // ServiceDiagnostics mask = 0
+        body.extend_from_slice(&(-1i32).to_le_bytes()); // StringTable = -1
+        body.extend_from_slice(&[0x00, 0x00, 0x00]); // AdditionalHeader = null ExtensionObject
+
+        // Results array length = 2
+        body.extend_from_slice(&2i32.to_le_bytes());
+
+        // Node 1: mask = 0x01 (Value) | 0x04 (SourceTimestamp) | 0x08 (ServerTimestamp)
+        body.push(0x01 | 0x04 | 0x08);
+        body.push(0x0B); // Double
+        body.extend_from_slice(&42.5f64.to_le_bytes());
+        body.extend_from_slice(&1000i64.to_le_bytes()); // SourceTimestamp
+        body.extend_from_slice(&1005i64.to_le_bytes()); // ServerTimestamp
+
+        // Node 2: mask = 0x01 (Value) | 0x02 (StatusCode)
+        body.push(0x01 | 0x02);
+        body.push(0x06); // Int32
+        body.extend_from_slice(&1500i32.to_le_bytes());
+        body.extend_from_slice(&0u32.to_le_bytes()); // StatusCode = Good
+
+        let parsed =
+            parse_read_response(&body, &nodes).expect("should parse standard ReadResponse");
+        assert_eq!(
+            parsed.get("temp").unwrap().value,
+            OpcUaVariant::Double(42.5)
+        );
+        assert_eq!(parsed.get("temp").unwrap().source_timestamp, Some(1000));
+        assert_eq!(parsed.get("rpm").unwrap().value, OpcUaVariant::Int32(1500));
     }
 }

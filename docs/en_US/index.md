@@ -50,7 +50,7 @@ This demo needs only Docker. A built-in simulator makes the data.
 **1. Start the engine.**
 
 ```shell
-docker run -d --name rekuiper -p 9081:9081 ankurkrp/rekuiper:1.0.0-rc3
+docker run -d --name rekuiper -p 9081:9081 ankurkrp/rekuiper:1.0.0-rc4
 ```
 
 **2. Register simulated sensor readings, ten per second.**

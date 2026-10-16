@@ -6,6 +6,14 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 use tokio::net::TcpListener;
 
+/// Record count per benchmark; override with `PERF_RECORDS` (e.g. `5000000`).
+fn perf_records() -> u64 {
+    std::env::var("PERF_RECORDS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(500_000)
+}
+
 async fn spawn_test_server() -> (String, tokio::task::JoinHandle<()>, AppState) {
     let listener = TcpListener::bind("127.0.0.1:0")
         .await
@@ -62,13 +70,14 @@ async fn test_high_throughput_streaming_pipeline() {
         .unwrap();
     assert!(resp.status().is_success());
 
-    // 4. Publish 500,000 records through the bounded bus with backpressure:
+    // 4. Publish the records through the bounded bus with backpressure:
     // the sender awaits subscriber capacity, so no record is ever lost to
     // ring overwrite. The handle is resolved once outside the loop.
+    let total = perf_records();
     let tx = state.stream_bus.get_or_create("perf_stream");
     let start = std::time::Instant::now();
     let mut sent = 0u64;
-    for n in 0..500_000u64 {
+    for n in 0..total {
         let data: HashMap<String, Value> = serde_json::from_str(&format!(
             r#"{{"id": "dev_{}", "temp": {}}}"#,
             n,
@@ -83,7 +92,7 @@ async fn test_high_throughput_streaming_pipeline() {
         .expect("subscriber closed mid-benchmark");
         sent += 1;
     }
-    assert_eq!(sent, 500_000);
+    assert_eq!(sent, total);
 
     // 5. Rule status reflects every ingested record.
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
@@ -96,28 +105,29 @@ async fn test_high_throughput_streaming_pipeline() {
             .json()
             .await
             .unwrap();
-        if status["sourceRecordsInTotal"].as_u64().unwrap_or(0) >= 500_000
-            && status["sinkRecordsOutTotal"].as_u64().unwrap_or(0) >= 500_000
+        if status["sourceRecordsInTotal"].as_u64().unwrap_or(0) >= total
+            && status["sinkRecordsOutTotal"].as_u64().unwrap_or(0) >= total
         {
             break;
         }
         assert!(
             std::time::Instant::now() < deadline,
-            "timed out waiting for 500,000 ingested records"
+            "timed out waiting for {} ingested records",
+            total
         );
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
 
     // 6. Throughput report + floor assertion.
     let elapsed = start.elapsed();
-    let events_per_sec = 500_000.0 / elapsed.as_secs_f64();
+    let events_per_sec = total as f64 / elapsed.as_secs_f64();
     let floor = if cfg!(debug_assertions) {
         10_000.0
     } else {
         20_000.0
     };
     println!("=== Performance Benchmark: Streaming SQL Pipeline ===");
-    println!("Records Ingested : 500,000");
+    println!("Records Ingested : {}", total);
     println!("Elapsed Time     : {:?}", elapsed);
     println!(
         "Throughput       : {:.2} events/sec (Assert: > {:.0} eps)",
@@ -175,10 +185,11 @@ async fn test_pure_engine_throughput_prebuilt_records() {
         })
         .collect();
 
-    // 4. Ingest 500,000 records without test-thread JSON format/parse overhead.
+    // 4. Ingest the records without test-thread JSON format/parse overhead.
+    let total = perf_records();
     let tx = state.stream_bus.get_or_create("perf_pure_stream");
     let start = std::time::Instant::now();
-    for n in 0..500_000u64 {
+    for n in 0..total {
         tx.send(ring[(n & 63) as usize].clone())
             .await
             .expect("subscriber closed mid-benchmark");
@@ -195,21 +206,22 @@ async fn test_pure_engine_throughput_prebuilt_records() {
             .json()
             .await
             .unwrap();
-        if status["sourceRecordsInTotal"].as_u64().unwrap_or(0) >= 500_000
-            && status["sinkRecordsOutTotal"].as_u64().unwrap_or(0) >= 500_000
+        if status["sourceRecordsInTotal"].as_u64().unwrap_or(0) >= total
+            && status["sinkRecordsOutTotal"].as_u64().unwrap_or(0) >= total
         {
             break;
         }
         assert!(
             std::time::Instant::now() < deadline,
-            "timed out waiting for 500,000 ingested records"
+            "timed out waiting for {} ingested records",
+            total
         );
         tokio::time::sleep(std::time::Duration::from_millis(5)).await;
     }
 
     // 6. Pure Engine Throughput report + floor assertion.
     let elapsed = start.elapsed();
-    let events_per_sec = 500_000.0 / elapsed.as_secs_f64();
+    let events_per_sec = total as f64 / elapsed.as_secs_f64();
     let floor = if cfg!(debug_assertions) {
         50_000.0
     } else {
@@ -218,7 +230,7 @@ async fn test_pure_engine_throughput_prebuilt_records() {
     println!(
         "=== Performance Benchmark: Pure Engine SQL Pipeline (Zero-Parse Pre-Built Records) ==="
     );
-    println!("Records Ingested : 500,000");
+    println!("Records Ingested : {}", total);
     println!("Elapsed Time     : {:?}", elapsed);
     println!(
         "Engine Throughput: {:.2} events/sec (Assert: > {:.0} eps)",

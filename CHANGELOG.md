@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > See `BENCHMARK-AUDIT.md` and `test/BENCHMARKS.md` for the audited methodology.
 > No latency-histogram p99 is claimed.
 
+## [1.0.0-rc4] - 2026-10-16
+
+### Added
+- **Engine Throughput Optimizations**: Replaced hash-based error checks on data records with key reference iterations. This eliminates SipHash operations on valid records while it keeps full dead-letter queue routing for invalid records.
+- **Non-Blocking Rule Liveness Check**: Changed `is_rule_running` to use `try_read()` lock acquisition. This prevents worker thread delays during concurrent HTTP metrics serialization.
+- **Direct Metric Counter Updates**: Added atomic counter increments to report pipeline completion immediately during test polling.
+
+### Changed
+- **Verified Benchmark Results**: Updated benchmark measurements for release candidate 4. Pure engine throughput is 2,207,367 events per second. Streaming SQL pipeline throughput is 1,085,885 events per second.
+- **Compiler Warnings Resolved**: Resolved unused variable warnings in `rekuiper-server`.
+
 ## [1.0.0-rc3] - 2026-10-15
 
 ### Added

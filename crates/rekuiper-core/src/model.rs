@@ -136,6 +136,14 @@ impl StreamRecord {
             data: SharedMap::new(data),
         }
     }
+
+    #[inline]
+    pub fn empty_with_timestamp(timestamp: i64) -> Self {
+        Self {
+            timestamp,
+            data: SharedMap::default(),
+        }
+    }
 }
 
 /// One declared stream/table column, serialized eKuiper-style as

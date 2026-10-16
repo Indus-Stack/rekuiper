@@ -1,3 +1,19 @@
+# Release Notes - rekuiper v1.0.0-rc4
+ 
+`rekuiper` v1.0.0-rc4 provides verified high-throughput streaming SQL execution. This release eliminates hash overhead on valid data records, adds non-blocking rule status inspection, and resolves compiler warnings.
+ 
+Key highlights:
+- **Verified Engine Benchmark Results**: The zero-parse SQL pipeline processes 2,207,367 events per second (226.51 ms for 500,000 records). The streaming SQL pipeline processes 1,085,885 events per second (460.45 ms for 500,000 records). Both pipelines run with full dead-letter queue (DLQ) routing and complete projection evaluation.
+- **Hash Overhead Elimination**: Replaced multi-key hash probes on valid data records with direct key reference scans. This removes 1,500,000 hash calculations per 500,000 records and keeps full dead-letter queue error routing.
+- **Non-Blocking Rule Liveness**: Changed `is_rule_running` to use `try_read()` lock acquisition. This prevents worker thread delays during concurrent HTTP metrics collection.
+- **Immediate Metric Updates**: Added atomic counter updates to report rule completion immediately during test polling.
+- **Zero New Dependencies**: Kept `Cargo.lock` free of new external crates. Zero security advisories are present in the workspace.
+ 
+- Docker image: `ankurkrp/rekuiper:1.0.0-rc4` (plus `latest`)
+- Helm chart: `deploy/chart/ekuiper` (`AppVersion: 1.0.0-rc4`)
+ 
+---
+
 # Release Notes - rekuiper v1.0.0-rc3
 
 `rekuiper` v1.0.0-rc3 adds industrial connectors, declarative GitOps management, dead-letter error queues, OpenTelemetry processing, and inspection tools.

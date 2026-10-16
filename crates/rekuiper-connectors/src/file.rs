@@ -109,7 +109,7 @@ impl Sink for FileSink {
             }
         }
         if self.is_parquet() {
-            parquet_io::append_record_to_parquet(record, &self.path)
+            parquet_io::append_record_to_parquet_async(record.clone(), self.path.clone()).await
         } else if self.is_delimited() {
             self.send_delimited(record).await
         } else {
@@ -239,7 +239,7 @@ impl FileSource {
                 .and_then(|ext| ext.to_str())
                 .is_some_and(|ext| ext.eq_ignore_ascii_case("parquet"))
         {
-            return parquet_io::read_parquet_file(Path::new(&self.config.path));
+            return parquet_io::read_parquet_file_async(PathBuf::from(&self.config.path)).await;
         }
         let content = tokio::fs::read_to_string(&self.config.path)
             .await
@@ -334,7 +334,7 @@ impl FileSource {
                     .is_some_and(|ext| ext.eq_ignore_ascii_case("parquet"));
 
             if is_parquet {
-                match parquet_io::read_parquet_file(Path::new(&self.config.path)) {
+                match parquet_io::read_parquet_file_async(PathBuf::from(&self.config.path)).await {
                     Ok(records) => {
                         for record in records {
                             if self.tx.send(record).await.is_err() {

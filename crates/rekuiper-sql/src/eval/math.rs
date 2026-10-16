@@ -435,14 +435,8 @@ impl Evaluator {
 
     /// `rand()`: random float in `[0.0, 1.0)`.
     pub(crate) fn func_rand(_args: &[Value]) -> Value {
-        use std::time::{SystemTime, UNIX_EPOCH};
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0);
-        let pseudo = ((nanos ^ (nanos >> 17)) & 0x001f_ffff_ffff_ffff) as f64
-            / (0x0020_0000_0000_0000u64 as f64);
-        serde_json::json!(pseudo)
+        use rand::Rng;
+        serde_json::json!(rand::thread_rng().gen::<f64>())
     }
 
     /// `conv(num, from_base, to_base)`: radix conversion (2-36) rendering a

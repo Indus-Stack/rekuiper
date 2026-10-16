@@ -3,7 +3,7 @@ services:
     build:
       context: ../..
       dockerfile: deploy/docker/Dockerfile
-    image: ${REKUIPER_IMAGE:-ankurkrp/rekuiper}:${REKUIPER_VERSION:-1.0.0-rc3}
+    image: ${REKUIPER_IMAGE:-ankurkrp/rekuiper}:${REKUIPER_VERSION:-1.0.0-rc4}
     container_name: rekuiper
     ports:
       # Port 9081: Primary REST API, OpenAPI docs, and CLI management

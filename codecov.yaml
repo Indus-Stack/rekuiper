@@ -8,14 +8,10 @@ coverage:
         target: auto
         threshold: 1%
 
-fixes:
-  - "v2/::"
-  - "ekuiper/ekuiper/::ekuiper/"
-  - "/home/runner/work/ekuiper/ekuiper/::"
-
 ignore:
-  - "**/main.go"
-  - "**/**__.go"
+  - "crates/**/tests/**"
   - "**/test/**"
   - "test"
-  - "fvt"
+  - "docs"
+  - "deploy"
+  - "scripts"

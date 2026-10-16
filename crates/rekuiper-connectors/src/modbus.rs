@@ -809,7 +809,6 @@ impl ModbusClient {
         } else {
             // Unpack 16-bit registers (Big-Endian per Modbus spec)
             let mut words = Vec::with_capacity(byte_count / 2);
-            #[allow(clippy::chunks_exact_to_as_chunks)]
             for chunk in data_bytes[..byte_count].chunks_exact(2) {
                 words.push(u16::from_be_bytes([chunk[0], chunk[1]]));
             }

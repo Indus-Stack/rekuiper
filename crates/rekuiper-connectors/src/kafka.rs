@@ -1,9 +1,53 @@
 use crate::META_KEY;
 use anyhow::{Context, Result};
+use parking_lot::RwLock;
 use rekuiper_core::model::StreamRecord;
 use rekuiper_core::StreamSender;
+use rskafka::client::partition::PartitionClient;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::HashMap;
+use std::sync::{Arc, LazyLock};
+
+type KafkaPartitionKey = (Vec<String>, String, i32);
+
+static KAFKA_PARTITION_CLIENTS: LazyLock<RwLock<HashMap<KafkaPartitionKey, Arc<PartitionClient>>>> =
+    LazyLock::new(|| RwLock::new(HashMap::new()));
+
+async fn get_or_connect_partition_client(config: &KafkaConfig) -> Result<Arc<PartitionClient>> {
+    use rskafka::client::{partition::UnknownTopicHandling, ClientBuilder};
+
+    let brokers = config.broker_list();
+    if brokers.is_empty() {
+        anyhow::bail!("Kafka sink needs at least one broker");
+    }
+    let topic = config.topic.as_deref().unwrap_or("default").to_string();
+    let key: KafkaPartitionKey = (brokers.clone(), topic.clone(), config.partition);
+
+    if let Some(client) = KAFKA_PARTITION_CLIENTS.read().get(&key).cloned() {
+        return Ok(client);
+    }
+
+    let client = ClientBuilder::new(brokers)
+        .backoff_config(kafka_backoff_config())
+        .build()
+        .await?;
+    let partition_client = Arc::new(
+        client
+            .partition_client(&topic, config.partition, UnknownTopicHandling::Error)
+            .await?,
+    );
+    let mut guard = KAFKA_PARTITION_CLIENTS.write();
+    let entry = guard.entry(key).or_insert_with(|| partition_client.clone());
+    Ok(entry.clone())
+}
+
+fn evict_partition_client(config: &KafkaConfig) {
+    let brokers = config.broker_list();
+    let topic = config.topic.as_deref().unwrap_or("default").to_string();
+    let key: KafkaPartitionKey = (brokers, topic, config.partition);
+    KAFKA_PARTITION_CLIENTS.write().remove(&key);
+}
 
 /// Kafka connection settings (eKuiper kafka source/sink format).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -74,12 +118,17 @@ fn kafka_backoff_config() -> rskafka::BackoffConfig {
 }
 
 /// Kafka sink: serializes each record as JSON and produces it to the
-/// configured topic/partition, keyed by the optional `key` field.
+/// configured topic/partition using a cached [`PartitionClient`], keyed by
+/// the optional `key` field.
 pub struct KafkaSink {
     pub config: KafkaConfig,
 }
 
 impl KafkaSink {
+    pub fn new(config: KafkaConfig) -> Self {
+        Self { config }
+    }
+
     pub async fn send_raw(&self, payload: Vec<u8>, record: &StreamRecord) -> Result<()> {
         match tokio::time::timeout(
             std::time::Duration::from_secs(10),
@@ -88,31 +137,21 @@ impl KafkaSink {
         .await
         {
             Ok(res) => res,
-            Err(_) => anyhow::bail!(
-                "Kafka produce to {} timed out",
-                self.config.topic.as_deref().unwrap_or("default")
-            ),
+            Err(_) => {
+                evict_partition_client(&self.config);
+                anyhow::bail!(
+                    "Kafka produce to {} timed out",
+                    self.config.topic.as_deref().unwrap_or("default")
+                )
+            }
         }
     }
 
     async fn send_raw_inner(&self, payload: Vec<u8>, record: &StreamRecord) -> Result<()> {
-        use rskafka::client::{
-            partition::{Compression, UnknownTopicHandling},
-            ClientBuilder,
-        };
+        use rskafka::client::partition::Compression;
         use rskafka::record::Record;
-        let brokers = self.config.broker_list();
-        if brokers.is_empty() {
-            anyhow::bail!("Kafka sink needs at least one broker");
-        }
-        let client = ClientBuilder::new(brokers)
-            .backoff_config(kafka_backoff_config())
-            .build()
-            .await?;
-        let topic = self.config.topic.as_deref().unwrap_or("default");
-        let partition_client = client
-            .partition_client(topic, self.config.partition, UnknownTopicHandling::Error)
-            .await?;
+
+        let partition_client = get_or_connect_partition_client(&self.config).await?;
         let key_bytes = self
             .config
             .key
@@ -125,9 +164,13 @@ impl KafkaSink {
             headers: std::collections::BTreeMap::new(),
             timestamp: chrono::Utc::now(),
         };
-        partition_client
+        if let Err(e) = partition_client
             .produce(vec![kafka_record], Compression::NoCompression)
-            .await?;
+            .await
+        {
+            evict_partition_client(&self.config);
+            return Err(e.into());
+        }
         Ok(())
     }
 
@@ -155,7 +198,7 @@ fn value_to_key_bytes(v: &Value) -> Vec<u8> {
     }
 }
 
-/// Kafka source: consumes a topic partition from the latest offset and
+/// Kafka source: consumes a topic partition from the configured offset and
 /// forwards each JSON payload as [`StreamRecord`]s.
 pub struct KafkaSource {
     pub config: KafkaConfig,

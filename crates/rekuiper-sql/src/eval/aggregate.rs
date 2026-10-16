@@ -3,11 +3,23 @@ use crate::ast::Expr;
 use serde_json::Value;
 use std::collections::HashMap;
 
+const MAX_ACC_ITEMS: usize = 10_000;
+
 impl Evaluator {
     pub(crate) fn eval_aggregate_call(
         name: &str,
         args: &[Expr],
         records: &[HashMap<String, Value>],
+    ) -> Value {
+        Self::eval_aggregate_call_stateful(name, args, records, None, "")
+    }
+
+    pub(crate) fn eval_aggregate_call_stateful(
+        name: &str,
+        args: &[Expr],
+        records: &[HashMap<String, Value>],
+        state: Option<&RuleState>,
+        _partition_key: &str,
     ) -> Value {
         match name.to_ascii_lowercase().as_str() {
             "count" => Self::agg_count(args, records),
@@ -28,8 +40,8 @@ impl Evaluator {
             "last_value" => Self::agg_last_value(args, records),
             "merge_agg" => Self::agg_merge_agg(args, records),
             "row_number" => Self::agg_row_number(args, records),
-            "last_agg_hit_count" => Self::agg_last_agg_hit_count(records),
-            "last_agg_hit_time" => Self::agg_last_agg_hit_time(records),
+            "last_agg_hit_count" => Self::agg_last_agg_hit_count_stateful(records, state),
+            "last_agg_hit_time" => Self::agg_last_agg_hit_time_stateful(records, state),
             _ => Value::Null,
         }
     }
@@ -58,7 +70,12 @@ impl Evaluator {
         }
         match entries.iter_mut().find(|(k, _)| *k == key_str) {
             Some((_, v)) => *v = args[1].clone(),
-            None => entries.push((key_str, args[1].clone())),
+            None => {
+                if entries.len() >= MAX_ACC_ITEMS {
+                    entries.remove(0);
+                }
+                entries.push((key_str, args[1].clone()));
+            }
         }
         let out = Value::Array(
             entries
@@ -71,10 +88,8 @@ impl Evaluator {
                 })
                 .collect(),
         );
-        state
-            .state
-            .write()
-            .insert(state_key.to_string(), out.clone());
+        let mut guard = state.state.write();
+        RuleState::insert_bounded(&mut guard, state_key.to_string(), out.clone());
         out
     }
 
@@ -106,13 +121,13 @@ impl Evaluator {
                     if (take_greater && ord == std::cmp::Ordering::Greater)
                         || (!take_greater && ord == std::cmp::Ordering::Less) =>
                 {
-                    guard.insert(state_key.to_string(), val.clone());
+                    RuleState::insert_bounded(&mut guard, state_key.to_string(), val.clone());
                     val.clone()
                 }
                 _ => current,
             },
             None => {
-                guard.insert(state_key.to_string(), val.clone());
+                RuleState::insert_bounded(&mut guard, state_key.to_string(), val.clone());
                 val.clone()
             }
         }
@@ -160,10 +175,8 @@ impl Evaluator {
             let mut map = serde_json::Map::with_capacity(2);
             map.insert("compare".to_string(), compare.clone());
             map.insert("value".to_string(), val.clone());
-            state
-                .state
-                .write()
-                .insert(state_key.to_string(), Value::Object(map));
+            let mut guard = state.state.write();
+            RuleState::insert_bounded(&mut guard, state_key.to_string(), Value::Object(map));
             val.clone()
         } else {
             stored.map(|(_, v)| v).unwrap_or(Value::Null)
@@ -184,7 +197,7 @@ impl Evaluator {
             .and_then(|v| v.as_i64())
             .unwrap_or(0)
             .saturating_add(1);
-        guard.insert(state_key.to_string(), Value::from(next));
+        RuleState::insert_bounded(&mut guard, state_key.to_string(), Value::from(next));
         Value::from(next)
     }
 
@@ -208,7 +221,7 @@ impl Evaluator {
             Some(cur) => Self::eval_arith(&cur, val, ArithOp::Add),
             None => val.clone(),
         };
-        guard.insert(state_key.to_string(), next.clone());
+        RuleState::insert_bounded(&mut guard, state_key.to_string(), next.clone());
         next
     }
 
@@ -240,7 +253,7 @@ impl Evaluator {
         let mut map = serde_json::Map::with_capacity(2);
         map.insert("sum".to_string(), sum);
         map.insert("count".to_string(), Value::from(count));
-        guard.insert(state_key.to_string(), Value::Object(map));
+        RuleState::insert_bounded(&mut guard, state_key.to_string(), Value::Object(map));
         avg
     }
 
@@ -274,11 +287,16 @@ impl Evaluator {
             }
         };
         if !args[0].is_null() {
+            if list.len() >= MAX_ACC_ITEMS {
+                list.remove(0);
+            }
             list.push(args[0].clone());
-            state
-                .state
-                .write()
-                .insert(state_key.to_string(), Value::Array(list.clone()));
+            let mut guard = state.state.write();
+            RuleState::insert_bounded(
+                &mut guard,
+                state_key.to_string(),
+                Value::Array(list.clone()),
+            );
         }
         Value::Array(list)
     }
@@ -306,13 +324,53 @@ impl Evaluator {
                 .iter()
                 .any(|existing| Self::values_equal(existing, &args[0]))
         {
+            if list.len() >= MAX_ACC_ITEMS {
+                list.remove(0);
+            }
             list.push(args[0].clone());
-            state
-                .state
-                .write()
-                .insert(state_key.to_string(), Value::Array(list.clone()));
+            let mut guard = state.state.write();
+            RuleState::insert_bounded(
+                &mut guard,
+                state_key.to_string(),
+                Value::Array(list.clone()),
+            );
         }
         Value::Array(list)
+    }
+
+    pub(crate) fn agg_last_agg_hit_count_stateful(
+        records: &[HashMap<String, Value>],
+        state: Option<&RuleState>,
+    ) -> Value {
+        if let Some(s) = state {
+            let mut guard = s.state.write();
+            let key = "$$last_agg_hit_count";
+            let cur = guard.get(key).and_then(|v| v.as_i64()).unwrap_or(0);
+            RuleState::insert_bounded(&mut guard, key.to_string(), Value::from(cur + 1));
+            Value::from(cur)
+        } else {
+            Self::agg_last_agg_hit_count(records)
+        }
+    }
+
+    pub(crate) fn agg_last_agg_hit_time_stateful(
+        records: &[HashMap<String, Value>],
+        state: Option<&RuleState>,
+    ) -> Value {
+        if let Some(s) = state {
+            let mut guard = s.state.write();
+            let key = "$$last_agg_hit_time";
+            let prev = guard.get(key).and_then(|v| v.as_i64()).unwrap_or(0);
+            let window_end = records
+                .first()
+                .and_then(|r| r.get("__window_end__").or_else(|| r.get("window_end")))
+                .and_then(|v| v.as_i64())
+                .unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
+            RuleState::insert_bounded(&mut guard, key.to_string(), Value::from(window_end));
+            Value::from(prev)
+        } else {
+            Self::agg_last_agg_hit_time(records)
+        }
     }
 
     pub(crate) fn agg_last_agg_hit_count(_records: &[HashMap<String, Value>]) -> Value {

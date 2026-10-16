@@ -2273,7 +2273,7 @@ dependencies = [
 
 [[package]]
 name = "kuiperd"
-version = "1.0.0-rc2"
+version = "1.0.0-rc4"
 dependencies = [
  "anyhow",
  "clap",
@@ -3362,7 +3362,7 @@ dependencies = [
 
 [[package]]
 name = "rekuiper-cli"
-version = "1.0.0-rc2"
+version = "1.0.0-rc4"
 dependencies = [
  "anyhow",
  "clap",
@@ -3377,7 +3377,7 @@ dependencies = [
 
 [[package]]
 name = "rekuiper-conf"
-version = "1.0.0-rc2"
+version = "1.0.0-rc4"
 dependencies = [
  "anyhow",
  "serde",
@@ -3387,7 +3387,7 @@ dependencies = [
 
 [[package]]
 name = "rekuiper-connectors"
-version = "1.0.0-rc2"
+version = "1.0.0-rc4"
 dependencies = [
  "anyhow",
  "arrow",
@@ -3420,7 +3420,7 @@ dependencies = [
 
 [[package]]
 name = "rekuiper-core"
-version = "1.0.0-rc2"
+version = "1.0.0-rc4"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3442,7 +3442,7 @@ dependencies = [
 
 [[package]]
 name = "rekuiper-mcp"
-version = "1.0.0-rc2"
+version = "1.0.0-rc4"
 dependencies = [
  "anyhow",
  "clap",
@@ -3457,7 +3457,7 @@ dependencies = [
 
 [[package]]
 name = "rekuiper-server"
-version = "1.0.0-rc2"
+version = "1.0.0-rc4"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3489,7 +3489,7 @@ dependencies = [
 
 [[package]]
 name = "rekuiper-sql"
-version = "1.0.0-rc2"
+version = "1.0.0-rc4"
 dependencies = [
  "anyhow",
  "base64",

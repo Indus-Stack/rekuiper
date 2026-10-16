@@ -497,6 +497,91 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_sql_sink_and_lookup_reject_invalid_table_and_column_identifiers() {
+        // 1. Invalid table name in SqlSink
+        let bad_table_sink = super::SqlSink {
+            config: super::SqlConnectorConfig {
+                url: "sqlite::memory:".to_string(),
+                table: "readings; DROP TABLE users;--".to_string(),
+                fields: vec!["id".to_string()],
+                ..Default::default()
+            },
+        };
+        let mut data = HashMap::new();
+        data.insert("id".to_string(), json!(1));
+        assert!(bad_table_sink
+            .insert_record(&StreamRecord::new(data.clone()))
+            .await
+            .is_err());
+
+        // 2. Invalid explicit field name in SqlSink
+        let bad_field_sink = super::SqlSink {
+            config: super::SqlConnectorConfig {
+                url: "sqlite::memory:".to_string(),
+                table: "readings".to_string(),
+                fields: vec!["id".to_string(), "bad-col;DROP".to_string()],
+                ..Default::default()
+            },
+        };
+        assert!(bad_field_sink
+            .insert_record(&StreamRecord::new(data))
+            .await
+            .is_err());
+
+        // 3. Invalid table or key_col in sql_lookup_key
+        assert!(
+            super::sql_lookup_key("sqlite::memory:", "bad-table", "id", "1")
+                .await
+                .is_err()
+        );
+        assert!(
+            super::sql_lookup_key("sqlite::memory:", "readings", "bad-col", "1")
+                .await
+                .is_err()
+        );
+
+        // 4. Invalid table or index_field in SqlSource::poll_once
+        let mut bad_src = super::SqlSource::new(
+            super::SqlConnectorConfig {
+                url: "sqlite::memory:".to_string(),
+                table: "bad;table".to_string(),
+                ..Default::default()
+            },
+            rekuiper_core::StreamBus::new().get_or_create("test"),
+        );
+        assert!(bad_src.poll_once().await.is_err());
+    }
+
+    #[test]
+    fn test_validate_sql_source_identifiers() {
+        let bad_index = vec![("bad-idx".to_string(), json!(0))];
+        let cfg = super::SqlConnectorConfig {
+            table: "valid_table".to_string(),
+            ..Default::default()
+        };
+        let err = super::validate_sql_source_identifiers(&cfg, &bad_index).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("Invalid SQL index field identifier 'bad-idx'"));
+
+        let good_index = vec![("idx_val".to_string(), json!(0))];
+        let bad_table_cfg = super::SqlConnectorConfig {
+            table: "bad table".to_string(),
+            ..Default::default()
+        };
+        let err = super::validate_sql_source_identifiers(&bad_table_cfg, &good_index).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("Invalid SQL table identifier 'bad table'"));
+
+        let good_cfg = super::SqlConnectorConfig {
+            table: "good_table".to_string(),
+            ..Default::default()
+        };
+        assert!(super::validate_sql_source_identifiers(&good_cfg, &good_index).is_ok());
+    }
+
+    #[tokio::test]
     async fn test_pg_paths_fail_loudly_without_broker() {
         // D8: postgres URLs must attempt a real connection and surface the
         // error, never silently report Ok with zero rows written or read.

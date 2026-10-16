@@ -133,9 +133,8 @@ impl Evaluator {
     /// `object_construct(k1, v1, k2, v2, ...)`. Keys are stringified via
     /// [`Self::to_string_always`]; pairs with `Null` values are omitted
     /// (eKuiper parity); an odd argument count yields `Null`.
-    #[allow(clippy::manual_is_multiple_of)]
     pub(crate) fn func_object_construct(args: &[Value]) -> Value {
-        if args.len() % 2 != 0 {
+        if args.len() & 1 != 0 {
             return Value::Null;
         }
         let mut map = serde_json::Map::with_capacity(args.len() / 2);

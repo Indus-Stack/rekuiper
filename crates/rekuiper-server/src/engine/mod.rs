@@ -388,6 +388,48 @@ pub(crate) fn resolve_proto_message(
         })
 }
 
+pub(crate) fn compute_union_field_mask(
+    rules_map: &HashMap<String, Option<std::collections::HashSet<String>>>,
+) -> Option<JsonFieldMask> {
+    if rules_map.is_empty() {
+        return None;
+    }
+    let mut union_set = std::collections::HashSet::new();
+    for rule_fields_opt in rules_map.values() {
+        let fields = rule_fields_opt.as_ref()?;
+        union_set.extend(fields.iter().cloned());
+    }
+    if union_set.is_empty() {
+        None
+    } else {
+        Some(JsonFieldMask::new(union_set))
+    }
+}
+
+pub(crate) fn update_stream_field_mask(
+    state: &AppState,
+    stream_name: &str,
+    rule_id: &str,
+    field_mask: Option<JsonFieldMask>,
+) -> Arc<parking_lot::RwLock<Option<JsonFieldMask>>> {
+    let rule_fields = field_mask.map(|m| (*m.fields).clone());
+    let combined = {
+        let mut map = state.stream_rule_field_masks.write();
+        let rules_map = map.entry(stream_name.to_string()).or_default();
+        rules_map.insert(rule_id.to_string(), rule_fields);
+        compute_union_field_mask(rules_map)
+    };
+    let mut masks_guard = state.stream_field_masks.write();
+    if let Some(flag) = masks_guard.get(stream_name) {
+        *flag.write() = combined;
+        flag.clone()
+    } else {
+        let flag = Arc::new(parking_lot::RwLock::new(combined));
+        masks_guard.insert(stream_name.to_string(), flag.clone());
+        flag
+    }
+}
+
 pub(crate) fn cancel_stream_sources(state: &AppState, stream_name: &str) {
     if let Some(cancels) = state.stream_source_cancels.write().remove(stream_name) {
         for tx in cancels {
@@ -397,6 +439,7 @@ pub(crate) fn cancel_stream_sources(state: &AppState, stream_name: &str) {
     state.stream_active_rules.write().remove(stream_name);
     state.stream_attach_meta.write().remove(stream_name);
     state.stream_field_masks.write().remove(stream_name);
+    state.stream_rule_field_masks.write().remove(stream_name);
     state
         .http_push_endpoints
         .write()
@@ -726,7 +769,7 @@ pub(crate) fn bootstrap_stream_sources(
     needs_meta: bool,
     field_mask: Option<JsonFieldMask>,
 ) {
-    // If this rule is already registered for this stream, avoid duplicate registration.
+    // If this rule is already registered for this stream, update its mask and meta flag.
     if let Some(rules) = state.stream_active_rules.read().get(stream_name) {
         if rules.contains(rule_id) {
             if needs_meta {
@@ -734,12 +777,13 @@ pub(crate) fn bootstrap_stream_sources(
                     flag.store(true, std::sync::atomic::Ordering::Relaxed);
                 }
             }
+            update_stream_field_mask(state, stream_name, rule_id, field_mask);
             return;
         }
     }
 
     // If a source task is already running for this stream, register this rule as
-    // another consumer of the stream and do not spawn a duplicate source.
+    // another consumer and union its required fields into the stream's JsonFieldMask.
     if state.stream_source_cancels.read().contains_key(stream_name) {
         state
             .stream_active_rules
@@ -758,10 +802,7 @@ pub(crate) fn bootstrap_stream_sources(
                 flag.store(true, std::sync::atomic::Ordering::Relaxed);
             }
         }
-        // Second rule attached to shared stream: clear field mask so all fields are decoded for both rules.
-        if let Some(flag) = state.stream_field_masks.read().get(stream_name) {
-            *flag.write() = None;
-        }
+        update_stream_field_mask(state, stream_name, rule_id, field_mask);
         let (rule_cancel_tx, _rule_cancel_rx) = tokio::sync::watch::channel(false);
         state
             .source_cancels
@@ -771,6 +812,8 @@ pub(crate) fn bootstrap_stream_sources(
             .push(rule_cancel_tx);
         return;
     }
+
+    let mask_flag = update_stream_field_mask(state, stream_name, rule_id, field_mask);
 
     // HTTP Push source streams listen on the configured HTTP data server endpoint.
     if let Some(endpoint) =
@@ -809,16 +852,11 @@ pub(crate) fn bootstrap_stream_sources(
     ) {
         let meta_flag = Arc::new(std::sync::atomic::AtomicBool::new(needs_meta));
         config.attach_meta = needs_meta;
-        config.field_mask = field_mask.clone();
-        let mask_flag = Arc::new(parking_lot::RwLock::new(field_mask));
+        config.field_mask = mask_flag.read().clone();
         state
             .stream_attach_meta
             .write()
             .insert(stream_name.to_string(), meta_flag.clone());
-        state
-            .stream_field_masks
-            .write()
-            .insert(stream_name.to_string(), mask_flag.clone());
 
         let stream_tx = state.stream_bus.get_or_create(stream_name);
         let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
@@ -1077,13 +1115,19 @@ pub(crate) fn bootstrap_stream_sources(
 /// Start source producers for a rule: its FROM source plus every joined
 /// source (streams fan in messages; table targets bootstrap their source listeners).
 pub(crate) fn bootstrap_rule_sources(state: &AppState, rule_id: &str, select_stmt: &SelectStmt) {
-    // Metadata costs an allocation per message: attach it only for rules
-    // that read it.
     let needs_meta = stmt_called_functions(select_stmt)
         .iter()
         .any(|f| f.eq_ignore_ascii_case("meta") || f.eq_ignore_ascii_case("mqtt"));
     let (has_wildcard, idents) = stmt_referenced_fields(select_stmt);
-    let field_mask = extract_required_fields_from_expr_names(has_wildcard, &idents, None);
+    let mask_for_stream = |stream_name: &str| {
+        let ts_field = state.stream_manager.get_stream(stream_name).and_then(|s| {
+            s.options
+                .iter()
+                .find(|(k, _)| k.eq_ignore_ascii_case("TIMESTAMP"))
+                .map(|(_, v)| v.clone())
+        });
+        extract_required_fields_from_expr_names(has_wildcard, &idents, ts_field.as_deref())
+    };
     if state.table_manager.get_table(&select_stmt.from).is_some() {
         bootstrap_table_source(state, &select_stmt.from);
     } else {
@@ -1092,14 +1136,20 @@ pub(crate) fn bootstrap_rule_sources(state: &AppState, rule_id: &str, select_stm
             rule_id,
             &select_stmt.from,
             needs_meta,
-            field_mask.clone(),
+            mask_for_stream(&select_stmt.from),
         );
     }
     for join in &select_stmt.joins {
         if state.table_manager.get_table(&join.target).is_some() {
             bootstrap_table_source(state, &join.target);
         } else if join.target != select_stmt.from {
-            bootstrap_stream_sources(state, rule_id, &join.target, needs_meta, field_mask.clone());
+            bootstrap_stream_sources(
+                state,
+                rule_id,
+                &join.target,
+                needs_meta,
+                mask_for_stream(&join.target),
+            );
         }
     }
 }
@@ -1509,21 +1559,37 @@ pub(crate) fn cancel_rule_source(state: &AppState, rule_id: &str) {
         let mut source_cancels = state.stream_source_cancels.write();
         let mut attach_meta = state.stream_attach_meta.write();
         for stream in streams {
+            let mut should_cleanup = false;
             if let Some(rules) = active_rules.get_mut(&stream) {
                 rules.remove(rule_id);
-                if rules.is_empty() {
-                    active_rules.remove(&stream);
-                    attach_meta.remove(&stream);
-                    state.stream_field_masks.write().remove(&stream);
-                    if let Some(cancels) = source_cancels.remove(&stream) {
-                        for tx in cancels {
-                            let _ = tx.send(true);
-                        }
+                should_cleanup = rules.is_empty();
+            }
+            if should_cleanup {
+                active_rules.remove(&stream);
+                attach_meta.remove(&stream);
+                state.stream_field_masks.write().remove(&stream);
+                state.stream_rule_field_masks.write().remove(&stream);
+                if let Some(cancels) = source_cancels.remove(&stream) {
+                    for tx in cancels {
+                        let _ = tx.send(true);
                     }
-                    state
-                        .http_push_endpoints
-                        .write()
-                        .retain(|_, ep| ep.stream_name != stream);
+                }
+                state
+                    .http_push_endpoints
+                    .write()
+                    .retain(|_, ep| ep.stream_name != stream);
+            } else {
+                let recomputed = {
+                    let mut rule_masks = state.stream_rule_field_masks.write();
+                    if let Some(rm) = rule_masks.get_mut(&stream) {
+                        rm.remove(rule_id);
+                        compute_union_field_mask(rm)
+                    } else {
+                        None
+                    }
+                };
+                if let Some(flag) = state.stream_field_masks.read().get(&stream) {
+                    *flag.write() = recomputed;
                 }
             }
         }
@@ -1619,6 +1685,43 @@ pub(crate) fn extract_bus_predicate(
     }
 }
 
+pub(crate) fn is_bus_predicate_exhaustive(expr: &rekuiper_sql::Expr) -> bool {
+    use rekuiper_sql::{BinaryOperator, Expr};
+    match expr {
+        Expr::BinaryOp {
+            left,
+            op: BinaryOperator::And,
+            right,
+        } => is_bus_predicate_exhaustive(left) && is_bus_predicate_exhaustive(right),
+        Expr::BinaryOp { left, op, right } => {
+            if *op == BinaryOperator::Eq {
+                if let (Expr::Call { name, args }, Expr::Literal(Value::String(_))) =
+                    (left.as_ref(), right.as_ref())
+                {
+                    if (name.eq_ignore_ascii_case("meta") || name.eq_ignore_ascii_case("mqtt"))
+                        && args.len() == 1
+                        && matches!(&args[0], Expr::Identifier(id) if id.eq_ignore_ascii_case("topic"))
+                    {
+                        return true;
+                    }
+                }
+            }
+            let (Expr::Identifier(_), Expr::Literal(lit)) = (left.as_ref(), right.as_ref()) else {
+                return false;
+            };
+            match op {
+                BinaryOperator::Eq | BinaryOperator::Neq => true,
+                BinaryOperator::Gt
+                | BinaryOperator::Gte
+                | BinaryOperator::Lt
+                | BinaryOperator::Lte => lit.as_f64().is_some(),
+                _ => false,
+            }
+        }
+        _ => false,
+    }
+}
+
 /// Subscribe to the rule's source stream and spawn its window-aware
 /// execution task, registering the join handle on the rule manager.
 #[allow(clippy::too_many_arguments)]
@@ -1688,17 +1791,22 @@ pub(crate) fn spawn_rule_task(
         source_configs,
     );
 
-    let bus_pred = if !rekuiper_sql::Evaluator::stmt_has_analytic(&select_stmt)
-        && !is_event_time
-        && !send_error
-    {
-        select_stmt
-            .where_clause
-            .as_ref()
-            .and_then(extract_bus_predicate)
-    } else {
-        None
-    };
+    let (bus_pred, _bus_pred_exhaustive) =
+        if !rekuiper_sql::Evaluator::stmt_has_analytic(&select_stmt)
+            && !is_event_time
+            && !send_error
+        {
+            match select_stmt.where_clause.as_ref() {
+                Some(w) => {
+                    let pred = extract_bus_predicate(w);
+                    let exhaustive = pred.is_some() && is_bus_predicate_exhaustive(w);
+                    (pred, exhaustive)
+                }
+                None => (None, false),
+            }
+        } else {
+            (None, false)
+        };
 
     let rx = match bus_pred {
         Some(pred) => {
@@ -1845,6 +1953,10 @@ pub(crate) fn spawn_rule_task(
     let sink_counters = rule_manager
         .rule_counters(&rule_id)
         .unwrap_or_else(|| Arc::new(RuleCounters::default()));
+    let all_nop = prepared
+        .iter()
+        .zip(&cache_configs)
+        .all(|(action, cache_cfg)| matches!(action, PreparedAction::Nop) && cache_cfg.is_none());
     tokio::spawn(async move {
         use std::collections::HashMap as Map;
         use std::sync::atomic::Ordering::Relaxed;
@@ -1869,9 +1981,6 @@ pub(crate) fn spawn_rule_task(
         let file_actions = runtimes
             .iter()
             .any(|rt| matches!(&rt.action, PreparedAction::File { .. }));
-        let all_nop = runtimes
-            .iter()
-            .all(|rt| matches!(&rt.action, PreparedAction::Nop) && rt.cache.is_none());
         let mut pending_file_records: u64 = 0;
         let mut last_live = tokio::time::Instant::now();
         loop {
@@ -3590,6 +3699,84 @@ mod tests {
                 bad
             );
         }
+    }
+
+    #[test]
+    fn jwt_verify_rejects_non_rs256_alg() {
+        use base64::Engine;
+        let engine = base64::engine::general_purpose::URL_SAFE_NO_PAD;
+        let none_hdr = engine.encode(r#"{"alg":"none","typ":"JWT"}"#);
+        let hs256_hdr = engine.encode(r#"{"alg":"HS256","typ":"JWT"}"#);
+        let payload = engine.encode(r#"{"sub":"tester"}"#);
+        let sig = engine.encode(b"fakesig");
+        let key = test_key_der();
+
+        let tok_none = format!("{}.{}.{}", none_hdr, payload, sig);
+        assert_eq!(verify_jwt_raw(&tok_none, &key), Err("Invalid JWT format\n"));
+
+        let tok_hs256 = format!("{}.{}.{}", hs256_hdr, payload, sig);
+        assert_eq!(
+            verify_jwt_raw(&tok_hs256, &key),
+            Err("Invalid JWT format\n")
+        );
+    }
+
+    #[test]
+    fn js_udf_bounds_infinite_loops_and_recursion() {
+        use crate::state::{compile_and_register_js_udf, JavascriptUdf};
+
+        // 1. Top-level infinite loop is rejected at registration time
+        let bad_top_level = JavascriptUdf {
+            id: "top_loop".to_string(),
+            description: String::new(),
+            script: "while (true) {} function top_loop(x) { return x; }".to_string(),
+            is_agg: false,
+        };
+        assert!(compile_and_register_js_udf(&bad_top_level).is_err());
+
+        // 2. Function-level infinite loop is aborted cleanly at invocation time and returns Null
+        let fn_loop = JavascriptUdf {
+            id: "infloop_udf".to_string(),
+            description: String::new(),
+            script: "function infloop_udf(x) { while (true) {} return x; }".to_string(),
+            is_agg: false,
+        };
+        compile_and_register_js_udf(&fn_loop).expect("syntax is valid");
+        let out =
+            rekuiper_core::plugin::get_global_udf_registry().call_udf("infloop_udf", &[json!(1)]);
+        assert_eq!(out, Some(Value::Null));
+
+        // 3. Unbounded recursion is aborted cleanly at invocation time and returns Null
+        let fn_rec = JavascriptUdf {
+            id: "infrec_udf".to_string(),
+            description: String::new(),
+            script: "function infrec_udf(x) { return infrec_udf(x + 1); }".to_string(),
+            is_agg: false,
+        };
+        compile_and_register_js_udf(&fn_rec).expect("syntax is valid");
+        let out_rec =
+            rekuiper_core::plugin::get_global_udf_registry().call_udf("infrec_udf", &[json!(1)]);
+        assert_eq!(out_rec, Some(Value::Null));
+    }
+
+    #[test]
+    fn test_load_auth_public_key_reloads_on_file_modification() {
+        use crate::state::load_auth_public_key;
+        let temp_dir = std::env::temp_dir().join(format!("test_auth_key_{}", uuid::Uuid::new_v4()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let key_path = temp_dir.join("test_pub.pem");
+        std::fs::write(&key_path, TEST_RSA_PUBLIC_PEM).expect("write key");
+
+        std::env::set_var("REKUIPER_AUTH_PUBLIC_KEY_FILE", key_path.to_str().unwrap());
+
+        let loaded1 = load_auth_public_key().expect("initial load");
+        assert_eq!(loaded1, test_key_der());
+
+        let loaded2 = load_auth_public_key().expect("cached load");
+        assert_eq!(loaded2, test_key_der());
+
+        std::env::remove_var("REKUIPER_AUTH_PUBLIC_KEY_FILE");
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 
     #[test]
