@@ -8,7 +8,7 @@ rekuiper deploys directly onto automotive telematics control units (T-Box), in-v
 
 In automotive and charging architectures, rekuiper operates as a local streaming coprocessor:
 
-![Connected Vehicles and EV Charging Architecture](../public/diagrams/iov_architecture.svg)
+![Connected Vehicles and EV Charging Architecture](/diagrams/iov_architecture.svg)
 
 ## Technical Advantages on Vehicle Hardware
 

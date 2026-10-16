@@ -8,7 +8,7 @@ rekuiper executes directly on industrial PCs, embedded gateways, and edge server
 
 In modern industrial architectures, rekuiper operates as the local compute engine between plant controllers and enterprise systems:
 
-![Industrial IoT Edge Architecture](../public/diagrams/iiot_architecture.svg)
+![Industrial IoT Edge Architecture](/diagrams/iiot_architecture.svg)
 
 ## Key Industrial Capabilities
 

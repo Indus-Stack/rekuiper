@@ -1,0 +1,168 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 400" width="100%" height="100%">
+  <defs>
+    <!-- Soft Drop Shadow -->
+    <filter id="softShadowEC" x="-5%" y="-5%" width="110%" height="115%">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#0f172a" flood-opacity="0.06" />
+    </filter>
+
+    <!-- Header Gradients (Subtle Light Tints) -->
+    <linearGradient id="amberHdrLightEC" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#fffbeb" />
+      <stop offset="100%" stop-color="#fef3c7" />
+    </linearGradient>
+    <linearGradient id="orangeHdrLightEC" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#fff7ed" />
+      <stop offset="100%" stop-color="#ffedd5" />
+    </linearGradient>
+    <linearGradient id="blueHdrLightEC" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#eff6ff" />
+      <stop offset="100%" stop-color="#dbeafe" />
+    </linearGradient>
+
+    <!-- Stream Connectors -->
+    <linearGradient id="flowEC1Light" gradientUnits="userSpaceOnUse" x1="230" y1="0" x2="310" y2="0">
+      <stop offset="0%" stop-color="#d97706" />
+      <stop offset="100%" stop-color="#ea580c" />
+    </linearGradient>
+    <linearGradient id="flowEC2Light" gradientUnits="userSpaceOnUse" x1="650" y1="0" x2="730" y2="0">
+      <stop offset="0%" stop-color="#ea580c" />
+      <stop offset="100%" stop-color="#0284c7" />
+    </linearGradient>
+
+    <!-- Markers -->
+    <marker id="arrO_ECLight" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+      <path d="M 1 1 L 7 4 L 1 7 Z" fill="#ea580c" />
+    </marker>
+    <marker id="arrB_ECLight" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+      <path d="M 1 1 L 7 4 L 1 7 Z" fill="#0284c7" />
+    </marker>
+    <marker id="arrG_ECLight" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+      <path d="M 1 1 L 7 4 L 1 7 Z" fill="#059669" />
+    </marker>
+  </defs>
+
+  <style>
+    .cat-hdr { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
+    .card-title { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; font-size: 12.5px; font-weight: 600; fill: #0f172a; }
+    .card-sub { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; font-size: 11px; font-weight: 400; fill: #64748b; }
+    .badge-pill { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 10px; font-weight: 600; }
+  </style>
+
+  <!-- Container Canvas -->
+  <rect x="2" y="2" width="956" height="396" rx="14" fill="#f8fafc" stroke="#e2e8f0" stroke-width="1.5" />
+
+  <!-- SECTION 1: Industrial Edge Sources (Left) -->
+  <g transform="translate(24, 20)">
+    <rect x="0" y="0" width="210" height="30" rx="6" fill="url(#amberHdrLightEC)" stroke="#fde68a" stroke-width="1" />
+    <circle cx="14" cy="15" r="4" fill="#d97706" />
+    <text x="26" y="19" fill="#92400e" class="cat-hdr">1. Edge Sources</text>
+
+    <!-- Source Items -->
+    <g transform="translate(0, 42)" filter="url(#softShadowEC)">
+      <rect x="0" y="0" width="210" height="58" rx="8" fill="#ffffff" stroke="#e2e8f0" stroke-width="1" />
+      <text x="14" y="24" class="card-title">PLCs &amp; Industrial RTUs</text>
+      <text x="14" y="42" class="card-sub">Modbus TCP/RTU · OPC-UA</text>
+    </g>
+
+    <g transform="translate(0, 112)" filter="url(#softShadowEC)">
+      <rect x="0" y="0" width="210" height="58" rx="8" fill="#ffffff" stroke="#e2e8f0" stroke-width="1" />
+      <text x="14" y="24" class="card-title">Sensor Telemetry Feeds</text>
+      <text x="14" y="42" class="card-sub">Vibration · Temp · Pressure</text>
+    </g>
+
+    <g transform="translate(0, 182)" filter="url(#softShadowEC)">
+      <rect x="0" y="0" width="210" height="58" rx="8" fill="#ffffff" stroke="#e2e8f0" stroke-width="1" />
+      <text x="14" y="24" class="card-title">Local Edge Brokers</text>
+      <text x="14" y="42" class="card-sub">Mosquitto · NanoMQ (MQTT)</text>
+    </g>
+
+    <g transform="translate(0, 252)" filter="url(#softShadowEC)">
+      <rect x="0" y="0" width="210" height="58" rx="8" fill="#ffffff" stroke="#e2e8f0" stroke-width="1" />
+      <text x="14" y="24" class="card-title">Gateway IPC &amp; Sockets</text>
+      <text x="14" y="42" class="card-sub">HTTP Push · Unix Sockets</text>
+    </g>
+  </g>
+
+  <!-- Connectors Left -> Middle -->
+  <path d="M 234 90 L 310 120" stroke="url(#flowEC1Light)" stroke-width="2" fill="none" marker-end="url(#arrO_ECLight)" />
+  <path d="M 234 160 L 310 160" stroke="url(#flowEC1Light)" stroke-width="2" fill="none" marker-end="url(#arrO_ECLight)" />
+  <path d="M 234 230 L 310 200" stroke="url(#flowEC1Light)" stroke-width="2" fill="none" marker-end="url(#arrO_ECLight)" />
+
+  <!-- SECTION 2: rekuiper Edge Gateway (Middle Engine) -->
+  <g transform="translate(310, 20)">
+    <rect x="0" y="0" width="340" height="356" rx="12" fill="#ffffff" stroke="#ea580c" stroke-width="1.8" filter="url(#softShadowEC)" />
+    
+    <rect x="12" y="12" width="316" height="32" rx="6" fill="url(#orangeHdrLightEC)" stroke="#fed7aa" stroke-width="1" />
+    <circle cx="28" cy="28" r="5" fill="#ea580c" />
+    <text x="40" y="32" fill="#c2410c" class="cat-hdr">2. rekuiper Edge Gateway</text>
+    <rect x="234" y="19" width="86" height="18" rx="4" fill="#ea580c" />
+    <text x="277" y="32" fill="#ffffff" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif" font-size="9" font-weight="700" text-anchor="middle">RUST ENGINE</text>
+
+    <!-- Sub-blocks inside rekuiper -->
+    <g transform="translate(12, 54)">
+      <rect x="0" y="0" width="316" height="66" rx="6" fill="#f8fafc" stroke="#e2e8f0" stroke-width="1" />
+      <text x="12" y="20" fill="#0284c7" font-size="12" font-weight="700">Sub-Millisecond SQL Processing</text>
+      <text x="12" y="38" fill="#475569" font-size="11">Filter anomalies · Tumbling / Sliding Windows</text>
+      <text x="12" y="54" fill="#15803d" font-size="10.5" font-weight="600">1,000,000+ events/s per core</text>
+    </g>
+
+    <g transform="translate(12, 128)">
+      <rect x="0" y="0" width="316" height="64" rx="6" fill="#f8fafc" stroke="#e2e8f0" stroke-width="1" />
+      <text x="12" y="20" fill="#c2410c" font-size="12" font-weight="700">Immediate Edge Action &amp; Safety Control</text>
+      <text x="12" y="38" fill="#475569" font-size="11">&lt;1 ms local shutdown alerts to GPIO / Modbus coils</text>
+      <text x="12" y="52" fill="#64748b" font-size="10">Zero cloud latency dependency for critical safety</text>
+    </g>
+
+    <g transform="translate(12, 200)">
+      <rect x="0" y="0" width="316" height="64" rx="6" fill="#f8fafc" stroke="#e2e8f0" stroke-width="1" />
+      <text x="12" y="20" fill="#047857" font-size="12" font-weight="700">90%+ WAN Bandwidth Compression</text>
+      <text x="12" y="38" fill="#475569" font-size="11">Downsample 1000 Hz raw telemetry to 1s summary stats</text>
+      <text x="12" y="52" fill="#64748b" font-size="10">Transmit only significant anomalies across cellular/WAN</text>
+    </g>
+
+    <g transform="translate(12, 272)">
+      <rect x="0" y="0" width="316" height="60" rx="6" fill="#f8fafc" stroke="#e2e8f0" stroke-width="1" />
+      <text x="12" y="20" fill="#6d28d9" font-size="12" font-weight="700">Resilient Offline Sink Cache &amp; DLQ</text>
+      <text x="12" y="38" fill="#475569" font-size="11">Disk-backed FIFO queue during intermittent WAN outages</text>
+      <text x="12" y="52" fill="#64748b" font-size="10">Zero data loss on link reconnection</text>
+    </g>
+  </g>
+
+  <!-- Connectors Middle -> Right (WAN / TLS) -->
+  <path d="M 650 140 L 728 100" stroke="url(#flowEC2Light)" stroke-width="2" fill="none" marker-end="url(#arrB_ECLight)" />
+  <path d="M 650 230 L 728 190" stroke="url(#flowEC2Light)" stroke-width="2" fill="none" marker-end="url(#arrB_ECLight)" />
+  <path d="M 728 290 L 650 290" stroke="#059669" stroke-width="1.8" stroke-dasharray="4,3" fill="none" marker-end="url(#arrG_ECLight)" />
+  <text x="658" y="306" fill="#047857" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif" font-size="9.5" font-weight="700">Remote Rules / Config</text>
+
+  <!-- SECTION 3: Central Cloud & Enterprise (Right) -->
+  <g transform="translate(726, 20)">
+    <rect x="0" y="0" width="210" height="30" rx="6" fill="url(#blueHdrLightEC)" stroke="#bfdbfe" stroke-width="1" />
+    <circle cx="14" cy="15" r="4" fill="#0284c7" />
+    <text x="26" y="19" fill="#1e40af" class="cat-hdr">3. Central Cloud</text>
+
+    <!-- Cloud Destinations -->
+    <g transform="translate(0, 42)" filter="url(#softShadowEC)">
+      <rect x="0" y="0" width="210" height="58" rx="8" fill="#ffffff" stroke="#e2e8f0" stroke-width="1" />
+      <text x="14" y="24" class="card-title">Enterprise Message Hub</text>
+      <text x="14" y="42" class="card-sub">Apache Kafka · EMQX · RabbitMQ</text>
+    </g>
+
+    <g transform="translate(0, 112)" filter="url(#softShadowEC)">
+      <rect x="0" y="0" width="210" height="58" rx="8" fill="#ffffff" stroke="#e2e8f0" stroke-width="1" />
+      <text x="14" y="24" class="card-title">Cloud IoT Platforms</text>
+      <text x="14" y="42" class="card-sub">AWS IoT Core · Azure IoT Hub</text>
+    </g>
+
+    <g transform="translate(0, 182)" filter="url(#softShadowEC)">
+      <rect x="0" y="0" width="210" height="58" rx="8" fill="#ffffff" stroke="#e2e8f0" stroke-width="1" />
+      <text x="14" y="24" class="card-title">Time-Series Analytics</text>
+      <text x="14" y="42" class="card-sub">TimescaleDB · InfluxDB · ClickHouse</text>
+    </g>
+
+    <g transform="translate(0, 252)" filter="url(#softShadowEC)">
+      <rect x="0" y="0" width="210" height="58" rx="8" fill="#ffffff" stroke="#e2e8f0" stroke-width="1" />
+      <text x="14" y="24" class="card-title">Fleet Orchestration</text>
+      <text x="14" y="42" class="card-sub">Declarative GitOps &amp; MCP Push</text>
+    </g>
+  </g>
+</svg>

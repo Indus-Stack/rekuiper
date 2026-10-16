@@ -12,7 +12,7 @@ An industrial sensor transmits temperature and humidity readings each second. Th
 3. Calculate a moving average across a sliding 10-second window.
 4. Transmit alerts to a local log or target MQTT broker without buffering or latency spikes.
 
-![Getting Started Pipeline](../public/diagrams/getting_started_pipeline.svg)
+![Getting Started Pipeline](/diagrams/getting_started_pipeline.svg)
 
 ---
 
@@ -26,7 +26,7 @@ docker run -d \
   -p 9081:9081 \
   -p 20498:20498 \
   -p 20499:20499 \
-  ankurkrp/rekuiper:1.0.0-rc4
+  indusstack/rekuiper:1.0.0-rc4
 ```
 
 Verify that the server operates:
@@ -126,11 +126,125 @@ Query was submit successfully.
 
 ## 5. Method C: Management with the Interactive OpenAPI / Swagger UI
 
-rekuiper embeds an OpenAPI Swagger interface on port `9081` to manage streams, test rules, and query engine metrics interactively from any web browser:
+rekuiper embeds two visual management interfaces on HTTP port `9081`:
+1. **Interactive OpenAPI 3.0 / Swagger UI Explorer**: Explore endpoints, inspect JSON schemas, validate rules, and execute live API calls.
+2. **Embedded Web Management Console (`/ui`)**: Monitor engine throughput, manage active rules, and inspect Dead-Letter Queue (DLQ) errors in real time.
 
-1. Open `http://localhost:9081/` in your browser.
-2. Browse available REST API endpoints for streams, rules, schemas, and configurations.
-3. Use the interactive "Try it out" feature to execute requests directly against the running engine.
+---
+
+### 5.1 The OpenAPI 3.0 / Swagger UI Explorer
+
+rekuiper serves an authoritative OpenAPI 3.0.3 specification at `/openapi.json`. It is 100% wire-compatible with the eKuiper REST contract. You can explore the API directly in any browser using the embedded Swagger UI or your favorite API client (such as Postman or Insomnia).
+
+![rekuiper Interactive OpenAPI / Swagger UI](/screenshots/openapi_swagger_ui.png)
+
+#### Key OpenAPI Endpoint Groups
+
+| Category | Endpoint | Method | Description |
+| :--- | :--- | :--- | :--- |
+| **Streams** | `/streams` | `GET`, `POST` | List all defined streams or create a new stream definition. |
+| **Streams** | `/streams/{name}` | `GET`, `DELETE` | Retrieve schema details or delete an existing stream. |
+| **Streams** | `/streams/{name}/data` | `POST` | Push JSON telemetry directly into the stream data plane. |
+| **Rules** | `/rules` | `GET`, `POST` | List all streaming rules or deploy a new pipeline. |
+| **Rules** | `/rules/validate` | `POST` | Validate rule SQL syntax and plan before creation. |
+| **Rules** | `/rules/{name}/status` | `GET` | Retrieve real-time counters, throughput rates, and error tallies. |
+| **Rules** | `/rules/{name}/topo` | `GET` | Retrieve DAG execution topology graph (operators, sources, sinks). |
+| **Rules** | `/rules/{name}/dlq` | `GET`, `DELETE` | Inspect or clear 5-stage Dead-Letter Queue poison-pill envelopes. |
+| **System** | `/ping` | `GET` | Health check endpoint returning HTTP `200 pong`. |
+| **System** | `/` | `GET` | Host statistics, memory usage, CPU load, and engine uptime. |
+| **Metrics** | `/metrics` | `GET` | Prometheus exposition format for external scraping. |
+
+---
+
+### 5.2 Step-by-Step OpenAPI Workflow
+
+Follow these steps to explore and test the engine using the interactive OpenAPI interface:
+
+#### Step 1: Open the OpenAPI Explorer
+Open the interface in your browser:
+```text
+http://localhost:9081/api-docs
+```
+*Note: If you use Swagger Editor or Postman, import the raw OpenAPI JSON specification directly from `http://localhost:9081/openapi.json`.*
+
+#### Step 2: Validate a Rule with Dry-Run Execution
+You can validate SQL syntax and operator plans before you deploy a pipeline:
+1. Locate the **Rules** category.
+2. Click **`POST /rules/validate`** to expand the endpoint card.
+3. Click the **Try it out** button in the upper right corner.
+4. Paste your pipeline JSON definition into the **Request body** editor:
+   ```json
+   {
+     "id": "temp_monitor_rule",
+     "sql": "SELECT avg(temperature) AS avg_temp, max(temperature) AS max_temp FROM sensor_stream GROUP BY TumblingWindow(ss, 10) HAVING avg_temp > 30.0",
+     "actions": [
+       {
+         "log": {}
+       }
+     ]
+   }
+   ```
+5. Click the blue **Execute** button.
+6. Verify the response. rekuiper returns HTTP `200 OK` with plan details in under 1 millisecond:
+   ```json
+   {
+     "valid": true,
+     "message": "Rule SQL syntax and sink configuration validated successfully.",
+     "plan": {
+       "sources": ["sensor_stream"],
+       "window": "TumblingWindow(ss, 10)",
+       "has_aggregate": true
+     }
+   }
+   ```
+
+#### Step 3: Monitor Live Rule Metrics
+1. Expand the **`GET /rules/{name}/status`** endpoint.
+2. Click **Try it out**.
+3. Enter `temp_monitor_rule` in the `name` field.
+4. Click **Execute**. The engine returns live processing statistics:
+   - `source_sensor_stream_0_records_in_total`
+   - `source_sensor_stream_0_records_out_total`
+   - `op_window_0_records_in_total`
+   - `sink_log_0_records_in_total`
+
+#### Step 4: Inspect the Execution Topology
+1. Expand the **`GET /rules/{name}/topo`** endpoint.
+2. Enter the rule name and click **Execute**.
+3. Inspect the directed acyclic graph (DAG) structure. It shows all operator dependencies from source to sink.
+
+---
+
+### 5.3 Embedded Web Management Console
+
+In addition to the OpenAPI Explorer, rekuiper includes a zero-dependency HTML5 Web Management Console at `http://localhost:9081/ui`.
+
+![rekuiper Web Management Console Dashboard](/screenshots/web_console_dashboard.png)
+
+#### Web Console Capabilities
+
+1. **Fleet KPI Strip**:
+   - **Active Rules**: Percentage and count of running vs stopped pipelines.
+   - **Ingress / Egress Throughput**: Real-time processed records per second (1,000,000+ events/s per core).
+   - **Topology Catalog**: Total declared streams and lookup tables.
+   - **Sink Retry Cache**: Memory-buffered egress events awaiting transport reconnection.
+   - **DLQ Poison Pills**: Count of rejected records across all active rules.
+
+2. **Rule Execution Pipelines Table**:
+   - Inspect status badges (`Running`, `Stopped`, `Halted`).
+   - Monitor cumulative records in, records out, and filtered counts.
+   - Execute lifecycle commands (`Stop`, `Restart`, `Reset State`) with a single click.
+
+3. **Slide-Over Rule Inspector**:
+   - Click any rule in the table to open its slide-over drawer.
+   - Review the complete pipeline SQL definition and configured sink actions.
+   - Inspect the **5-Stage DLQ Breakdown** (`Codec`, `Schema`, `SqlEval`, `DataTemplate`, `SinkDelivery`).
+   - Inspect poison-pill envelopes to diagnose malformed payloads without restarting the engine.
+
+4. **OTLP & Data Plane Test Console**:
+   - Navigate to the **OTLP & Data Test Console** tab.
+   - Inject simulated payloads into `/v1/metrics`, `/v1/logs`, or HTTP streams directly from your browser.
+   - Test end-to-end edge streaming without starting external MQTT brokers.
 
 ---
 
@@ -139,5 +253,5 @@ rekuiper embeds an OpenAPI Swagger interface on port `9081` to manage streams, t
 - Read the [SQL Reference and Built-in Functions](../sqls/overview.md).
 - Configure [Persistent Connections](../guide/connections/overview.md).
 - Read [Production Deployment and Configuration](../installation.md).
-- Connect to [AI Agents through MCP](https://github.com/ankur-paan/rekuiper/tree/main/crates/rekuiper-mcp).
+- Connect to [AI Agents through MCP](https://github.com/Indus-Stack/rekuiper/tree/main/crates/rekuiper-mcp).
 

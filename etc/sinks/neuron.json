@@ -8,7 +8,7 @@
       "website": "https://i-dacs.com"
     },
     "helpUrl": {
-      "en_US": "https://github.com/ankur-paan/rekuiper/blob/main/docs/en_US/guide/sinks/builtin/neuron.html",
+      "en_US": "https://github.com/Indus-Stack/rekuiper/blob/main/docs/en_US/guide/sinks/builtin/neuron.html",
       "zh_CN": "https://github.com/lf-edge/ekuiper/blob/master/docs/zh_CN/rules/sinks/builtin/"
     },
     "description": {

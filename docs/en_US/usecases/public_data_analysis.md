@@ -113,7 +113,11 @@ Content-Type: application/json
 
 Apply the Haversine distance formula based on GPS coordinates:
 
-![Haversine Formula](./resources/formula.png)
+$$
+d = 2r \arcsin \left( \sqrt{\sin^2\left(\frac{\Delta \phi}{2}\right) + \cos(\phi_1)\cos(\phi_2)\sin^2\left(\frac{\Delta \lambda}{2}\right)} \right)
+$$
+
+Where $r = 6378.138\text{ km}$ is Earth's mean radius, $\phi_1, \phi_2$ are latitude coordinates in radians, and $\Delta \phi = \phi_2 - \phi_1$, $\Delta \lambda = \lambda_2 - \lambda_1$.
 
 Create a rule to calculate trip distance in meters and elapsed duration in seconds:
 
@@ -203,4 +207,4 @@ client.close()
 
 The resulting chart visualizes user travel velocities:
 
-<img src="./resources/public-data-chart.png" alt="Public Data Velocity Chart" style="zoom:80%;" />
+![Public Data Velocity Chart](/diagrams/public_data_velocity_chart.svg)

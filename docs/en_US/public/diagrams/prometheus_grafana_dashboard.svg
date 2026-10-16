@@ -1,0 +1,122 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 940 380" width="100%" height="100%">
+  <defs>
+    <filter id="dashSh" x="-5%" y="-5%" width="110%" height="115%">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#0f172a" flood-opacity="0.06" />
+    </filter>
+  </defs>
+  <style>
+    .hdr-title { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; font-size: 13.5px; font-weight: 700; fill: #0f172a; }
+    .card-title { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; font-size: 12px; font-weight: 600; fill: #0f172a; }
+    .metric-val { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 20px; font-weight: 700; }
+    .chart-lbl { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 10px; fill: #64748b; }
+    .legend-txt { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 10px; font-weight: 600; }
+  </style>
+
+  <!-- Container Box -->
+  <rect x="2" y="2" width="936" height="376" rx="14" fill="#f8fafc" stroke="#e2e8f0" stroke-width="1.5" />
+
+  <!-- Top Dashboard Bar -->
+  <rect x="16" y="14" width="908" height="36" rx="6" fill="#ffffff" stroke="#e2e8f0" stroke-width="1" />
+  <circle cx="34" cy="32" r="5" fill="#ea580c" />
+  <text x="48" y="36" class="hdr-title">rekuiper · Prometheus &amp; Grafana Observability Dashboard</text>
+  <rect x="750" y="22" width="160" height="20" rx="4" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1" />
+  <text x="830" y="36" font-family="ui-monospace" font-size="10" font-weight="600" fill="#475569" text-anchor="middle">INSTANCE: localhost:9081</text>
+
+  <!-- Stat Card 1: Active Rules -->
+  <g transform="translate(16, 62)" filter="url(#dashSh)">
+    <rect x="0" y="0" width="212" height="66" rx="8" fill="#ffffff" stroke="#e2e8f0" stroke-width="1" />
+    <text x="14" y="22" class="card-title">Running Rules</text>
+    <text x="14" y="48" class="metric-val" fill="#16a34a">14 <tspan font-size="12" font-weight="500" fill="#64748b">/ 14</tspan></text>
+    <circle cx="188" cy="33" r="8" fill="#dcfce7" />
+    <circle cx="188" cy="33" r="4" fill="#16a34a" />
+  </g>
+
+  <!-- Stat Card 2: Ingestion Rate -->
+  <g transform="translate(248, 62)" filter="url(#dashSh)">
+    <rect x="0" y="0" width="212" height="66" rx="8" fill="#ffffff" stroke="#e2e8f0" stroke-width="1" />
+    <text x="14" y="22" class="card-title">Ingest Throughput</text>
+    <text x="14" y="48" class="metric-val" fill="#0284c7">224,500 <tspan font-size="11" font-weight="500" fill="#64748b">msg/s</tspan></text>
+  </g>
+
+  <!-- Stat Card 3: P99 Latency -->
+  <g transform="translate(480, 62)" filter="url(#dashSh)">
+    <rect x="0" y="0" width="212" height="66" rx="8" fill="#ffffff" stroke="#e2e8f0" stroke-width="1" />
+    <text x="14" y="22" class="card-title">Pipeline P99 Latency</text>
+    <text x="14" y="48" class="metric-val" fill="#ea580c">0.38 <tspan font-size="11" font-weight="500" fill="#64748b">ms</tspan></text>
+  </g>
+
+  <!-- Stat Card 4: Memory RSS -->
+  <g transform="translate(712, 62)" filter="url(#dashSh)">
+    <rect x="0" y="0" width="212" height="66" rx="8" fill="#ffffff" stroke="#e2e8f0" stroke-width="1" />
+    <text x="14" y="22" class="card-title">Engine Memory (RSS)</text>
+    <text x="14" y="48" class="metric-val" fill="#7c3aed">24.2 <tspan font-size="11" font-weight="500" fill="#64748b">MB</tspan></text>
+  </g>
+
+  <!-- Chart Panel 1: Rule Status Over Time (kuiper_rule_status) -->
+  <g transform="translate(16, 142)" filter="url(#dashSh)">
+    <rect x="0" y="0" width="444" height="218" rx="8" fill="#ffffff" stroke="#e2e8f0" stroke-width="1" />
+    <text x="16" y="24" class="card-title">Rule Health State (kuiper_rule_status)</text>
+    
+    <!-- Legend -->
+    <circle cx="300" cy="20" r="3.5" fill="#16a34a" />
+    <text x="310" y="23" class="legend-txt" fill="#16a34a">rule_pressure (1.0)</text>
+    <circle cx="390" cy="20" r="3.5" fill="#0284c7" />
+    <text x="400" y="23" class="legend-txt" fill="#0284c7">rule_vibe (1.0)</text>
+
+    <!-- Grid lines -->
+    <g transform="translate(40, 42)">
+      <line x1="0" y1="0" x2="380" y2="0" stroke="#f1f5f9" stroke-width="1" />
+      <text x="-8" y="4" class="chart-lbl" text-anchor="end">1.0</text>
+      <line x1="0" y1="50" x2="380" y2="50" stroke="#f1f5f9" stroke-width="1" />
+      <text x="-8" y="54" class="chart-lbl" text-anchor="end">0.5</text>
+      <line x1="0" y1="100" x2="380" y2="100" stroke="#f1f5f9" stroke-width="1" />
+      <text x="-8" y="104" class="chart-lbl" text-anchor="end">0.0</text>
+      <line x1="0" y1="130" x2="380" y2="130" stroke="#cbd5e1" stroke-width="1" />
+      <text x="-8" y="134" class="chart-lbl" text-anchor="end">-1.0</text>
+
+      <!-- Status Line (Constant at 1.0 = Running) -->
+      <line x1="0" y1="0" x2="380" y2="0" stroke="#16a34a" stroke-width="2.5" />
+      <line x1="0" y1="4" x2="380" y2="4" stroke="#0284c7" stroke-width="2" />
+
+      <!-- X-axis timestamps -->
+      <text x="0" y="150" class="chart-lbl">14:20:00</text>
+      <text x="95" y="150" class="chart-lbl">14:21:00</text>
+      <text x="190" y="150" class="chart-lbl">14:22:00</text>
+      <text x="285" y="150" class="chart-lbl">14:23:00</text>
+      <text x="380" y="150" class="chart-lbl" text-anchor="end">14:24:00</text>
+    </g>
+  </g>
+
+  <!-- Chart Panel 2: Total Records Emitted Over Time (kuiper_sink_records_out_total) -->
+  <g transform="translate(480, 142)" filter="url(#dashSh)">
+    <rect x="0" y="0" width="444" height="218" rx="8" fill="#ffffff" stroke="#e2e8f0" stroke-width="1" />
+    <text x="16" y="24" class="card-title">Processed Records (kuiper_sink_records_out_total)</text>
+
+    <!-- Legend -->
+    <circle cx="340" cy="20" r="3.5" fill="#ea580c" />
+    <text x="350" y="23" class="legend-txt" fill="#ea580c">sink_records_out</text>
+
+    <!-- Grid lines -->
+    <g transform="translate(50, 42)">
+      <line x1="0" y1="0" x2="370" y2="0" stroke="#f1f5f9" stroke-width="1" />
+      <text x="-8" y="4" class="chart-lbl" text-anchor="end">10M</text>
+      <line x1="0" y1="45" x2="370" y2="45" stroke="#f1f5f9" stroke-width="1" />
+      <text x="-8" y="49" class="chart-lbl" text-anchor="end">7.5M</text>
+      <line x1="0" y1="90" x2="370" y2="90" stroke="#f1f5f9" stroke-width="1" />
+      <text x="-8" y="94" class="chart-lbl" text-anchor="end">5M</text>
+      <line x1="0" y1="135" x2="370" y2="135" stroke="#cbd5e1" stroke-width="1" />
+      <text x="-8" y="139" class="chart-lbl" text-anchor="end">0</text>
+
+      <!-- Shaded Area & Line -->
+      <path d="M 0 135 L 90 102 L 180 70 L 270 36 L 370 2 L 370 135 Z" fill="#ffedd5" opacity="0.4" />
+      <path d="M 0 135 L 90 102 L 180 70 L 270 36 L 370 2" fill="none" stroke="#ea580c" stroke-width="2.5" />
+
+      <!-- X-axis timestamps -->
+      <text x="0" y="150" class="chart-lbl">14:20:00</text>
+      <text x="92" y="150" class="chart-lbl">14:21:00</text>
+      <text x="185" y="150" class="chart-lbl">14:22:00</text>
+      <text x="277" y="150" class="chart-lbl">14:23:00</text>
+      <text x="370" y="150" class="chart-lbl" text-anchor="end">14:24:00</text>
+    </g>
+  </g>
+</svg>

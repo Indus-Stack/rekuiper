@@ -1,0 +1,121 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 240" width="100%" height="100%">
+  <defs>
+
+    <filter id="winShadow" x="-5%" y="-5%" width="110%" height="115%">
+      <feDropShadow dx="0" dy="1.5" stdDeviation="2.5" flood-color="#0f172a" flood-opacity="0.05" />
+    </filter>
+    <marker id="axisArr" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+      <path d="M 1 1 L 7 4 L 1 7 Z" fill="#334155" />
+    </marker>
+    <marker id="emitArr" markerWidth="6" markerHeight="6" refX="4" refY="3" orient="auto">
+      <path d="M 1 1 L 5 3 L 1 5 Z" fill="#ea580c" />
+    </marker>
+
+  </defs>
+  <style>
+
+    .hdr-title { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; font-size: 13.5px; font-weight: 700; fill: #0f172a; }
+    .hdr-sql { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 11px; font-weight: 600; fill: #ea580c; }
+    .axis-label { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; font-size: 11px; font-weight: 600; fill: #475569; }
+    .axis-tick { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 10px; font-weight: 600; fill: #64748b; }
+    .win-anno { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; font-size: 10.5px; font-weight: 600; fill: #15803d; }
+    .event-txt { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 11px; font-weight: 700; fill: #ffffff; text-anchor: middle; dominant-baseline: central; }
+    .emit-txt { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; font-size: 10px; font-weight: 600; fill: #ea580c; }
+    .timeout-txt { font-family: ui-monospace, monospace; font-size: 10px; font-weight: 600; fill: #b45309; text-anchor: middle; }
+
+  </style>
+
+  <!-- Container Box -->
+  <rect x="2" y="2" width="916" height="236" rx="14" fill="#f8fafc" stroke="#e2e8f0" stroke-width="1.5" />
+
+  <!-- Header Bar -->
+  <rect x="16" y="14" width="888" height="32" rx="6" fill="#ffffff" stroke="#e2e8f0" stroke-width="1" />
+  <circle cx="32" cy="30" r="4" fill="#ea580c" />
+  <text x="44" y="34" class="hdr-title">Tumbling Count Window (Fixed Batch Size of 5 Events)</text>
+  <text x="888" y="34" class="hdr-sql" text-anchor="end">COUNTWINDOW(5)</text>
+
+  <line x1="80" y1="75" x2="840" y2="75" stroke="#334155" stroke-width="2" marker-end="url(#axisArr)" />
+  <text x="850" y="79" class="axis-label">Stream</text>
+  <g transform="translate(105.0, 44)">
+    <rect width="22" height="22" rx="4" fill="#0284c7" stroke="#0369a1" stroke-width="1" />
+    <text x="11" y="11" class="event-txt">1</text>
+  </g>
+  <line x1="116.0" y1="71" x2="116.0" y2="79" stroke="#64748b" stroke-width="1" />
+  <g transform="translate(177.0, 44)">
+    <rect width="22" height="22" rx="4" fill="#0284c7" stroke="#0369a1" stroke-width="1" />
+    <text x="11" y="11" class="event-txt">2</text>
+  </g>
+  <line x1="188.0" y1="71" x2="188.0" y2="79" stroke="#64748b" stroke-width="1" />
+  <g transform="translate(249.0, 44)">
+    <rect width="22" height="22" rx="4" fill="#0284c7" stroke="#0369a1" stroke-width="1" />
+    <text x="11" y="11" class="event-txt">3</text>
+  </g>
+  <line x1="260.0" y1="71" x2="260.0" y2="79" stroke="#64748b" stroke-width="1" />
+  <g transform="translate(321.0, 44)">
+    <rect width="22" height="22" rx="4" fill="#0284c7" stroke="#0369a1" stroke-width="1" />
+    <text x="11" y="11" class="event-txt">4</text>
+  </g>
+  <line x1="332.0" y1="71" x2="332.0" y2="79" stroke="#64748b" stroke-width="1" />
+  <g transform="translate(393.0, 44)">
+    <rect width="22" height="22" rx="4" fill="#0284c7" stroke="#0369a1" stroke-width="1" />
+    <text x="11" y="11" class="event-txt">5</text>
+  </g>
+  <line x1="404.0" y1="71" x2="404.0" y2="79" stroke="#64748b" stroke-width="1" />
+  <g transform="translate(465.0, 44)">
+    <rect width="22" height="22" rx="4" fill="#0284c7" stroke="#0369a1" stroke-width="1" />
+    <text x="11" y="11" class="event-txt">6</text>
+  </g>
+  <line x1="476.0" y1="71" x2="476.0" y2="79" stroke="#64748b" stroke-width="1" />
+  <g transform="translate(537.0, 44)">
+    <rect width="22" height="22" rx="4" fill="#0284c7" stroke="#0369a1" stroke-width="1" />
+    <text x="11" y="11" class="event-txt">7</text>
+  </g>
+  <line x1="548.0" y1="71" x2="548.0" y2="79" stroke="#64748b" stroke-width="1" />
+  <g transform="translate(609.0, 44)">
+    <rect width="22" height="22" rx="4" fill="#0284c7" stroke="#0369a1" stroke-width="1" />
+    <text x="11" y="11" class="event-txt">8</text>
+  </g>
+  <line x1="620.0" y1="71" x2="620.0" y2="79" stroke="#64748b" stroke-width="1" />
+  <g transform="translate(681.0, 44)">
+    <rect width="22" height="22" rx="4" fill="#0284c7" stroke="#0369a1" stroke-width="1" />
+    <text x="11" y="11" class="event-txt">9</text>
+  </g>
+  <line x1="692.0" y1="71" x2="692.0" y2="79" stroke="#64748b" stroke-width="1" />
+  <g transform="translate(753.0, 44)">
+    <rect width="22" height="22" rx="4" fill="#0284c7" stroke="#0369a1" stroke-width="1" />
+    <text x="11" y="11" class="event-txt">10</text>
+  </g>
+  <line x1="764.0" y1="71" x2="764.0" y2="79" stroke="#64748b" stroke-width="1" />
+  <g transform="translate(90, 115)" filter="url(#winShadow)">
+    <rect width="340.0" height="34" rx="7" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.5" />
+    <g transform="translate(100.0, 5)">
+      <rect x="0" y="0" width="24" height="24" rx="4" fill="#0284c7" />
+      <text x="12" y="12" class="event-txt">1</text>
+      <rect x="28" y="0" width="24" height="24" rx="4" fill="#0284c7" />
+      <text x="40" y="12" class="event-txt">2</text>
+      <rect x="56" y="0" width="24" height="24" rx="4" fill="#0284c7" />
+      <text x="68" y="12" class="event-txt">3</text>
+      <rect x="84" y="0" width="24" height="24" rx="4" fill="#0284c7" />
+      <text x="96" y="12" class="event-txt">4</text>
+      <rect x="112" y="0" width="24" height="24" rx="4" fill="#0284c7" />
+      <text x="124" y="12" class="event-txt">5</text>
+    </g>
+  </g>
+  <line x1="430.0" y1="132" x2="446.0" y2="132" stroke="#ea580c" stroke-width="1.5" marker-end="url(#emitArr)" />
+  <g transform="translate(450.0, 165)" filter="url(#winShadow)">
+    <rect width="340.0" height="34" rx="7" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.5" />
+    <g transform="translate(100.0, 5)">
+      <rect x="0" y="0" width="24" height="24" rx="4" fill="#0284c7" />
+      <text x="12" y="12" class="event-txt">6</text>
+      <rect x="28" y="0" width="24" height="24" rx="4" fill="#0284c7" />
+      <text x="40" y="12" class="event-txt">7</text>
+      <rect x="56" y="0" width="24" height="24" rx="4" fill="#0284c7" />
+      <text x="68" y="12" class="event-txt">8</text>
+      <rect x="84" y="0" width="24" height="24" rx="4" fill="#0284c7" />
+      <text x="96" y="12" class="event-txt">9</text>
+      <rect x="112" y="0" width="24" height="24" rx="4" fill="#0284c7" />
+      <text x="124" y="12" class="event-txt">10</text>
+    </g>
+  </g>
+  <line x1="790.0" y1="182" x2="806.0" y2="182" stroke="#ea580c" stroke-width="1.5" marker-end="url(#emitArr)" />
+</svg>

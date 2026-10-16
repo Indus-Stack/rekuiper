@@ -164,8 +164,8 @@ Query the Trace ID list from the REST API and open the trace in Jaeger:
 
 - For payload `{"a": 10}`, the trace spans traverse through `decoder`, `project`, `transform_op`, and the final `sink_log` action:
 
-![Passed Trace Spans](../../resources/traced.png)
+![Passed Trace Spans](/diagrams/trace_passed.svg)
 
 - For payload `{"a": 4}`, the trace spans terminate at the filter operator, confirming that the record was dropped as expected:
 
-![Dropped Trace Spans](../../resources/un_traced.png)
+![Dropped Trace Spans](/diagrams/trace_dropped.svg)

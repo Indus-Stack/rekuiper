@@ -8,8 +8,8 @@
 			"website": "https://i-dacs.com"
 		},
 		"helpUrl": {
-			"en_US": "https://github.com/ankur-paan/rekuiper/blob/main/docs/en_US/guide/sources/builtin/mqtt.html",
-			"zh_CN": "https://github.com/ankur-paan/rekuiper/blob/main/docs/zh_CN/guide/sources/builtin/mqtt.html"
+			"en_US": "https://github.com/Indus-Stack/rekuiper/blob/main/docs/en_US/guide/sources/builtin/mqtt.html",
+			"zh_CN": "https://github.com/Indus-Stack/rekuiper/blob/main/docs/zh_CN/guide/sources/builtin/mqtt.html"
 		},
 		"description": {
 			"en_US": "subscribe the message from MQTT broker and feed into the processing pipeline.",

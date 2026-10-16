@@ -9,8 +9,8 @@ Key highlights:
 - **Immediate Metric Updates**: Added atomic counter updates to report rule completion immediately during test polling.
 - **Zero New Dependencies**: Kept `Cargo.lock` free of new external crates. Zero security advisories are present in the workspace.
  
-- Docker image: `ankurkrp/rekuiper:1.0.0-rc4` (plus `latest`)
-- Helm chart: `deploy/chart/ekuiper` (`AppVersion: 1.0.0-rc4`)
+- Docker image: `indusstack/rekuiper:1.0.0-rc4` (plus `latest`)
+- Helm chart: `deploy/chart/rekuiper` (`AppVersion: 1.0.0-rc4`)
  
 ---
 

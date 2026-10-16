@@ -1,0 +1,71 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 740 320" width="100%" height="100%">
+  <defs>
+    <filter id="barSh" x="-5%" y="-5%" width="110%" height="115%">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#0f172a" flood-opacity="0.06" />
+    </filter>
+  </defs>
+  <style>
+    .title { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; font-size: 13.5px; font-weight: 700; fill: #0f172a; }
+    .sub { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; font-size: 11px; fill: #64748b; }
+    .tick { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 10px; fill: #64748b; }
+    .user-lbl { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 11px; font-weight: 600; fill: #334155; }
+    .val-lbl { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 11px; font-weight: 700; fill: #0284c7; }
+  </style>
+
+  <!-- Container -->
+  <rect x="2" y="2" width="736" height="316" rx="12" fill="#f8fafc" stroke="#e2e8f0" stroke-width="1.5" />
+
+  <!-- Title Bar -->
+  <rect x="16" y="14" width="708" height="34" rx="6" fill="#ffffff" stroke="#e2e8f0" stroke-width="1" />
+  <circle cx="32" cy="31" r="4" fill="#0284c7" />
+  <text x="44" y="35" class="title">Trip Velocity by User ID</text>
+  <text x="708" y="35" class="sub" text-anchor="end">Source: InfluxDB · Metric: Velocity (m/s)</text>
+
+  <!-- Chart Area -->
+  <g transform="translate(60, 65)">
+    <!-- Y Axis Grid -->
+    <line x1="0" y1="0" x2="620" y2="0" stroke="#f1f5f9" stroke-width="1" />
+    <text x="-10" y="4" class="tick" text-anchor="end">3.0 m/s</text>
+
+    <line x1="0" y1="45" x2="620" y2="45" stroke="#f1f5f9" stroke-width="1" />
+    <text x="-10" y="49" class="tick" text-anchor="end">2.25 m/s</text>
+
+    <line x1="0" y1="90" x2="620" y2="90" stroke="#f1f5f9" stroke-width="1" />
+    <text x="-10" y="94" class="tick" text-anchor="end">1.50 m/s</text>
+
+    <line x1="0" y1="135" x2="620" y2="135" stroke="#f1f5f9" stroke-width="1" />
+    <text x="-10" y="139" class="tick" text-anchor="end">0.75 m/s</text>
+
+    <line x1="0" y1="180" x2="620" y2="180" stroke="#cbd5e1" stroke-width="1.5" />
+    <text x="-10" y="184" class="tick" text-anchor="end">0.0 m/s</text>
+
+    <!-- Bars: scale is 180px for 3.0 m/s (60px per 1.0 m/s) -->
+    <!-- Bar 1: user 9fb2d1e, val=2.38 m/s -> height = 2.38 * 60 = 142.8, y = 180 - 142.8 = 37.2 -->
+    <g transform="translate(45, 0)">
+      <rect x="0" y="37.2" width="76" height="142.8" rx="5" fill="#38bdf8" stroke="#0284c7" stroke-width="1.2" filter="url(#barSh)" />
+      <text x="38" y="28" class="val-lbl" text-anchor="middle">2.38</text>
+      <text x="38" y="202" class="user-lbl" text-anchor="middle">9fb2d1e</text>
+    </g>
+
+    <!-- Bar 2: user 1184eec, val=1.55 m/s -> height = 1.55 * 60 = 93.0, y = 180 - 93 = 87.0 -->
+    <g transform="translate(195, 0)">
+      <rect x="0" y="87" width="76" height="93" rx="5" fill="#bae6fd" stroke="#0284c7" stroke-width="1.2" filter="url(#barSh)" />
+      <text x="38" y="78" class="val-lbl" text-anchor="middle">1.55</text>
+      <text x="38" y="202" class="user-lbl" text-anchor="middle">1184eec</text>
+    </g>
+
+    <!-- Bar 3: user 30a457b, val=2.52 m/s -> height = 2.52 * 60 = 151.2, y = 180 - 151.2 = 28.8 -->
+    <g transform="translate(345, 0)">
+      <rect x="0" y="28.8" width="76" height="151.2" rx="5" fill="#0284c7" stroke="#0369a1" stroke-width="1.2" filter="url(#barSh)" />
+      <text x="38" y="20" class="val-lbl" text-anchor="middle">2.52</text>
+      <text x="38" y="202" class="user-lbl" text-anchor="middle">30a457b</text>
+    </g>
+
+    <!-- Bar 4: user bee78cd, val=0.28 m/s -> height = 0.28 * 60 = 16.8, y = 180 - 16.8 = 163.2 -->
+    <g transform="translate(495, 0)">
+      <rect x="0" y="163.2" width="76" height="16.8" rx="4" fill="#e0f2fe" stroke="#0284c7" stroke-width="1.2" filter="url(#barSh)" />
+      <text x="38" y="154" class="val-lbl" text-anchor="middle">0.28</text>
+      <text x="38" y="202" class="user-lbl" text-anchor="middle">bee78cd</text>
+    </g>
+  </g>
+</svg>

@@ -1758,6 +1758,8 @@ pub async fn rule_cpu_usage(State(state): State<AppState>) -> impl IntoResponse 
 pub struct TagMatchQuery {
     tags: Option<String>,
     keys: Option<String>,
+    tag: Option<String>,
+    key: Option<String>,
 }
 
 pub fn extract_tags_from_value(val: &Value) -> Vec<String> {
@@ -1772,6 +1774,12 @@ pub fn extract_tags_from_value(val: &Value) -> Vec<String> {
             .iter()
             .filter_map(|s| s.as_str().map(|s| s.to_string()))
             .collect();
+    }
+    if let Some(s) = val.get("tag").and_then(|t| t.as_str()) {
+        return vec![s.to_string()];
+    }
+    if let Some(s) = val.get("key").and_then(|t| t.as_str()) {
+        return vec![s.to_string()];
     }
     if let Some(arr) = val.as_array() {
         return arr
@@ -1862,7 +1870,7 @@ pub async fn rule_tags_match(
     body: Bytes,
 ) -> Response {
     let mut search_tags: HashSet<String> = HashSet::new();
-    if let Some(t_str) = query.tags.or(query.keys) {
+    if let Some(t_str) = query.tags.or(query.keys).or(query.tag).or(query.key) {
         for t in t_str.split(',') {
             let trimmed = t.trim();
             if !trimmed.is_empty() {

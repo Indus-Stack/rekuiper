@@ -186,10 +186,10 @@ jobs:
         id: docker_meta
         shell: bash
         run: |
-          DOCKER_USER="${{ secrets.DOCKERHUB_USERNAME }}"
+          DOCKER_ORG="indusstack"
           RAW_TAG="${{ inputs.tag || github.ref_name }}"
           VERSION_TAG="${RAW_TAG#v}"
-          echo "tags=${DOCKER_USER}/rekuiper:${VERSION_TAG},${DOCKER_USER}/rekuiper:latest" >> $GITHUB_OUTPUT
+          echo "tags=${DOCKER_ORG}/rekuiper:${VERSION_TAG},${DOCKER_ORG}/rekuiper:latest" >> $GITHUB_OUTPUT
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v6
@@ -205,7 +205,7 @@ jobs:
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
-          repository: ${{ secrets.DOCKERHUB_USERNAME }}/rekuiper
+          repository: indusstack/rekuiper
           readme-filepath: ./deploy/docker/README.md
           short-description: "Lightweight, ultra-fast streaming SQL engine for edge & IoT in Rust"
 

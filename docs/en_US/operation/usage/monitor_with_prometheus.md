@@ -127,11 +127,11 @@ When running in Docker, enable metrics using environment variables:
 
 ```shell
 docker run -d \
-  --name ekuiper \
+  --name rekuiper \
   -p 9081:9081 \
   -p 20499:20499 \
   -e KUIPER__BASIC__PROMETHEUS=true \
-  ankurkrp/rekuiper:1.0.0-rc4
+  indusstack/rekuiper:1.0.0-rc4
 ```
 
 The server exposes raw Prometheus metrics on `http://localhost:20499/metrics`.
@@ -159,35 +159,15 @@ Start the Prometheus service:
 ./prometheus --config.file=prometheus.yml
 ```
 
-Open `http://localhost:9090` to query metrics and generate line graphs:
-
-![Prometheus Console](./resources/prom.png)
+Open `http://localhost:9090` in your browser to inspect raw counters, verify scrape targets under **Status > Targets**, and query real-time rule telemetry expressions.
 
 ## Visualize Metrics with Grafana
 
-rekuiper provides preconfigured Grafana dashboard templates.
+rekuiper metrics integrate seamlessly into Grafana for real-time operational monitoring and alerting.
 
-1. In Grafana, configure Prometheus as an active data source targeting `http://<rekuiper-host>:9081/metrics` (or port `20499`).
-2. In Grafana, select **Dashboards > Import**.
+1. **Add Data Source**: In Grafana, navigate to **Connections > Data Sources > Prometheus**, set the URL to `http://<rekuiper-host>:9081/metrics` (or dedicated port `20499`), and click **Save & Test**.
+2. **Import Dashboard**: Navigate to **Dashboards > New > Import**.
+3. **Upload Template**: Upload the rekuiper Grafana dashboard JSON template from the release bundle or paste the template contents and click **Import**.
+4. **Monitor Rule Telemetry**: View real-time rule health states (`kuiper_rule_status`), throughput rates (`kuiper_sink_records_out_total`), execution latencies, and buffer queue depths.
 
-![Import Dashboard in Grafana](./resources/import.png)
-
-4. Paste the JSON template and click **Load**.
-
-![Paste JSON into Grafana](./resources/paste.png)
-
-5. Select the Prometheus data source and click **Import**.
-
-![Confirm Dashboard Import](./resources/import-2.png)
-
-The dashboard displays instances and rule metrics:
-
-![Select Rule in Grafana](./resources/pick.png)
-
-Inspect rule health states over time using `kuiper_rule_status`:
-
-![Rule Status Chart](./resources/ruleStatus.png)
-
-Inspect aggregate running and paused rule counts using `kuiper_rule_count`:
-
-![Rule Count Chart](./resources/ruleCount.png)
+![rekuiper Prometheus and Grafana Observability Dashboard](/diagrams/prometheus_grafana_dashboard.svg)

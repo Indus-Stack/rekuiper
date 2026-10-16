@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>rekuiper REST API — OpenAPI 3.0 Interactive Explorer</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css">
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      background-color: #f8fafc;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      color: #0f172a;
+    }
+    .custom-topbar {
+      background-color: #0f172a;
+      border-bottom: 2px solid #ea580c;
+      padding: 12px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      text-decoration: none;
+      color: #ffffff;
+    }
+    .brand-logo {
+      width: 24px;
+      height: 24px;
+      background: #ea580c;
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 800;
+      font-size: 14px;
+      color: #ffffff;
+    }
+    .brand-text {
+      font-size: 16px;
+      font-weight: 700;
+      letter-spacing: -0.01em;
+    }
+    .brand-badge {
+      font-size: 11px;
+      font-weight: 600;
+      padding: 2px 8px;
+      background: rgba(234, 88, 12, 0.2);
+      border: 1px solid #ea580c;
+      color: #fb923c;
+      border-radius: 12px;
+    }
+    .nav-links a {
+      color: #94a3b8;
+      text-decoration: none;
+      font-size: 13px;
+      font-weight: 500;
+      margin-left: 18px;
+      transition: color 0.15s ease;
+    }
+    .nav-links a:hover {
+      color: #ffffff;
+    }
+    .nav-links a.btn-cta {
+      background: #ea580c;
+      color: #ffffff;
+      padding: 6px 14px;
+      border-radius: 6px;
+      font-weight: 600;
+    }
+    .nav-links a.btn-cta:hover {
+      background: #c2410c;
+    }
+    /* Swagger UI Overrides */
+    .swagger-ui .topbar { display: none; }
+    .swagger-ui {
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 20px 24px 60px 24px;
+    }
+    .swagger-ui .info {
+      margin: 20px 0 30px 0;
+    }
+    .swagger-ui .info .title {
+      color: #0f172a;
+      font-family: inherit;
+    }
+    .swagger-ui .opblock.opblock-post {
+      background: rgba(73, 204, 144, 0.08);
+      border-color: #49cc90;
+    }
+    .swagger-ui .opblock.opblock-get {
+      background: rgba(97, 175, 254, 0.08);
+      border-color: #61affe;
+    }
+    .swagger-ui .opblock.opblock-delete {
+      background: rgba(249, 62, 62, 0.08);
+      border-color: #f93e3e;
+    }
+    .swagger-ui .opblock.opblock-put {
+      background: rgba(252, 161, 48, 0.08);
+      border-color: #fca130;
+    }
+    .swagger-ui .btn.execute {
+      background-color: #ea580c;
+      border-color: #ea580c;
+      color: #fff;
+    }
+    .swagger-ui .btn.execute:hover {
+      background-color: #c2410c;
+    }
+  </style>
+</head>
+<body>
+  <div class="custom-topbar">
+    <a href="/" class="brand">
+      <div class="brand-logo">r</div>
+      <span class="brand-text">rekuiper REST API</span>
+      <span class="brand-badge">OpenAPI 3.0</span>
+    </a>
+    <div class="nav-links">
+      <a href="/api/restapi/overview.html">REST Docs</a>
+      <a href="/openapi.json" target="_blank" download>Download Schema (JSON)</a>
+      <a href="/" class="btn-cta">Back to Documentation</a>
+    </div>
+  </div>
+
+  <div id="swagger-ui"></div>
+
+  <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+  <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-standalone-preset.js"></script>
+  <script>
+    window.onload = function() {
+      window.ui = SwaggerUIBundle({
+        url: "/openapi.json",
+        dom_id: '#swagger-ui',
+        deepLinking: true,
+        presets: [
+          SwaggerUIBundle.presets.apis,
+          SwaggerUIStandalonePreset
+        ],
+        plugins: [
+          SwaggerUIBundle.plugins.DownloadUrl
+        ],
+        layout: "BaseLayout",
+        defaultModelsExpandDepth: 1,
+        defaultModelExpandDepth: 1,
+        docExpansion: "list"
+      });
+    };
+  </script>
+</body>
+</html>

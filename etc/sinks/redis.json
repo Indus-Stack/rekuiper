@@ -8,8 +8,8 @@
 			"website": "https://github.com/feng-crazy"
 		},
 		"helpUrl": {
-          "en_US": "https://github.com/ankur-paan/rekuiper/blob/main/docs/en_US/guide/sinks/plugin/reids.html",
-          "zh_CN": "https://github.com/ankur-paan/rekuiper/blob/main/docs/zh_CN/guide/sinks/plugin/reids.html"
+          "en_US": "https://github.com/Indus-Stack/rekuiper/blob/main/docs/en_US/guide/sinks/plugin/reids.html",
+          "zh_CN": "https://github.com/Indus-Stack/rekuiper/blob/main/docs/zh_CN/guide/sinks/plugin/reids.html"
         },
 		"description": {
 			"en_US": "This a sink for Redis, it can be used for saving the analysis data into Redis.",

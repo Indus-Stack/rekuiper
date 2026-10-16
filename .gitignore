@@ -3,7 +3,8 @@
 *.dll
 *.so
 *.dylib
-/target/
+**/target/
+brag-output/
 /bin/*
 !/bin/README.md
 
@@ -83,3 +84,5 @@ test/benchmark/iiot-mqtt/evidence/iot-warm-*.json
 test/benchmark/iiot-mqtt/evidence/mqttprobe-*.log
 test/benchmark/iiot-mqtt/evidence/mqttgen-probe-1000.json
 test/benchmark/iiot-mqtt/evidence/mqttprobe-1000.json
+
+.vercel

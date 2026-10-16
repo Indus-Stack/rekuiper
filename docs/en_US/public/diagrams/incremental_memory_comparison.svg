@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 940 280" width="100%" height="100%">
+  <defs>
+    <filter id="softShMem" x="-5%" y="-5%" width="110%" height="115%">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#0f172a" flood-opacity="0.06" />
+    </filter>
+  </defs>
+
+  <rect x="2" y="2" width="936" height="276" rx="12" fill="#f8fafc" stroke="#e2e8f0" stroke-width="1.5" />
+
+  <!-- Title & Legend -->
+  <text x="32" y="34" fill="#0f172a" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif" font-size="14" font-weight="700">Memory Scaling Comparison: Standard vs Incremental Windowing</text>
+  
+  <!-- Legend items on right -->
+  <line x1="560" y1="28" x2="585" y2="28" stroke="#ef4444" stroke-width="2.5" stroke-dasharray="4,3" />
+  <text x="592" y="32" fill="#b91c1c" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif" font-size="11" font-weight="600">Standard Plan (O(N) with Events)</text>
+
+  <line x1="770" y1="28" x2="795" y2="28" stroke="#059669" stroke-width="2.5" />
+  <circle cx="782" cy="28" r="3.5" fill="#059669" />
+  <text x="802" y="32" fill="#047857" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif" font-size="11" font-weight="600">Incremental Plan (O(Groups))</text>
+
+  <!-- Chart Area -->
+  <g transform="translate(60, 50)">
+    <!-- Y Axis Grid -->
+    <line x1="0" y1="0" x2="840" y2="0" stroke="#e2e8f0" stroke-width="1" />
+    <text x="-12" y="4" fill="#64748b" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif" font-size="10" text-anchor="end">250 MB</text>
+
+    <line x1="0" y1="45" x2="840" y2="45" stroke="#e2e8f0" stroke-width="1" />
+    <text x="-12" y="49" fill="#64748b" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif" font-size="10" text-anchor="end">180 MB</text>
+
+    <line x1="0" y1="90" x2="840" y2="90" stroke="#e2e8f0" stroke-width="1" />
+    <text x="-12" y="94" fill="#64748b" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif" font-size="10" text-anchor="end">100 MB</text>
+
+    <line x1="0" y1="135" x2="840" y2="135" stroke="#e2e8f0" stroke-width="1" />
+    <text x="-12" y="139" fill="#64748b" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif" font-size="10" text-anchor="end">25 MB</text>
+
+    <line x1="0" y1="180" x2="840" y2="180" stroke="#cbd5e1" stroke-width="1.5" />
+    <text x="-12" y="184" fill="#64748b" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif" font-size="10" text-anchor="end">0 MB</text>
+
+    <!-- X Axis Ticks -->
+    <text x="0" y="198" fill="#64748b" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif" font-size="10">0s (0 msg)</text>
+    <text x="210" y="198" fill="#64748b" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif" font-size="10">15s (3M msg)</text>
+    <text x="420" y="198" fill="#64748b" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif" font-size="10">30s (6M msg)</text>
+    <text x="630" y="198" fill="#64748b" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif" font-size="10">45s (9M msg)</text>
+    <text x="820" y="198" fill="#64748b" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif" font-size="10" text-anchor="end">60s (12M msg)</text>
+
+    <!-- Standard Curve (Red dashed: Climbs linearly with event count) -->
+    <path d="M 0 175 Q 120 160, 210 110 T 420 50 T 630 20 L 840 10" fill="none" stroke="#ef4444" stroke-width="2.5" stroke-dasharray="5,4" />
+    
+    <!-- Shaded area under Standard curve (light red) -->
+    <path d="M 0 175 Q 120 160, 210 110 T 420 50 T 630 20 L 840 10 L 840 180 L 0 180 Z" fill="#fee2e2" opacity="0.35" />
+
+    <!-- Incremental Curve (Green solid: Stays flat around 2 MB) -->
+    <line x1="0" y1="172" x2="840" y2="172" stroke="#059669" stroke-width="2.8" />
+    <circle cx="210" cy="172" r="4" fill="#059669" />
+    <circle cx="420" cy="172" r="4" fill="#059669" />
+    <circle cx="630" cy="172" r="4" fill="#059669" />
+    <circle cx="840" cy="172" r="4" fill="#059669" />
+
+    <!-- Callout on Green Line -->
+    <rect x="360" y="142" width="220" height="22" rx="4" fill="#d1fae5" stroke="#a7f3d0" stroke-width="1" />
+    <text x="470" y="157" fill="#065f46" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif" font-size="10.5" font-weight="700" text-anchor="middle">Bounded ~2.4 MB (Zero Heap Bloat)</text>
+  </g>
+</svg>

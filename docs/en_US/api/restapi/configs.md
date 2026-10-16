@@ -2,6 +2,29 @@
 
 The rekuiper REST API supports dynamic runtime updates to [global configurations](../../configuration/global_configurations.md) without restarting the server daemon.
 
+## Inspect Configurations
+
+Use this endpoint to retrieve the current basic server configuration:
+
+```http
+GET http://localhost:9081/configs
+```
+
+> Note: `GET http://localhost:9081/config` is also supported as an alias.
+
+Response sample (HTTP 200 OK):
+
+```json
+{
+  "basic": {
+    "debug": false,
+    "logLevel": "info",
+    "port": 20498,
+    "restPort": 9081
+  }
+}
+```
+
 ## Reload Basic Configurations
 
 Use this endpoint to update logging and time zone configurations dynamically:

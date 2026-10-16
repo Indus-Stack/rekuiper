@@ -30,7 +30,7 @@ docker run -d \
   -p 9081:9081 \
   -p 20498:20498 \
   -p 20499:20499 \
-  ankurkrp/rekuiper:1.0.0-rc4
+  indusstack/rekuiper:1.0.0-rc4
 ```
 
 ### Production Deployment with Persistent Storage
@@ -49,7 +49,7 @@ docker run -d \
   -v /var/log/rekuiper:/kuiper/log \
   -e KUIPER__BASIC__PROMETHEUS="true" \
   -e LOG_LEVEL="info" \
-  ankurkrp/rekuiper:1.0.0-rc4
+  indusstack/rekuiper:1.0.0-rc4
 ```
 
 Verify service availability:
@@ -72,7 +72,7 @@ version: '3.8'
 
 services:
   rekuiper:
-    image: ankurkrp/rekuiper:1.0.0-rc4
+    image: indusstack/rekuiper:1.0.0-rc4
     container_name: rekuiper
     restart: unless-stopped
     ports:
@@ -130,11 +130,11 @@ On bare-metal Linux gateways, OpenWrt devices, or systems without container runt
 
 ### Download Prebuilt Binaries
 
-Prebuilt binaries are available on [GitHub Releases](https://github.com/ankur-paan/rekuiper/releases):
+Prebuilt binaries are available on [GitHub Releases](https://github.com/Indus-Stack/rekuiper/releases):
 
 ```shell
 # Example for Linux x86_64 (replace with desired release tag)
-curl -LO https://github.com/ankur-paan/rekuiper/releases/download/v1.0.0-rc4/rekuiperd-x86_64-unknown-linux-musl.tar.gz
+curl -LO https://github.com/Indus-Stack/rekuiper/releases/download/v1.0.0-rc4/rekuiperd-x86_64-unknown-linux-musl.tar.gz
 tar -xzf rekuiperd-x86_64-unknown-linux-musl.tar.gz
 cd rekuiper
 
@@ -150,7 +150,7 @@ To compile rekuiper with specific CPU architecture optimizations:
 
 ```shell
 # Clone the repository
-git clone https://github.com/ankur-paan/rekuiper.git
+git clone https://github.com/Indus-Stack/rekuiper.git
 cd rekuiper
 
 # Compile in release mode
@@ -215,4 +215,32 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now rekuiper
 sudo systemctl status rekuiper
 ```
+
+---
+
+## 7. Kubernetes Deployment via Helm
+
+Deploy `rekuiper` on Kubernetes or edge distributions (K3s, MicroK8s) using the official Helm chart:
+
+```shell
+# Clone the repository
+git clone https://github.com/Indus-Stack/rekuiper.git
+cd rekuiper
+
+# Install the Helm chart
+helm install rekuiper deploy/chart/rekuiper
+```
+
+### Custom Configurations
+
+Configure custom settings such as persistent volume claims:
+
+```shell
+helm install rekuiper deploy/chart/rekuiper \
+  --set persistence.enabled=true \
+  --set persistence.size=1Gi
+```
+
+For the complete values schema, review the [rekuiper Helm Chart Documentation](https://github.com/Indus-Stack/rekuiper/tree/main/deploy/chart/rekuiper).
+
 

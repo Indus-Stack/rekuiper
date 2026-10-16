@@ -36,7 +36,7 @@ All participants in the rekuiper project must follow professional conduct. Treat
 ## How to Contribute
 
 ### Reporting Bugs
-- Search existing [GitHub Issues](https://github.com/ankur-paan/rekuiper/issues) before you open a new issue.
+- Search existing [GitHub Issues](https://github.com/Indus-Stack/rekuiper/issues) before you open a new issue.
 - Provide a clear title, reproduction steps, system environment (OS, CPU, Rust version), and sample JSON rules or stream definitions.
 
 ### Reporting Security Vulnerabilities
@@ -57,7 +57,7 @@ Please do **not** file public issues for security vulnerabilities. Review [SECUR
 ```bash
 git clone https://github.com/<your-username>/rekuiper.git
 cd rekuiper
-git remote add upstream https://github.com/ankur-paan/rekuiper.git
+git remote add upstream https://github.com/Indus-Stack/rekuiper.git
 ```
 
 ### Workspace Crates Architecture

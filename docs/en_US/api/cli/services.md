@@ -57,7 +57,7 @@ Example command and output:
       "website": "https://example.org"
     },
     "helpUrl": {
-      "en_US": "https://github.com/ankur-paan/rekuiper"
+      "en_US": "https://github.com/Indus-Stack/rekuiper"
     },
     "description": {
       "en_US": "Sample external services for test only",

@@ -187,11 +187,24 @@ GET http://localhost:9081/data/export
 
 ### Export Data for Specific Rules
 
+Use this endpoint to export only the selected rules along with their dependent streams and tables. Both array and object payload formats are supported:
+
+**Format A: Array of Rule IDs**
 ```http
 POST http://localhost:9081/data/export
 Content-Type: application/json
 
 ["rule1", "rule2"]
+```
+
+**Format B: Object with Rules Key**
+```http
+POST http://localhost:9081/data/export
+Content-Type: application/json
+
+{
+  "rules": ["rule1", "rule2"]
+}
 ```
 
 ## Import and Export Data in YAML Format (v2)

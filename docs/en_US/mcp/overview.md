@@ -8,7 +8,7 @@ Using `rekuiper-mcp`, assistants such as Antigravity IDE, Cursor, Claude Desktop
 
 `rekuiper-mcp` acts as a protocol bridge between AI development environments and the rekuiper engine:
 
-![rekuiper-mcp Architecture](../public/diagrams/mcp_architecture.svg)
+![rekuiper-mcp Architecture](/diagrams/mcp_architecture.svg)
 
 ### Stdio Communication Discipline
 
