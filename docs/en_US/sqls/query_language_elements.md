@@ -96,6 +96,27 @@ rekuiper keeps the exact order of columns specified in the `SELECT` clause.
 
 Downstream systems receive predictable JSON objects without random field reordering.
 
+### Duplicate Column Names in Projections
+
+When multiple `SELECT` expressions evaluate to the identical output key, rekuiper applies a uniform rule across both non-aggregate and window aggregate queries:
+
+- **First Position**: The column maintains the sequence index of its first declaration in the `SELECT` list.
+- **Last Value**: The output value reflects the last evaluated expression for that column name.
+
+```sql
+SELECT sum(v) AS x, v AS x, count(*) AS n FROM demo GROUP BY COUNTWINDOW(2);
+-- When processing batch [{"v": 1}, {"v": 3}]:
+-- Output JSON: {"x": 1, "n": 2}
+-- "x" remains at position 0, and the subsequent "v AS x" provides the value 1.
+```
+
+The same rule applies when combining wildcards and explicit aliases:
+
+```sql
+SELECT sum(v) AS v, * FROM demo GROUP BY COUNTWINDOW(2);
+-- Output JSON: {"v": 1, ...} (v remains at position 0 with raw field value from *)
+```
+
 ## FROM
 
 Specifies the input source. Every `SELECT` statement requires a `FROM` clause.
