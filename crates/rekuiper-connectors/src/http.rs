@@ -1,6 +1,7 @@
 use crate::{Sink, META_KEY};
 use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
+use indexmap::IndexMap;
 use rekuiper_core::model::StreamRecord;
 use rekuiper_core::StreamSender;
 use serde::{Deserialize, Serialize};
@@ -149,12 +150,16 @@ impl HttpPullSource {
             .await
             .with_context(|| format!("HTTP pull response from {} is not JSON", self.config.url))?;
         match payload {
-            Value::Object(map) => Ok(vec![StreamRecord::new(map.into_iter().collect())]),
+            Value::Object(map) => Ok(vec![StreamRecord::new(
+                map.into_iter().collect::<IndexMap<_, _>>(),
+            )]),
             Value::Array(items) => {
                 let mut records = Vec::new();
                 for item in items {
                     if let Value::Object(map) = item {
-                        records.push(StreamRecord::new(map.into_iter().collect()));
+                        records.push(StreamRecord::new(
+                            map.into_iter().collect::<IndexMap<_, _>>(),
+                        ));
                     } else {
                         tracing::warn!(
                             "Skipping non-object element in HTTP pull response from {}",

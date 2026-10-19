@@ -1,3 +1,4 @@
+use indexmap::IndexMap;
 use rekuiper_conf::KuiperConfig;
 use rekuiper_core::manager::{RuleManager, StreamManager, TableManager};
 use rekuiper_core::{StreamBus, StreamRecord};
@@ -156,7 +157,11 @@ async fn test_stateless_single_row_aggregate() {
 
     let _ = state.stream_bus.publish(
         "s",
-        StreamRecord::new([("a".to_string(), json!(1))].into_iter().collect()),
+        StreamRecord::new(
+            [("a".to_string(), json!(1))]
+                .into_iter()
+                .collect::<IndexMap<_, _>>(),
+        ),
     );
 
     let rec = tokio::time::timeout(Duration::from_secs(2), sink_rx.recv())
@@ -199,7 +204,11 @@ async fn test_tumbling_window_zero_duration_emits_nothing() {
     for i in 0..5 {
         let _ = state.stream_bus.publish(
             "s",
-            StreamRecord::new([("a".to_string(), json!(i))].into_iter().collect()),
+            StreamRecord::new(
+                [("a".to_string(), json!(i))]
+                    .into_iter()
+                    .collect::<IndexMap<_, _>>(),
+            ),
         );
     }
 
@@ -251,7 +260,7 @@ async fn test_window_start_and_end_event_time() {
         StreamRecord::new(
             [("ts".to_string(), json!(500)), ("v".to_string(), json!(1))]
                 .into_iter()
-                .collect(),
+                .collect::<IndexMap<_, _>>(),
         ),
     );
     let _ = state.stream_bus.publish(
@@ -259,7 +268,7 @@ async fn test_window_start_and_end_event_time() {
         StreamRecord::new(
             [("ts".to_string(), json!(1500)), ("v".to_string(), json!(2))]
                 .into_iter()
-                .collect(),
+                .collect::<IndexMap<_, _>>(),
         ),
     );
 
@@ -269,7 +278,7 @@ async fn test_window_start_and_end_event_time() {
         StreamRecord::new(
             [("ts".to_string(), json!(2500)), ("v".to_string(), json!(3))]
                 .into_iter()
-                .collect(),
+                .collect::<IndexMap<_, _>>(),
         ),
     );
 
@@ -318,7 +327,11 @@ async fn test_window_filter_clause() {
     for v in vals {
         let _ = state.stream_bus.publish(
             "s",
-            StreamRecord::new([("a".to_string(), json!(v))].into_iter().collect()),
+            StreamRecord::new(
+                [("a".to_string(), json!(v))]
+                    .into_iter()
+                    .collect::<IndexMap<_, _>>(),
+            ),
         );
     }
 
@@ -369,14 +382,22 @@ async fn test_hopping_window_event_time() {
     for ts in [1000, 2000, 3000, 4000, 4500] {
         let _ = state.stream_bus.publish(
             "s",
-            StreamRecord::new([("ts".to_string(), json!(ts))].into_iter().collect()),
+            StreamRecord::new(
+                [("ts".to_string(), json!(ts))]
+                    .into_iter()
+                    .collect::<IndexMap<_, _>>(),
+            ),
         );
     }
 
     // Advance watermark past 5000 by sending ts = 5500. This triggers 1st hop [0, 5000)
     let _ = state.stream_bus.publish(
         "s",
-        StreamRecord::new([("ts".to_string(), json!(5500))].into_iter().collect()),
+        StreamRecord::new(
+            [("ts".to_string(), json!(5500))]
+                .into_iter()
+                .collect::<IndexMap<_, _>>(),
+        ),
     );
 
     let rec1 = tokio::time::timeout(Duration::from_secs(2), sink_rx.recv())
@@ -391,14 +412,22 @@ async fn test_hopping_window_event_time() {
     for ts in [6000, 7000, 8000, 9000] {
         let _ = state.stream_bus.publish(
             "s",
-            StreamRecord::new([("ts".to_string(), json!(ts))].into_iter().collect()),
+            StreamRecord::new(
+                [("ts".to_string(), json!(ts))]
+                    .into_iter()
+                    .collect::<IndexMap<_, _>>(),
+            ),
         );
     }
 
     // Advance watermark past 10000 by sending ts = 10500. 2nd hop covers [0, 10000) = 5 + 5 = 10 events
     let _ = state.stream_bus.publish(
         "s",
-        StreamRecord::new([("ts".to_string(), json!(10500))].into_iter().collect()),
+        StreamRecord::new(
+            [("ts".to_string(), json!(10500))]
+                .into_iter()
+                .collect::<IndexMap<_, _>>(),
+        ),
     );
 
     let rec2 = tokio::time::timeout(Duration::from_secs(2), sink_rx.recv())
@@ -449,14 +478,22 @@ async fn test_session_window_event_time_gap() {
     for i in 1..=30 {
         let _ = state.stream_bus.publish(
             "s",
-            StreamRecord::new([("ts".to_string(), json!(i * 1000))].into_iter().collect()),
+            StreamRecord::new(
+                [("ts".to_string(), json!(i * 1000))]
+                    .into_iter()
+                    .collect::<IndexMap<_, _>>(),
+            ),
         );
     }
 
     // Send 30s gap: next event at ts = 60000 (> 5000 timeout, triggers emission of 1st session)
     let _ = state.stream_bus.publish(
         "s",
-        StreamRecord::new([("ts".to_string(), json!(60000))].into_iter().collect()),
+        StreamRecord::new(
+            [("ts".to_string(), json!(60000))]
+                .into_iter()
+                .collect::<IndexMap<_, _>>(),
+        ),
     );
 
     let rec1 = tokio::time::timeout(Duration::from_secs(2), sink_rx.recv())
@@ -475,7 +512,7 @@ async fn test_session_window_event_time_gap() {
             StreamRecord::new(
                 [("ts".to_string(), json!(60000 + i * 1000))]
                     .into_iter()
-                    .collect(),
+                    .collect::<IndexMap<_, _>>(),
             ),
         );
     }
@@ -483,7 +520,11 @@ async fn test_session_window_event_time_gap() {
     // Trigger second session via gap > 5s
     let _ = state.stream_bus.publish(
         "s",
-        StreamRecord::new([("ts".to_string(), json!(80000))].into_iter().collect()),
+        StreamRecord::new(
+            [("ts".to_string(), json!(80000))]
+                .into_iter()
+                .collect::<IndexMap<_, _>>(),
+        ),
     );
 
     let rec2 = tokio::time::timeout(Duration::from_secs(2), sink_rx.recv())
@@ -529,7 +570,11 @@ async fn test_sliding_window_over_when() {
     // Send temp = 20 (does NOT trigger trigger condition)
     let _ = state.stream_bus.publish(
         "s",
-        StreamRecord::new([("temp".to_string(), json!(20))].into_iter().collect()),
+        StreamRecord::new(
+            [("temp".to_string(), json!(20))]
+                .into_iter()
+                .collect::<IndexMap<_, _>>(),
+        ),
     );
 
     let res = tokio::time::timeout(Duration::from_millis(200), sink_rx.recv()).await;
@@ -538,7 +583,11 @@ async fn test_sliding_window_over_when() {
     // Send temp = 35 (triggers condition! window contains 20 and 35)
     let _ = state.stream_bus.publish(
         "s",
-        StreamRecord::new([("temp".to_string(), json!(35))].into_iter().collect()),
+        StreamRecord::new(
+            [("temp".to_string(), json!(35))]
+                .into_iter()
+                .collect::<IndexMap<_, _>>(),
+        ),
     );
 
     let rec = tokio::time::timeout(Duration::from_secs(2), sink_rx.recv())
@@ -582,25 +631,41 @@ async fn test_state_window_two_conditions() {
     // a = 0: not on begin
     let _ = state.stream_bus.publish(
         "s",
-        StreamRecord::new([("a".to_string(), json!(0))].into_iter().collect()),
+        StreamRecord::new(
+            [("a".to_string(), json!(0))]
+                .into_iter()
+                .collect::<IndexMap<_, _>>(),
+        ),
     );
 
     // a = 1: starts window (1st)
     let _ = state.stream_bus.publish(
         "s",
-        StreamRecord::new([("a".to_string(), json!(1))].into_iter().collect()),
+        StreamRecord::new(
+            [("a".to_string(), json!(1))]
+                .into_iter()
+                .collect::<IndexMap<_, _>>(),
+        ),
     );
 
     // a = 3: buffered (2nd)
     let _ = state.stream_bus.publish(
         "s",
-        StreamRecord::new([("a".to_string(), json!(3))].into_iter().collect()),
+        StreamRecord::new(
+            [("a".to_string(), json!(3))]
+                .into_iter()
+                .collect::<IndexMap<_, _>>(),
+        ),
     );
 
     // a = 5: emits window (3rd)
     let _ = state.stream_bus.publish(
         "s",
-        StreamRecord::new([("a".to_string(), json!(5))].into_iter().collect()),
+        StreamRecord::new(
+            [("a".to_string(), json!(5))]
+                .into_iter()
+                .collect::<IndexMap<_, _>>(),
+        ),
     );
 
     let rec = tokio::time::timeout(Duration::from_secs(2), sink_rx.recv())
@@ -644,19 +709,31 @@ async fn test_state_window_single_condition() {
     // Send a = 10 (starts 1st window)
     let _ = state.stream_bus.publish(
         "s",
-        StreamRecord::new([("a".to_string(), json!(10))].into_iter().collect()),
+        StreamRecord::new(
+            [("a".to_string(), json!(10))]
+                .into_iter()
+                .collect::<IndexMap<_, _>>(),
+        ),
     );
 
     // Send a = 10 (buffered in 1st window)
     let _ = state.stream_bus.publish(
         "s",
-        StreamRecord::new([("a".to_string(), json!(10))].into_iter().collect()),
+        StreamRecord::new(
+            [("a".to_string(), json!(10))]
+                .into_iter()
+                .collect::<IndexMap<_, _>>(),
+        ),
     );
 
     // Send a = 20 (had_changed(a) triggers emission of 1st window!)
     let _ = state.stream_bus.publish(
         "s",
-        StreamRecord::new([("a".to_string(), json!(20))].into_iter().collect()),
+        StreamRecord::new(
+            [("a".to_string(), json!(20))]
+                .into_iter()
+                .collect::<IndexMap<_, _>>(),
+        ),
     );
 
     let rec = tokio::time::timeout(Duration::from_secs(2), sink_rx.recv())

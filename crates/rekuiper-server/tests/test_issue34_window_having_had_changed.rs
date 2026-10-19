@@ -1,3 +1,4 @@
+use indexmap::IndexMap;
 use rekuiper_conf::KuiperConfig;
 use rekuiper_core::manager::{RuleManager, StreamManager, TableManager};
 use rekuiper_core::{StreamBus, StreamRecord};
@@ -66,11 +67,11 @@ async fn test_count_window_having_had_changed() {
     // Window 1: val = 10, 10 -> aggregate latest(val) is 10. First window evaluation: had_changed is true.
     let _ = state.stream_bus.publish(
         "s",
-        StreamRecord::new([("val".to_string(), json!(10))].into_iter().collect()),
+        StreamRecord::new(IndexMap::from([("val".to_string(), json!(10))])),
     );
     let _ = state.stream_bus.publish(
         "s",
-        StreamRecord::new([("val".to_string(), json!(10))].into_iter().collect()),
+        StreamRecord::new(IndexMap::from([("val".to_string(), json!(10))])),
     );
 
     let rec1 = tokio::time::timeout(Duration::from_secs(2), sink_rx.recv())
@@ -83,11 +84,11 @@ async fn test_count_window_having_had_changed() {
     // had_changed should return false, so HAVING filters this window output.
     let _ = state.stream_bus.publish(
         "s",
-        StreamRecord::new([("val".to_string(), json!(10))].into_iter().collect()),
+        StreamRecord::new(IndexMap::from([("val".to_string(), json!(10))])),
     );
     let _ = state.stream_bus.publish(
         "s",
-        StreamRecord::new([("val".to_string(), json!(10))].into_iter().collect()),
+        StreamRecord::new(IndexMap::from([("val".to_string(), json!(10))])),
     );
 
     let res_empty = tokio::time::timeout(Duration::from_millis(200), sink_rx.recv()).await;
@@ -100,11 +101,11 @@ async fn test_count_window_having_had_changed() {
     // had_changed should return true, so Window 3 emits.
     let _ = state.stream_bus.publish(
         "s",
-        StreamRecord::new([("val".to_string(), json!(20))].into_iter().collect()),
+        StreamRecord::new(IndexMap::from([("val".to_string(), json!(20))])),
     );
     let _ = state.stream_bus.publish(
         "s",
-        StreamRecord::new([("val".to_string(), json!(20))].into_iter().collect()),
+        StreamRecord::new(IndexMap::from([("val".to_string(), json!(20))])),
     );
 
     let rec3 = tokio::time::timeout(Duration::from_secs(2), sink_rx.recv())
@@ -170,16 +171,12 @@ async fn test_hopping_window_having_had_changed_issue34_repro() {
     for (ts, s, q, f) in events {
         let _ = state.stream_bus.publish(
             "demo",
-            StreamRecord::new(
-                [
-                    ("ts".to_string(), json!(ts)),
-                    ("self".to_string(), json!(s)),
-                    ("quality".to_string(), json!(q)),
-                    ("freshness".to_string(), json!(f)),
-                ]
-                .into_iter()
-                .collect(),
-            ),
+            StreamRecord::new(IndexMap::from([
+                ("ts".to_string(), json!(ts)),
+                ("self".to_string(), json!(s)),
+                ("quality".to_string(), json!(q)),
+                ("freshness".to_string(), json!(f)),
+            ])),
         );
     }
 

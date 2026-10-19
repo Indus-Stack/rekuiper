@@ -86,7 +86,7 @@ These tools use the embedded `rekuiper-sql` parser and evaluation engine in memo
 | Tool | Purpose |
 | :--- | :--- |
 | `validate_sql` | Parses SQL abstract syntax trees, checks keywords, and validates streaming DDL syntax (including `BUFFER_FULL_POLICY`) offline. |
-| `test_sql_expression` | Executes queries against mock JSON event payloads in memory, supporting vector search (`cosine_similarity`), array operations (`array_positions`), and stateful analytics (`acc_distinct_collect`, `lead`). |
+| `test_sql_expression` | Executes queries against mock JSON event payloads in memory with exact SELECT field order preservation, supporting vector search (`cosine_similarity`), array operations (`array_positions`), and stateful analytics (`acc_distinct_collect`, `lead`). |
 | `explain_sql` | Deconstructs a SQL query into sources, projections, joins, window clauses, and filters. |
 | `explain_pipeline_profile` | Analyzes SQL queries offline. Reports execution tiers, memory boundaries, and execution bottlenecks. |
 

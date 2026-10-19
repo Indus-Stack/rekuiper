@@ -28,7 +28,8 @@ categories = ["embedded", "network-programming", "science"]
 tokio = { version = "1.38", features = ["full"] }
 axum = { version = "0.7", features = ["macros"] }
 serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
+serde_json = { version = "1.0", features = ["preserve_order"] }
+indexmap = { version = "2.6", features = ["serde"] }
 serde_yaml = { package = "serde_norway", version = "0.9" }
 serde_norway = "0.9"
 toml = "0.8"

@@ -1,8 +1,121 @@
 use crate::ast::{BinaryOperator, Expr, SelectStmt, SetOp, UnaryOperator};
+use indexmap::IndexMap;
 use parking_lot::RwLock;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
+
+/// Trait abstracting read-only row key/value lookups and iteration.
+/// Monomorphized over row storage types (`IndexMap`, `HashMap`, `serde_json::Map`, `SharedMap`)
+/// to ensure zero heap allocations and full inlining on the evaluation hot path.
+pub trait RowLookup {
+    type Iter<'a>: Iterator<Item = (&'a String, &'a Value)>
+    where
+        Self: 'a;
+
+    fn get(&self, key: &str) -> Option<&Value>;
+    fn iter(&self) -> Self::Iter<'_>;
+
+    #[inline(always)]
+    fn iter_row(&self) -> Self::Iter<'_> {
+        self.iter()
+    }
+
+    #[inline(always)]
+    fn contains_key(&self, key: &str) -> bool {
+        self.get(key).is_some()
+    }
+}
+
+impl RowLookup for HashMap<String, Value> {
+    type Iter<'a> = std::collections::hash_map::Iter<'a, String, Value>;
+
+    #[inline(always)]
+    fn get(&self, key: &str) -> Option<&Value> {
+        HashMap::get(self, key)
+    }
+
+    #[inline(always)]
+    fn iter(&self) -> Self::Iter<'_> {
+        self.iter()
+    }
+}
+
+impl RowLookup for IndexMap<String, Value> {
+    type Iter<'a> = indexmap::map::Iter<'a, String, Value>;
+
+    #[inline(always)]
+    fn get(&self, key: &str) -> Option<&Value> {
+        IndexMap::get(self, key)
+    }
+
+    #[inline(always)]
+    fn iter(&self) -> Self::Iter<'_> {
+        self.iter()
+    }
+}
+
+impl RowLookup for serde_json::Map<String, Value> {
+    type Iter<'a> = serde_json::map::Iter<'a>;
+
+    #[inline(always)]
+    fn get(&self, key: &str) -> Option<&Value> {
+        serde_json::Map::get(self, key)
+    }
+
+    #[inline(always)]
+    fn iter(&self) -> Self::Iter<'_> {
+        self.iter()
+    }
+}
+
+impl RowLookup for rekuiper_core::model::SharedMap {
+    type Iter<'a> = indexmap::map::Iter<'a, String, Value>;
+
+    #[inline(always)]
+    fn get(&self, key: &str) -> Option<&Value> {
+        self.0.get(key)
+    }
+
+    #[inline(always)]
+    fn iter(&self) -> Self::Iter<'_> {
+        self.0.iter()
+    }
+}
+
+impl<T: RowLookup + ?Sized> RowLookup for &T {
+    type Iter<'a>
+        = T::Iter<'a>
+    where
+        Self: 'a;
+
+    #[inline(always)]
+    fn get(&self, key: &str) -> Option<&Value> {
+        (**self).get(key)
+    }
+
+    #[inline(always)]
+    fn iter(&self) -> Self::Iter<'_> {
+        (**self).iter()
+    }
+}
+
+impl<T: RowLookup + ?Sized> RowLookup for Arc<T> {
+    type Iter<'a>
+        = T::Iter<'a>
+    where
+        Self: 'a;
+
+    #[inline(always)]
+    fn get(&self, key: &str) -> Option<&Value> {
+        (**self).get(key)
+    }
+
+    #[inline(always)]
+    fn iter(&self) -> Self::Iter<'_> {
+        (**self).iter()
+    }
+}
 
 pub mod aggregate;
 pub mod analytic;
@@ -98,9 +211,9 @@ impl Evaluator {
     /// the right branch winning conflicts. `Union` vs `UnionAll` multiplicity
     /// only manifests in multi-row APIs; see `eval_select_stateful_multi`.
     fn merge_union_rows(
-        left: Option<HashMap<String, Value>>,
-        right: Option<HashMap<String, Value>>,
-    ) -> Option<HashMap<String, Value>> {
+        left: Option<IndexMap<String, Value>>,
+        right: Option<IndexMap<String, Value>>,
+    ) -> Option<IndexMap<String, Value>> {
         match (left, right) {
             (Some(mut l), Some(r)) => {
                 for (k, v) in r {
@@ -131,10 +244,10 @@ impl Evaluator {
         }
     }
 
-    pub fn eval_select(
+    pub fn eval_select<R: RowLookup + ?Sized>(
         stmt: &SelectStmt,
-        record: &HashMap<String, Value>,
-    ) -> Option<HashMap<String, Value>> {
+        record: &R,
+    ) -> Option<IndexMap<String, Value>> {
         if let Some((_, rhs)) = &stmt.set_op {
             // Each branch filters/projects the same record independently.
             let left = Self::eval_select(&Self::without_set_op(stmt), record);
@@ -153,10 +266,10 @@ impl Evaluator {
             .flatten()
     }
 
-    pub fn eval_select_fallible(
+    pub fn eval_select_fallible<R: RowLookup + ?Sized>(
         stmt: &SelectStmt,
-        record: &HashMap<String, Value>,
-    ) -> Result<Option<HashMap<String, Value>>, String> {
+        record: &R,
+    ) -> Result<Option<IndexMap<String, Value>>, String> {
         let state = RuleState::default();
         Self::eval_select_stateful_fallible(stmt, record, &state)
     }
@@ -168,19 +281,19 @@ impl Evaluator {
     /// and applies `having` (evaluated against the aggregated row, with
     /// aggregate calls resolved over the batch). Returns `None` when `having`
     /// filters the row out.
-    pub fn eval_aggregate(
+    pub fn eval_aggregate<R: RowLookup>(
         stmt: &SelectStmt,
-        records: &[HashMap<String, Value>],
-    ) -> Option<HashMap<String, Value>> {
+        records: &[R],
+    ) -> Option<IndexMap<String, Value>> {
         Self::eval_aggregate_stateful(stmt, records, None, "")
     }
 
-    pub fn eval_aggregate_stateful(
+    pub fn eval_aggregate_stateful<R: RowLookup>(
         stmt: &SelectStmt,
-        records: &[HashMap<String, Value>],
+        records: &[R],
         state: Option<&RuleState>,
         partition_key: &str,
-    ) -> Option<HashMap<String, Value>> {
+    ) -> Option<IndexMap<String, Value>> {
         if let Some((_, rhs)) = &stmt.set_op {
             // Each branch aggregates the same batch independently; the two
             // single-row outputs merge (right wins on conflict).
@@ -193,15 +306,15 @@ impl Evaluator {
             let right = Self::eval_aggregate_stateful(rhs, records, state, partition_key);
             return Self::merge_union_rows(left, right);
         }
-        let first: Option<&HashMap<String, Value>> = records.first();
-        let mut output = HashMap::new();
+        let first: Option<&R> = records.first();
+        let mut output = IndexMap::new();
         let field_names = Self::select_field_names(stmt);
 
         for (idx, field) in stmt.fields.iter().enumerate() {
             match field {
                 Expr::Wildcard => {
                     if let Some(rec) = first {
-                        for (k, v) in rec {
+                        for (k, v) in rec.iter_row() {
                             if k != META_KEY && !k.starts_with("__") {
                                 output.entry(k.clone()).or_insert_with(|| v.clone());
                             }
@@ -210,7 +323,7 @@ impl Evaluator {
                 }
                 Expr::WildcardModified { except, replace } => {
                     if let Some(rec) = first {
-                        for (k, v) in rec {
+                        for (k, v) in rec.iter_row() {
                             if k != META_KEY && !k.starts_with("__") {
                                 if except.iter().any(|e| e == k)
                                     && !replace.iter().any(|(_, c)| c == k)
@@ -253,11 +366,11 @@ impl Evaluator {
                                 }
                             }
                         } else if let Expr::Identifier(p_name) = parent.as_ref() {
-                            let has_other_namespace = rec.iter().any(|(k, v)| {
+                            let has_other_namespace = rec.iter_row().any(|(k, v)| {
                                 k != p_name && !k.starts_with("__") && matches!(v, Value::Object(_))
                             });
                             if !has_other_namespace {
-                                for (k, v) in rec {
+                                for (k, v) in rec.iter_row() {
                                     if k != META_KEY && !k.starts_with("__") {
                                         output.entry(k.clone()).or_insert_with(|| v.clone());
                                     }
@@ -340,10 +453,10 @@ impl Evaluator {
         )
     }
 
-    fn eval_agg_expr_stateful(
+    fn eval_agg_expr_stateful<R: RowLookup>(
         expr: &Expr,
-        records: &[HashMap<String, Value>],
-        output: &HashMap<String, Value>,
+        records: &[R],
+        output: &IndexMap<String, Value>,
         state: Option<&RuleState>,
         partition_key: &str,
     ) -> Value {
@@ -583,11 +696,11 @@ impl Evaluator {
     /// filter to decide emission. This mirrors eKuiper analytic semantics,
     /// where e.g. `acc_map_agg` accumulates rows that a later `WHERE` filters
     /// out of the output.
-    pub fn eval_select_stateful(
+    pub fn eval_select_stateful<R: RowLookup + ?Sized>(
         stmt: &SelectStmt,
-        record: &HashMap<String, Value>,
+        record: &R,
         state: &RuleState,
-    ) -> Option<HashMap<String, Value>> {
+    ) -> Option<IndexMap<String, Value>> {
         Self::eval_select_stateful_fallible(stmt, record, state)
             .ok()
             .flatten()
@@ -718,11 +831,11 @@ impl Evaluator {
 
     /// Advance analytic functions before WHERE, then project only passing rows.
     /// The per-row cache prevents SELECT and WHERE from advancing the same call twice.
-    pub fn eval_select_filtered_stateful_fallible(
+    pub fn eval_select_filtered_stateful_fallible<R: RowLookup + ?Sized>(
         stmt: &SelectStmt,
-        record: &HashMap<String, Value>,
+        record: &R,
         state: &RuleState,
-    ) -> Result<Option<HashMap<String, Value>>, String> {
+    ) -> Result<Option<IndexMap<String, Value>>, String> {
         let field_names = Self::select_field_names(stmt);
         let has_analytic = Self::stmt_has_analytic(stmt);
         Self::eval_select_stateless_fast(stmt, &field_names, has_analytic, record, state)
@@ -731,13 +844,13 @@ impl Evaluator {
     /// Reuses pre-computed `field_names` and `has_analytic` to avoid traversing
     /// the AST or re-computing field alias names on every row.
     #[inline]
-    pub fn eval_select_stateless_fast(
+    pub fn eval_select_stateless_fast<R: RowLookup + ?Sized>(
         stmt: &SelectStmt,
         field_names: &[String],
         has_analytic: bool,
-        record: &HashMap<String, Value>,
+        record: &R,
         state: &RuleState,
-    ) -> Result<Option<HashMap<String, Value>>, String> {
+    ) -> Result<Option<IndexMap<String, Value>>, String> {
         let Some(condition) = &stmt.where_clause else {
             return Self::eval_select_stateful_with_names(stmt, field_names, record, state);
         };
@@ -894,9 +1007,9 @@ impl Evaluator {
     }
 
     #[inline]
-    fn try_eval_numeric_fast(expr: &Expr, record: &HashMap<String, Value>) -> Option<Value> {
+    fn try_eval_numeric_fast<R: RowLookup + ?Sized>(expr: &Expr, record: &R) -> Option<Value> {
         #[inline]
-        fn eval_f64(e: &Expr, rec: &HashMap<String, Value>, all_i64: &mut bool) -> Option<f64> {
+        fn eval_f64<R: RowLookup + ?Sized>(e: &Expr, rec: &R, all_i64: &mut bool) -> Option<f64> {
             match e {
                 Expr::Literal(v) => {
                     if !v.is_i64() {
@@ -957,41 +1070,41 @@ impl Evaluator {
         serde_json::Number::from_f64(res).map(Value::Number)
     }
 
-    pub fn eval_select_stateful_fallible(
+    pub fn eval_select_stateful_fallible<R: RowLookup + ?Sized>(
         stmt: &SelectStmt,
-        record: &HashMap<String, Value>,
+        record: &R,
         state: &RuleState,
-    ) -> Result<Option<HashMap<String, Value>>, String> {
+    ) -> Result<Option<IndexMap<String, Value>>, String> {
         let field_names = Self::select_field_names(stmt);
         Self::eval_select_stateful_with_names(stmt, &field_names, record, state)
     }
 
     #[inline]
-    pub fn eval_select_stateful_with_names(
+    pub fn eval_select_stateful_with_names<R: RowLookup + ?Sized>(
         stmt: &SelectStmt,
         field_names: &[String],
-        record: &HashMap<String, Value>,
+        record: &R,
         state: &RuleState,
-    ) -> Result<Option<HashMap<String, Value>>, String> {
+    ) -> Result<Option<IndexMap<String, Value>>, String> {
         if let Some((_, rhs)) = &stmt.set_op {
             let left =
                 Self::eval_select_stateful_fallible(&Self::without_set_op(stmt), record, state)?;
             let right = Self::eval_select_stateful_fallible(rhs, record, state)?;
             return Ok(Self::merge_union_rows(left, right));
         }
-        let mut output = HashMap::with_capacity(stmt.fields.len());
+        let mut output = IndexMap::with_capacity(stmt.fields.len());
         for (idx, field) in stmt.fields.iter().enumerate() {
             let alias = stmt.field_aliases.get(idx).and_then(|a| a.as_deref());
             match field {
                 Expr::Wildcard => {
-                    for (k, v) in record {
+                    for (k, v) in record.iter() {
                         if k != META_KEY && !k.starts_with("__") {
                             output.insert(k.clone(), v.clone());
                         }
                     }
                 }
                 Expr::WildcardModified { except, replace } => {
-                    for (k, v) in record {
+                    for (k, v) in record.iter() {
                         if k != META_KEY && !k.starts_with("__") {
                             if except.iter().any(|e| e == k) && !replace.iter().any(|(_, c)| c == k)
                             {
@@ -1057,7 +1170,7 @@ impl Evaluator {
                             k != p_name && !k.starts_with("__") && matches!(v, Value::Object(_))
                         });
                         if !has_other_namespace {
-                            for (k, v) in record {
+                            for (k, v) in record.iter() {
                                 if k != META_KEY && !k.starts_with("__") {
                                     output.insert(k.clone(), v.clone());
                                 }
@@ -1119,7 +1232,7 @@ impl Evaluator {
                     };
                     for (arg_idx, expr_arg) in args[2..].iter().enumerate() {
                         if matches!(expr_arg, Expr::Wildcard) {
-                            for (k, v) in record {
+                            for (k, v) in record.iter() {
                                 if k == META_KEY {
                                     continue;
                                 }
@@ -1198,11 +1311,11 @@ impl Evaluator {
     /// field alias (or generated column name). A non-array argument passes
     /// the base row through unchanged; without any `unnest` field the result
     /// is a single-element vector.
-    pub fn eval_select_stateful_multi(
+    pub fn eval_select_stateful_multi<R: RowLookup + ?Sized>(
         stmt: &SelectStmt,
-        record: &HashMap<String, Value>,
+        record: &R,
         state: &RuleState,
-    ) -> Vec<HashMap<String, Value>> {
+    ) -> Vec<IndexMap<String, Value>> {
         let mut rows = Self::eval_own_rows_multi(stmt, record, state);
         if let Some((op, rhs)) = &stmt.set_op {
             let right = Self::eval_select_stateful_multi(rhs, record, state);
@@ -1221,11 +1334,11 @@ impl Evaluator {
 
     /// Single-statement portion of [`Self::eval_select_stateful_multi`]:
     /// projection (+ unnest expansion) without following `set_op`.
-    fn eval_own_rows_multi(
+    fn eval_own_rows_multi<R: RowLookup + ?Sized>(
         stmt: &SelectStmt,
-        record: &HashMap<String, Value>,
+        record: &R,
         state: &RuleState,
-    ) -> Vec<HashMap<String, Value>> {
+    ) -> Vec<IndexMap<String, Value>> {
         // NOTE: set_op-free base on purpose — the caller combines branches.
         let single = Self::without_set_op(stmt);
         let Some(base) = Self::eval_select_stateful(&single, record, state) else {
@@ -1251,7 +1364,7 @@ impl Evaluator {
         let mut rows = Vec::with_capacity(items.len());
         for item in items {
             let mut row = base.clone();
-            row.remove(&placeholder);
+            row.shift_remove(&placeholder);
             match item {
                 Value::Object(map) => {
                     for (k, v) in map {
@@ -1269,17 +1382,17 @@ impl Evaluator {
 
     /// Evaluate an expression with analytic (`acc_*`) calls resolved against
     /// `state`. All other expressions behave exactly like [`Self::eval_val`].
-    fn eval_stateful_expr(
+    fn eval_stateful_expr<R: RowLookup + ?Sized>(
         expr: &Expr,
-        record: &HashMap<String, Value>,
+        record: &R,
         state: &RuleState,
     ) -> Value {
         Self::eval_stateful_expr_fallible(expr, record, state).unwrap_or(Value::Null)
     }
 
-    pub fn eval_stateful_expr_fallible(
+    pub fn eval_stateful_expr_fallible<R: RowLookup + ?Sized>(
         expr: &Expr,
-        record: &HashMap<String, Value>,
+        record: &R,
         state: &RuleState,
     ) -> Result<Value, String> {
         if !state.row_values.is_empty() && Self::is_analytic_expr(expr) {
@@ -1428,9 +1541,9 @@ impl Evaluator {
         }
     }
 
-    fn eval_stateful_call_fallible(
+    fn eval_stateful_call_fallible<R: RowLookup + ?Sized>(
         expr: &Expr,
-        record: &HashMap<String, Value>,
+        record: &R,
         state: &RuleState,
         partition_key: Option<&str>,
         skip_update: bool,
@@ -1610,10 +1723,12 @@ impl Evaluator {
             name.to_ascii_lowercase().as_str(),
             "count" | "sum" | "avg" | "min" | "max"
         ) {
+            let row_map: HashMap<String, Value> =
+                record.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
             return Ok(Self::eval_aggregate_call(
                 name,
                 args,
-                std::slice::from_ref(record),
+                std::slice::from_ref(&row_map),
             ));
         }
         let vals: Vec<Value> = args
@@ -1895,17 +2010,17 @@ impl Evaluator {
         schema
     }
 
-    pub fn eval_bool_fallible(
+    pub fn eval_bool_fallible<R: RowLookup + ?Sized>(
         expr: &Expr,
-        record: &HashMap<String, Value>,
+        record: &R,
     ) -> Result<bool, String> {
         Self::eval_bool_stateful_fallible(expr, record, &RuleState::new())
     }
 
     #[inline]
-    pub fn eval_bool_stateful_fallible(
+    pub fn eval_bool_stateful_fallible<R: RowLookup + ?Sized>(
         expr: &Expr,
-        record: &HashMap<String, Value>,
+        record: &R,
         state: &RuleState,
     ) -> Result<bool, String> {
         // Fast path: direct borrowed comparison for `col <op> literal` or `literal <op> col`
@@ -1991,26 +2106,26 @@ impl Evaluator {
         }
     }
 
-    pub fn eval_bool(expr: &Expr, record: &HashMap<String, Value>) -> bool {
+    pub fn eval_bool<R: RowLookup + ?Sized>(expr: &Expr, record: &R) -> bool {
         Self::eval_bool_fallible(expr, record).unwrap_or(false)
     }
 
-    pub fn eval_bool_stateful(
+    pub fn eval_bool_stateful<R: RowLookup + ?Sized>(
         expr: &Expr,
-        record: &HashMap<String, Value>,
+        record: &R,
         state: &RuleState,
     ) -> bool {
         Self::eval_bool_stateful_fallible(expr, record, state).unwrap_or(false)
     }
 
-    pub fn eval_val_fallible(
+    pub fn eval_val_fallible<R: RowLookup + ?Sized>(
         expr: &Expr,
-        record: &HashMap<String, Value>,
+        record: &R,
     ) -> Result<Value, String> {
         Self::eval_stateful_expr_fallible(expr, record, &RuleState::new())
     }
 
-    pub fn eval_val(expr: &Expr, record: &HashMap<String, Value>) -> Value {
+    pub fn eval_val<R: RowLookup + ?Sized>(expr: &Expr, record: &R) -> Value {
         Self::eval_val_fallible(expr, record).unwrap_or(Value::Null)
     }
 
@@ -2872,10 +2987,10 @@ impl Evaluator {
     /// Resolve a contextual system function against the current record.
     /// Returns `None` for non-contextual names so callers fall through to
     /// normal argument evaluation.
-    fn eval_context_call(
+    fn eval_context_call<R: RowLookup + ?Sized>(
         name: &str,
         args: &[Expr],
-        record: &HashMap<String, Value>,
+        record: &R,
     ) -> Option<Value> {
         match name.to_ascii_lowercase().as_str() {
             "meta" => Some(Self::resolve_meta(
@@ -2905,14 +3020,14 @@ impl Evaluator {
 
     /// Look a metadata key up in the first present meta object, falling back
     /// to a top-level record field. No argument returns the whole object.
-    fn resolve_meta(
+    fn resolve_meta<R: RowLookup + ?Sized>(
         arg: Option<&Expr>,
-        record: &HashMap<String, Value>,
+        record: &R,
         object_keys: &[&str],
     ) -> Value {
         let meta_obj = object_keys
             .iter()
-            .find_map(|k| record.get(*k))
+            .find_map(|k| record.get(k))
             .and_then(|v| v.as_object());
         let Some(arg) = arg else {
             return meta_obj
@@ -2949,7 +3064,7 @@ impl Evaluator {
         record.get(&key).cloned().unwrap_or(Value::Null)
     }
 
-    fn resolve_event_time(record: &HashMap<String, Value>) -> Value {
+    fn resolve_event_time<R: RowLookup + ?Sized>(record: &R) -> Value {
         for key in ["timestamp", "event_time", "__timestamp__"] {
             if let Some(v) = record.get(key) {
                 if !v.is_null() {
@@ -2960,23 +3075,23 @@ impl Evaluator {
         serde_json::json!(chrono::Utc::now().timestamp_millis())
     }
 
-    fn resolve_rule_id(record: &HashMap<String, Value>) -> Value {
+    fn resolve_rule_id<R: RowLookup + ?Sized>(record: &R) -> Value {
         match record.get("__rule_id__") {
             Some(Value::String(s)) => Value::String(s.clone()),
             _ => Value::String(String::new()),
         }
     }
 
-    fn resolve_rule_start(record: &HashMap<String, Value>) -> Value {
+    fn resolve_rule_start<R: RowLookup + ?Sized>(record: &R) -> Value {
         match record.get("__rule_start__") {
             Some(Value::Number(n)) => Value::Number(n.clone()),
             _ => Value::from(chrono::Utc::now().timestamp_millis()),
         }
     }
 
-    fn resolve_window_bound(record: &HashMap<String, Value>, keys: &[&str]) -> Value {
+    fn resolve_window_bound<R: RowLookup + ?Sized>(record: &R, keys: &[&str]) -> Value {
         keys.iter()
-            .find_map(|k| record.get(*k))
+            .find_map(|k| record.get(k))
             .cloned()
             .unwrap_or(Value::Null)
     }

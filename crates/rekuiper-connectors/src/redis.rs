@@ -1,5 +1,6 @@
 use crate::META_KEY;
 use anyhow::{Context, Result};
+use indexmap::IndexMap;
 use parking_lot::RwLock;
 use rekuiper_core::model::StreamRecord;
 use rekuiper_core::StreamSender;
@@ -251,12 +252,16 @@ fn decode_redis_payload(payload: &[u8]) -> Result<Vec<StreamRecord>> {
     let value: Value =
         serde_json::from_slice(payload).context("Redis payload is not valid JSON")?;
     match value {
-        Value::Object(map) => Ok(vec![StreamRecord::new(map.into_iter().collect())]),
+        Value::Object(map) => Ok(vec![StreamRecord::new(
+            map.into_iter().collect::<IndexMap<_, _>>(),
+        )]),
         Value::Array(items) => {
             let mut records = Vec::new();
             for item in items {
                 if let Value::Object(map) = item {
-                    records.push(StreamRecord::new(map.into_iter().collect()));
+                    records.push(StreamRecord::new(
+                        map.into_iter().collect::<IndexMap<_, _>>(),
+                    ));
                 } else {
                     tracing::warn!("Skipping non-object element in Redis message");
                 }

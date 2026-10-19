@@ -1,6 +1,7 @@
 use crate::{parquet_io, Sink, META_KEY};
 use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
+use indexmap::IndexMap;
 use rekuiper_core::model::StreamRecord;
 use rekuiper_core::StreamSender;
 use serde::{Deserialize, Serialize};
@@ -478,12 +479,16 @@ impl FileSource {
         }
         // JSON / lines: objects emit directly, arrays fan out per element.
         match serde_json::from_str::<Value>(line) {
-            Ok(Value::Object(map)) => Some(vec![StreamRecord::new(map.into_iter().collect())]),
+            Ok(Value::Object(map)) => Some(vec![StreamRecord::new(
+                map.into_iter().collect::<IndexMap<_, _>>(),
+            )]),
             Ok(Value::Array(items)) => {
                 let mut records = Vec::new();
                 for item in items {
                     if let Value::Object(map) = item {
-                        records.push(StreamRecord::new(map.into_iter().collect()));
+                        records.push(StreamRecord::new(
+                            map.into_iter().collect::<IndexMap<_, _>>(),
+                        ));
                     } else {
                         tracing::warn!("Skipping non-object element in file source line");
                     }
@@ -509,8 +514,8 @@ pub fn parse_delimited_line(
     line: &str,
     delimiter: char,
     headers: &[String],
-) -> HashMap<String, Value> {
-    let mut map = HashMap::with_capacity(headers.len());
+) -> IndexMap<String, Value> {
+    let mut map = IndexMap::with_capacity(headers.len());
     for (i, header) in headers.iter().enumerate() {
         let token = line.split(delimiter).nth(i).unwrap_or("").trim();
         map.insert(header.clone(), parse_delimited_token(token));

@@ -2979,7 +2979,7 @@ async fn test_edgex_stream_e2e_data_pipeline() {
 
     // 5. Test EdgeX encoding on output record:
     let encoded = EdgeXCodec::encode(
-        &received.data,
+        &received.data.to_hashmap(),
         "kuiper_alert",
         "alert_profile",
         "rule_edgex_filter",

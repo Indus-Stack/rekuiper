@@ -11,6 +11,7 @@ use axum::{
     routing::get,
     Json,
 };
+use indexmap::IndexMap;
 use parking_lot::RwLock;
 use rekuiper_connectors::{parse_interval_ms, SimulatorConfig};
 use rekuiper_core::model::StreamRecord;
@@ -169,9 +170,9 @@ pub async fn start_ruletest(State(state): State<AppState>, Path(name): Path<Stri
 
 /// Buffer one replayed row into the bounded session ring (evicting the
 /// oldest past the cap) and wake SSE subscribers via broadcast.
-pub fn emit_ruletest_line(session: &RuletestSession, row: &HashMap<String, Value>) {
-    let mut map = std::collections::BTreeMap::new();
-    for (k, v) in row {
+pub fn emit_ruletest_line<R: rekuiper_sql::RowLookup + ?Sized>(session: &RuletestSession, row: &R) {
+    let mut map = indexmap::IndexMap::new();
+    for (k, v) in row.iter() {
         if k == rekuiper_sql::eval::META_KEY || k.starts_with("__") {
             continue;
         }
@@ -342,13 +343,17 @@ pub async fn http_data_push_handler(
     } else {
         match serde_json::from_slice::<Value>(&body_bytes) {
             Ok(Value::Object(map)) => {
-                vec![StreamRecord::new(map.into_iter().collect())]
+                vec![StreamRecord::new(
+                    map.into_iter().collect::<IndexMap<_, _>>(),
+                )]
             }
             Ok(Value::Array(items)) => {
                 let mut recs = Vec::with_capacity(items.len());
                 for item in items {
                     if let Value::Object(map) = item {
-                        recs.push(StreamRecord::new(map.into_iter().collect()));
+                        recs.push(StreamRecord::new(
+                            map.into_iter().collect::<IndexMap<_, _>>(),
+                        ));
                     }
                 }
                 recs

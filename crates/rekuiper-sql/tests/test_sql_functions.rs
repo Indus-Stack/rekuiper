@@ -21,7 +21,7 @@ fn eval_one(sql: &str, record: &Record) -> Value {
     let stmt = parser.parse_select().expect("Should parse");
     assert_eq!(stmt.fields.len(), 1);
     match Evaluator::eval_select(&stmt, record) {
-        Some(mut row) => row.remove("v").unwrap_or(Value::Null),
+        Some(mut row) => row.shift_remove("v").unwrap_or(Value::Null),
         None => Value::Null,
     }
 }
@@ -33,7 +33,7 @@ fn eval_agg_one(sql: &str, records: &[Record]) -> Value {
     assert_eq!(stmt.fields.len(), 1);
     Evaluator::eval_aggregate(&stmt, records)
         .expect("Should aggregate")
-        .remove("v")
+        .shift_remove("v")
         .unwrap()
 }
 
@@ -756,7 +756,7 @@ fn test_stateful_had_changed_and_changed_col() {
     let row = |t: Value| {
         Evaluator::eval_select_stateful(&stmt, &rec(&[("temp", t)]), &state)
             .expect("row always projects")
-            .remove("ch")
+            .shift_remove("ch")
             .unwrap()
     };
     assert_eq!(row(json!(10)), json!(true));
@@ -769,7 +769,7 @@ fn test_stateful_had_changed_and_changed_col() {
     let row = |t: Value| {
         Evaluator::eval_select_stateful(&stmt, &rec(&[("temp", t)]), &state)
             .expect("row always projects")
-            .remove("c")
+            .shift_remove("c")
             .unwrap()
     };
     assert_eq!(row(json!(10)), json!(10));
@@ -2596,7 +2596,7 @@ fn test_acc_distinct_collect_and_alias() {
         r.insert("val".to_string(), v);
         Evaluator::eval_select_stateful(&stmt, &r, &state)
             .expect("eval")
-            .remove("v")
+            .shift_remove("v")
             .unwrap()
     };
 
@@ -2617,7 +2617,7 @@ fn test_acc_distinct_collect_and_alias() {
         r.insert("val".to_string(), v);
         Evaluator::eval_select_stateful(&stmt_alias, &r, &state_alias)
             .expect("eval")
-            .remove("v")
+            .shift_remove("v")
             .unwrap()
     };
 
@@ -2859,7 +2859,7 @@ fn test_issue26_lag_with_ignore_null() {
         let stmt = parser.parse_select().unwrap();
         Evaluator::eval_select_stateful(&stmt, &r, state)
             .unwrap()
-            .remove("v")
+            .shift_remove("v")
             .unwrap()
     };
 

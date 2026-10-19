@@ -73,6 +73,29 @@ SELECT
 
 - `expression`: Constants, function invocations, column references, or operators.
 
+### Field Order in Output Rows
+
+rekuiper keeps the exact order of columns specified in the `SELECT` clause.
+
+![Deterministic Field Order](/diagrams/deterministic_field_order.svg)
+
+- When you select explicit columns, output JSON fields match the sequence in the query:
+
+  ```sql
+  SELECT device_id, temperature, humidity, status FROM sensor_stream;
+  -- Output JSON: {"device_id": "d1", "temperature": 22.5, "humidity": 65, "status": "ok"}
+  ```
+
+- When you use `SELECT *`, output fields match the sequence defined in the input stream schema.
+- When you use computed expressions and aliases, output fields appear in their declared sequence:
+
+  ```sql
+  SELECT temp * 1.8 + 32 AS temp_f, id FROM perf_stream;
+  -- Output JSON: {"temp_f": 77.0, "id": "dev_0"}
+  ```
+
+Downstream systems receive predictable JSON objects without random field reordering.
+
 ## FROM
 
 Specifies the input source. Every `SELECT` statement requires a `FROM` clause.

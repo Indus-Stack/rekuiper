@@ -1,8 +1,10 @@
 use crate::engine::joins::apply_lookup_joins;
 use crate::engine::sinks::enqueue_sink_record;
+use indexmap::IndexMap;
 use parking_lot::RwLock;
 use rekuiper_core::model::{RuleStatus, StreamRecord};
 use rekuiper_core::{RuleCounters, RuleManager, StreamReceiver, TableManager};
+use rekuiper_sql::eval::RowLookup;
 use rekuiper_sql::{Evaluator, RuleState, SelectStmt};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -64,11 +66,8 @@ pub(crate) fn spawn_checkpoint_ticker(
 /// Extracts an upstream error message when the record carries an `error` or
 /// `__error` / `__raw_error__` field (emitted by source decoders on malformed payloads).
 #[inline]
-pub(crate) fn check_record_error(data: &HashMap<String, Value>) -> Option<String> {
-    if data.is_empty() {
-        return None;
-    }
-    for (k, v) in data.iter() {
+pub(crate) fn check_record_error<R: RowLookup + ?Sized>(data: &R) -> Option<String> {
+    for (k, v) in data.iter_row() {
         if k == "error" || k == "__error" || k == "__raw_error__" {
             return Some(
                 v.as_str()
@@ -88,7 +87,7 @@ pub(crate) async fn handle_runtime_error(
     sink: &tokio::sync::mpsc::Sender<StreamRecord>,
     err_msg: String,
     stage: Option<rekuiper_core::model::DlqStage>,
-    record_data: Option<&HashMap<String, Value>>,
+    record_data: Option<&IndexMap<String, Value>>,
     dlq_router: Option<&crate::engine::dlq::DlqRouter>,
 ) {
     if let Some(dlq) = dlq_router {
@@ -106,7 +105,7 @@ pub(crate) async fn handle_runtime_error(
         counters.record_exception(&err_msg);
     }
     if send_error {
-        let mut err_data = HashMap::new();
+        let mut err_data = IndexMap::new();
         err_data.insert("error".to_string(), Value::String(err_msg.clone()));
         err_data.insert("rule_id".to_string(), Value::String(rule_id.to_string()));
         err_data.insert("__raw_error__".to_string(), Value::String(err_msg));
@@ -137,7 +136,7 @@ pub(crate) async fn handle_error_record(
         sink,
         err_msg,
         Some(rekuiper_core::model::DlqStage::CodecDecode),
-        Some(&record.data),
+        Some(&*record.data),
         dlq_router,
     )
     .await;
@@ -176,8 +175,8 @@ pub(crate) fn parse_timestamp_val(v: &Value) -> Option<i64> {
     None
 }
 
-pub(crate) fn extract_event_timestamp(
-    data: &HashMap<String, Value>,
+pub(crate) fn extract_event_timestamp<R: RowLookup + ?Sized>(
+    data: &R,
     configured_field: Option<&str>,
 ) -> i64 {
     if let Some(field) = configured_field {
@@ -405,7 +404,7 @@ pub(crate) async fn run_stateless_rule(
                             &sink,
                             err_msg,
                             Some(rekuiper_core::model::DlqStage::CodecDecode),
-                            Some(&record.data),
+                            Some(&*record.data),
                             Some(&dlq_router),
                         )
                         .await;
@@ -470,7 +469,7 @@ pub(crate) async fn run_stateless_rule(
                                 &sink,
                                 err,
                                 Some(rekuiper_core::model::DlqStage::SqlEval),
-                                Some(&record.data),
+                                Some(&*record.data),
                                 Some(&dlq_router),
                             )
                             .await;

@@ -5,6 +5,7 @@ use crate::{
 };
 use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
+use indexmap::IndexMap;
 use rekuiper_core::model::StreamRecord;
 use rekuiper_core::{RuleCounters, StreamSender};
 use rumqttc::{AsyncClient, Event, MqttOptions, Packet, QoS};
@@ -667,13 +668,15 @@ pub fn decode_mqtt_payload(payload: &[u8]) -> Result<StreamRecord> {
     // Fast path: deserialize straight into the row map (no intermediate DOM,
     // no object clone). Only a failing payload pays for the diagnostic parse
     // that distinguishes invalid JSON from a non-object value.
-    match serde_json::from_slice::<HashMap<String, Value>>(payload) {
+    match serde_json::from_slice::<IndexMap<String, Value>>(payload) {
         Ok(data) => Ok(StreamRecord::new(data)),
         Err(_) => {
             let value: Value =
                 serde_json::from_slice(payload).context("MQTT payload is not valid JSON")?;
             match value {
-                Value::Object(map) => Ok(StreamRecord::new(map.into_iter().collect())),
+                Value::Object(map) => Ok(StreamRecord::new(
+                    map.into_iter().collect::<IndexMap<_, _>>(),
+                )),
                 _ => Err(anyhow::anyhow!("MQTT payload must be a JSON object")),
             }
         }
@@ -709,15 +712,15 @@ pub fn decode_payload_into_with_mask(
                         let value: Value = serde_json::from_slice(payload)
                             .context("MQTT payload is not valid JSON")?;
                         match value {
-                            Value::Object(map) => {
-                                out.push(StreamRecord::new(map.into_iter().collect()))
-                            }
+                            Value::Object(map) => out.push(StreamRecord::new(
+                                map.into_iter().collect::<IndexMap<_, _>>(),
+                            )),
                             Value::Array(items) => {
                                 for item in items {
                                     match item {
-                                        Value::Object(map) => {
-                                            out.push(StreamRecord::new(map.into_iter().collect()))
-                                        }
+                                        Value::Object(map) => out.push(StreamRecord::new(
+                                            map.into_iter().collect::<IndexMap<_, _>>(),
+                                        )),
                                         _ => {
                                             out.truncate(first);
                                             bail!(
@@ -732,21 +735,21 @@ pub fn decode_payload_into_with_mask(
                     }
                 }
             } else {
-                match serde_json::from_slice::<HashMap<String, Value>>(payload) {
+                match serde_json::from_slice::<IndexMap<String, Value>>(payload) {
                     Ok(data) => out.push(StreamRecord::new(data)),
                     Err(_) => {
                         let value: Value = serde_json::from_slice(payload)
                             .context("MQTT payload is not valid JSON")?;
                         match value {
-                            Value::Object(map) => {
-                                out.push(StreamRecord::new(map.into_iter().collect()))
-                            }
+                            Value::Object(map) => out.push(StreamRecord::new(
+                                map.into_iter().collect::<IndexMap<_, _>>(),
+                            )),
                             Value::Array(items) => {
                                 for item in items {
                                     match item {
-                                        Value::Object(map) => {
-                                            out.push(StreamRecord::new(map.into_iter().collect()))
-                                        }
+                                        Value::Object(map) => out.push(StreamRecord::new(
+                                            map.into_iter().collect::<IndexMap<_, _>>(),
+                                        )),
                                         _ => {
                                             out.truncate(first);
                                             bail!(
@@ -780,7 +783,9 @@ pub fn decode_payload_into_with_mask(
             out.push(StreamRecord::new(codec.decode_row(line)));
         }
         PayloadFormat::Protobuf(message) => match ProtobufCodec::decode(payload, message) {
-            Value::Object(map) => out.push(StreamRecord::new(map.into_iter().collect())),
+            Value::Object(map) => out.push(StreamRecord::new(
+                map.into_iter().collect::<IndexMap<_, _>>(),
+            )),
             _ => bail!("payload is not a valid '{}' protobuf message", message.name),
         },
         PayloadFormat::EdgeX => EdgeXCodec::decode(payload, meta.clone(), out)?,

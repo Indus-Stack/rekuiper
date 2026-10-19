@@ -52,7 +52,7 @@ fn eval_project(sql: &str, record: &HashMap<String, Value>, alias: &str) -> Valu
     let stmt = parser.parse_select().expect("Should parse");
     rekuiper_sql::Evaluator::eval_select(&stmt, record)
         .expect("Should project")
-        .remove(alias)
+        .shift_remove(alias)
         .unwrap()
 }
 

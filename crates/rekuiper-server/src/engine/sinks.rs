@@ -8,6 +8,7 @@ use rekuiper_connectors::{
 };
 use rekuiper_core::model::StreamRecord;
 use rekuiper_core::{RuleCounters, RuleManager, StreamBus};
+use rekuiper_sql::eval::RowLookup;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -141,7 +142,7 @@ pub(crate) fn clean_sink_value(v: &Value, send_nil_field: bool) -> Value {
                 .collect(),
         ),
         Value::Object(obj) => {
-            let mut map = std::collections::BTreeMap::new();
+            let mut map = indexmap::IndexMap::new();
             for (k, val) in obj {
                 if k == rekuiper_sql::eval::META_KEY || k.starts_with("__") {
                     continue;
@@ -157,12 +158,12 @@ pub(crate) fn clean_sink_value(v: &Value, send_nil_field: bool) -> Value {
     }
 }
 
-pub(crate) fn format_record_for_sink(
-    data: &HashMap<String, Value>,
+pub(crate) fn format_record_for_sink<R: rekuiper_sql::RowLookup + ?Sized>(
+    data: &R,
     opts: &CommonSinkOpts,
 ) -> Value {
     if data.contains_key("__raw_error__") {
-        let mut map = std::collections::BTreeMap::new();
+        let mut map = indexmap::IndexMap::new();
         if let Some(err) = data.get("error") {
             map.insert("error".to_string(), err.clone());
         }
@@ -174,7 +175,7 @@ pub(crate) fn format_record_for_sink(
     if let Some(ref df) = opts.data_field {
         if let Some(val) = data.get(df) {
             if let Value::Object(obj) = val {
-                let mut map = std::collections::BTreeMap::new();
+                let mut map = indexmap::IndexMap::new();
                 if let Some(ref fields) = opts.fields {
                     for f in fields {
                         let v = obj.get(f).unwrap_or(&Value::Null);
@@ -200,7 +201,7 @@ pub(crate) fn format_record_for_sink(
         }
         return Value::Null;
     }
-    let mut map = std::collections::BTreeMap::new();
+    let mut map = indexmap::IndexMap::new();
     if let Some(ref fields) = opts.fields {
         for f in fields {
             let val = data.get(f).unwrap_or(&Value::Null);
@@ -212,7 +213,7 @@ pub(crate) fn format_record_for_sink(
             map.insert(f.clone(), clean_sink_value(val, opts.send_nil_field));
         }
     } else {
-        for (k, v) in data {
+        for (k, v) in data.iter() {
             if k == rekuiper_sql::eval::META_KEY || k.starts_with("__") {
                 continue;
             }
@@ -232,11 +233,7 @@ pub(crate) fn format_record_for_sink(
 
 pub(crate) fn format_record_for_sink_val(val: &Value, opts: &CommonSinkOpts) -> Value {
     match val {
-        Value::Object(map) => {
-            let hm: HashMap<String, Value> =
-                map.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-            format_record_for_sink(&hm, opts)
-        }
+        Value::Object(map) => format_record_for_sink(map, opts),
         other => other.clone(),
     }
 }
@@ -993,9 +990,9 @@ impl FileBatchWriter {
         self.pending += 1;
     }
 
-    fn push_delimited(
+    fn push_delimited<R: RowLookup + ?Sized>(
         &mut self,
-        data: &HashMap<String, Value>,
+        data: &R,
         delimiter: &str,
         header: bool,
         opts: &CommonSinkOpts,
@@ -1004,7 +1001,8 @@ impl FileBatchWriter {
             f.clone()
         } else {
             let mut k: Vec<String> = data
-                .keys()
+                .iter_row()
+                .map(|(k, _)| k)
                 .filter(|k| *k != rekuiper_sql::eval::META_KEY && !k.starts_with("__"))
                 .cloned()
                 .collect();
@@ -1084,7 +1082,9 @@ pub(crate) fn action_template(opts: &Value) -> Option<&str> {
     opts.get("dataTemplate").and_then(|v| v.as_str())
 }
 
-pub(crate) fn record_template_map(data: &HashMap<String, Value>) -> serde_json::Map<String, Value> {
+pub(crate) fn record_template_map<R: rekuiper_sql::RowLookup + ?Sized>(
+    data: &R,
+) -> serde_json::Map<String, Value> {
     data.iter()
         .filter(|(k, _)| *k != rekuiper_sql::eval::META_KEY && !k.starts_with("__"))
         .map(|(k, v)| (k.clone(), v.clone()))
@@ -1105,9 +1105,9 @@ pub(crate) fn render_sink_template_row(template: &str, row: &Value) -> String {
     }
 }
 
-pub(crate) fn render_sink_template(
+pub(crate) fn render_sink_template<R: rekuiper_sql::RowLookup + ?Sized>(
     template: &str,
-    record: &HashMap<String, Value>,
+    record: &R,
     send_single: bool,
 ) -> String {
     let map = record_template_map(record);
@@ -1261,7 +1261,7 @@ async fn execute_rest_request(
     headers: &HashMap<String, String>,
     content_type: Option<&str>,
     body_str: Option<&str>,
-    map: &HashMap<String, Value>,
+    map: &impl rekuiper_sql::RowLookup,
     enable_private_net: bool,
 ) -> Result<(), SendError> {
     if !enable_private_net {
@@ -1439,7 +1439,7 @@ pub(crate) async fn send_action(
             let is_delimited = format.as_deref() == Some("delimited")
                 || opts.format.as_deref() == Some("delimited");
 
-            let resolve_url = |data_map: &HashMap<String, Value>| {
+            let resolve_url = |data_map: &indexmap::IndexMap<String, Value>| {
                 if base_url.contains("{{") {
                     apply_data_template(base_url, &record_template_map(data_map))
                 } else {
@@ -1484,9 +1484,9 @@ pub(crate) async fn send_action(
                 }
                 if opts.send_single {
                     for row in arr {
-                        let row_map: HashMap<String, Value> = match row {
+                        let row_map: indexmap::IndexMap<String, Value> = match row {
                             Value::Object(m) => m.clone().into_iter().collect(),
-                            _ => HashMap::new(),
+                            _ => indexmap::IndexMap::new(),
                         };
                         let final_url = resolve_url(&row_map);
                         let body_str = if let Some(tpl) = template {
@@ -1617,7 +1617,7 @@ pub(crate) async fn send_action(
             let is_delimited = format.as_deref() == Some("delimited")
                 || opts.format.as_deref() == Some("delimited");
 
-            let resolve_topic = |data_map: &HashMap<String, Value>| -> String {
+            let resolve_topic = |data_map: &indexmap::IndexMap<String, Value>| -> String {
                 match destination {
                     Some(d) => d.to_string(),
                     None => {
@@ -1643,9 +1643,9 @@ pub(crate) async fn send_action(
                         .map_err(|e| SendError::Retry(format!("mqtt action failed: {}", e)))?;
                 } else if opts.send_single {
                     for row in arr {
-                        let row_map: HashMap<String, Value> = match row {
+                        let row_map: indexmap::IndexMap<String, Value> = match row {
                             Value::Object(m) => m.clone().into_iter().collect(),
-                            _ => HashMap::new(),
+                            _ => indexmap::IndexMap::new(),
                         };
                         let topic = resolve_topic(&row_map);
                         let payload = if let Some(tpl) = template {
@@ -1995,8 +1995,13 @@ pub(crate) async fn send_action(
             };
             let payload = match template {
                 Some(tpl) => render_sink_template(tpl, &output.data, true).into_bytes(),
-                None => EdgeXCodec::encode(&output.data, device_name, profile_name, source_name)
-                    .map_err(|e| SendError::Permanent(format!("edgex payload encode: {}", e)))?,
+                None => EdgeXCodec::encode(
+                    &output.data.to_hashmap(),
+                    device_name,
+                    profile_name,
+                    source_name,
+                )
+                .map_err(|e| SendError::Permanent(format!("edgex payload encode: {}", e)))?,
             };
             sink.send_raw_to(destination.unwrap_or(&config.topic), payload)
                 .await
@@ -2029,7 +2034,7 @@ pub(crate) async fn send_action(
                 lines.join("\n")
             } else {
                 rekuiper_connectors::record_to_line_protocol(
-                    &output.data,
+                    &output.data.to_hashmap(),
                     &config.measurement,
                     config.tags.as_ref(),
                     config.fields.as_deref(),
@@ -2111,7 +2116,7 @@ pub(crate) async fn send_action(
                 lines.join("\n")
             } else {
                 rekuiper_connectors::record_to_line_protocol(
-                    &output.data,
+                    &output.data.to_hashmap(),
                     &config.measurement,
                     config.tags.as_ref(),
                     config.fields.as_deref(),
@@ -2183,9 +2188,11 @@ pub(crate) async fn send_action(
                     SendError::Permanent(format!("tdengine batch sql generation error: {}", e))
                 })?
             } else {
-                config.build_insert_sql(&output.data).map_err(|e| {
-                    SendError::Permanent(format!("tdengine sql generation error: {}", e))
-                })?
+                config
+                    .build_insert_sql(&output.data.to_hashmap())
+                    .map_err(|e| {
+                        SendError::Permanent(format!("tdengine sql generation error: {}", e))
+                    })?
             };
 
             if sql_statement.trim().is_empty() {
@@ -2265,9 +2272,11 @@ pub(crate) async fn send_action(
                     SendError::Permanent(format!("iotdb payload generation error: {}", e))
                 })?
             } else {
-                vec![config.build_insert_payload(&output.data).map_err(|e| {
-                    SendError::Permanent(format!("iotdb payload generation error: {}", e))
-                })?]
+                vec![config
+                    .build_insert_payload(&output.data.to_hashmap())
+                    .map_err(|e| {
+                        SendError::Permanent(format!("iotdb payload generation error: {}", e))
+                    })?]
             };
 
             for payload in payloads {
@@ -2347,7 +2356,7 @@ pub(crate) async fn send_action(
                     }
                 }
             } else {
-                match config.save_image(&output.data).await {
+                match config.save_image(&output.data.to_hashmap()).await {
                     Ok(_) => {}
                     Err(rekuiper_connectors::ImageSinkError::Validation(e)) => {
                         return Err(SendError::Permanent(e));
@@ -2369,7 +2378,7 @@ pub(crate) async fn send_action(
             }
             let sink = rt.zmq.as_ref().unwrap();
 
-            let resolve_topic = |data_map: &HashMap<String, Value>| {
+            let resolve_topic = |data_map: &indexmap::IndexMap<String, Value>| {
                 let default_top = config.topic.as_deref().unwrap_or("");
                 let t = destination.unwrap_or(default_top);
                 if t.contains("{{") {
@@ -2382,9 +2391,9 @@ pub(crate) async fn send_action(
             if let Some(Value::Array(arr)) = output.data.get(BATCH_ROWS_KEY) {
                 if opts.send_single {
                     for row in arr {
-                        let row_map: HashMap<String, Value> = match row {
+                        let row_map: indexmap::IndexMap<String, Value> = match row {
                             Value::Object(m) => m.clone().into_iter().collect(),
-                            _ => HashMap::new(),
+                            _ => indexmap::IndexMap::new(),
                         };
                         let topic = resolve_topic(&row_map);
                         let payload = if let Some(tpl) = template {
@@ -2460,7 +2469,7 @@ pub(crate) async fn send_action(
             } else {
                 let map = match format_record_for_sink(&output.data, opts) {
                     Value::Object(m) => m.into_iter().collect(),
-                    _ => output.data.clone(),
+                    _ => output.data.to_hashmap(),
                 };
                 sink.write_record(&map).await.map_err(|(is_perm, err_str)| {
                     if is_perm {
@@ -2495,7 +2504,7 @@ pub(crate) async fn send_action(
             } else {
                 let map = match format_record_for_sink(&output.data, opts) {
                     Value::Object(m) => m.into_iter().collect(),
-                    _ => output.data.clone(),
+                    _ => output.data.to_hashmap(),
                 };
                 sink.write_record(&map).await.map_err(|(is_perm, err_str)| {
                     if is_perm {
@@ -2530,7 +2539,7 @@ pub(crate) async fn send_action(
             } else {
                 let map = match format_record_for_sink(&output.data, opts) {
                     Value::Object(m) => m.into_iter().collect(),
-                    _ => output.data.clone(),
+                    _ => output.data.to_hashmap(),
                 };
                 sink.write_record(&map).await.map_err(|(is_perm, err_str)| {
                     if is_perm {
@@ -3039,7 +3048,7 @@ async fn dispatch_rule_actions_legacy(
                                         .into_bytes()
                                 }
                                 None => match EdgeXCodec::encode(
-                                    &output.data,
+                                    &output.data.to_hashmap(),
                                     device_name,
                                     profile_name,
                                     source_name,

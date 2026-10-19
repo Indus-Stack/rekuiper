@@ -1,23 +1,22 @@
-use super::{ArithOp, Evaluator, RuleState, META_KEY};
+use super::{ArithOp, Evaluator, RowLookup, RuleState, META_KEY};
 use crate::ast::Expr;
 use serde_json::Value;
-use std::collections::HashMap;
 
 const MAX_ACC_ITEMS: usize = 10_000;
 
 impl Evaluator {
-    pub(crate) fn eval_aggregate_call(
+    pub(crate) fn eval_aggregate_call<R: RowLookup>(
         name: &str,
         args: &[Expr],
-        records: &[HashMap<String, Value>],
+        records: &[R],
     ) -> Value {
         Self::eval_aggregate_call_stateful(name, args, records, None, "")
     }
 
-    pub(crate) fn eval_aggregate_call_stateful(
+    pub(crate) fn eval_aggregate_call_stateful<R: RowLookup>(
         name: &str,
         args: &[Expr],
-        records: &[HashMap<String, Value>],
+        records: &[R],
         state: Option<&RuleState>,
         _partition_key: &str,
     ) -> Value {
@@ -338,8 +337,8 @@ impl Evaluator {
         Value::Array(list)
     }
 
-    pub(crate) fn agg_last_agg_hit_count_stateful(
-        records: &[HashMap<String, Value>],
+    pub(crate) fn agg_last_agg_hit_count_stateful<R: RowLookup>(
+        records: &[R],
         state: Option<&RuleState>,
     ) -> Value {
         if let Some(s) = state {
@@ -353,8 +352,8 @@ impl Evaluator {
         }
     }
 
-    pub(crate) fn agg_last_agg_hit_time_stateful(
-        records: &[HashMap<String, Value>],
+    pub(crate) fn agg_last_agg_hit_time_stateful<R: RowLookup>(
+        records: &[R],
         state: Option<&RuleState>,
     ) -> Value {
         if let Some(s) = state {
@@ -373,13 +372,13 @@ impl Evaluator {
         }
     }
 
-    pub(crate) fn agg_last_agg_hit_count(_records: &[HashMap<String, Value>]) -> Value {
+    pub(crate) fn agg_last_agg_hit_count<R: RowLookup>(_records: &[R]) -> Value {
         static COUNT: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
         let cur = COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         Value::from(cur)
     }
 
-    pub(crate) fn agg_last_agg_hit_time(records: &[HashMap<String, Value>]) -> Value {
+    pub(crate) fn agg_last_agg_hit_time<R: RowLookup>(records: &[R]) -> Value {
         static LAST_TIME: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
         let prev = LAST_TIME.load(std::sync::atomic::Ordering::Relaxed);
         let window_end = records
@@ -391,7 +390,7 @@ impl Evaluator {
         Value::from(prev)
     }
 
-    pub(crate) fn agg_count(args: &[Expr], records: &[HashMap<String, Value>]) -> Value {
+    pub(crate) fn agg_count<R: RowLookup>(args: &[Expr], records: &[R]) -> Value {
         if args.is_empty() {
             return Value::Null;
         }
@@ -410,7 +409,7 @@ impl Evaluator {
     }
 
     /// Collect numeric arg values across the batch, skipping nulls/non-numerics.
-    pub(crate) fn agg_numeric_values(arg: &Expr, records: &[HashMap<String, Value>]) -> Vec<Value> {
+    pub(crate) fn agg_numeric_values<R: RowLookup>(arg: &Expr, records: &[R]) -> Vec<Value> {
         let mut out = Vec::new();
         for rec in records {
             let v = Self::eval_val(arg, rec);
@@ -424,7 +423,7 @@ impl Evaluator {
         out
     }
 
-    pub(crate) fn agg_sum(args: &[Expr], records: &[HashMap<String, Value>]) -> Value {
+    pub(crate) fn agg_sum<R: RowLookup>(args: &[Expr], records: &[R]) -> Value {
         if args.len() != 1 {
             return Value::Null;
         }
@@ -454,7 +453,7 @@ impl Evaluator {
         serde_json::json!(sum)
     }
 
-    pub(crate) fn agg_avg(args: &[Expr], records: &[HashMap<String, Value>]) -> Value {
+    pub(crate) fn agg_avg<R: RowLookup>(args: &[Expr], records: &[R]) -> Value {
         if args.len() != 1 {
             return Value::Null;
         }
@@ -469,7 +468,7 @@ impl Evaluator {
         serde_json::json!(sum / (vals.len() as f64))
     }
 
-    pub(crate) fn agg_min(args: &[Expr], records: &[HashMap<String, Value>]) -> Value {
+    pub(crate) fn agg_min<R: RowLookup>(args: &[Expr], records: &[R]) -> Value {
         if args.len() != 1 {
             return Value::Null;
         }
@@ -504,7 +503,7 @@ impl Evaluator {
         best.clone()
     }
 
-    pub(crate) fn agg_max(args: &[Expr], records: &[HashMap<String, Value>]) -> Value {
+    pub(crate) fn agg_max<R: RowLookup>(args: &[Expr], records: &[R]) -> Value {
         if args.len() != 1 {
             return Value::Null;
         }
@@ -541,7 +540,7 @@ impl Evaluator {
 
     /// `collect(col)`: all non-null values of `col` across the window batch,
     /// in row order.
-    pub(crate) fn agg_collect(args: &[Expr], records: &[HashMap<String, Value>]) -> Value {
+    pub(crate) fn agg_collect<R: RowLookup>(args: &[Expr], records: &[R]) -> Value {
         if args.len() != 1 {
             return Value::Null;
         }
@@ -551,7 +550,7 @@ impl Evaluator {
                     .iter()
                     .map(|rec| {
                         let mut map = serde_json::Map::new();
-                        for (k, v) in rec {
+                        for (k, v) in rec.iter_row() {
                             if k != META_KEY && !k.starts_with("__") {
                                 map.insert(k.clone(), v.clone());
                             }
@@ -572,7 +571,7 @@ impl Evaluator {
 
     /// `latest(col, [default])`: the most recent (last) non-null value of `col` in the
     /// batch, or `default` (or `Null`) when there is none.
-    pub(crate) fn agg_latest(args: &[Expr], records: &[HashMap<String, Value>]) -> Value {
+    pub(crate) fn agg_latest<R: RowLookup>(args: &[Expr], records: &[R]) -> Value {
         if args.is_empty() || args.len() > 2 {
             return Value::Null;
         }
@@ -600,7 +599,7 @@ impl Evaluator {
     /// (default 1) counts forward from the first row (0-based); out-of-range
     /// offsets yield `default` (default `Null`). `ignoreNull` (default `true`)
     /// skips null records while counting forward.
-    pub(crate) fn agg_lead(args: &[Expr], records: &[HashMap<String, Value>]) -> Value {
+    pub(crate) fn agg_lead<R: RowLookup>(args: &[Expr], records: &[R]) -> Value {
         if args.is_empty() || args.len() > 4 {
             return Value::Null;
         }
@@ -658,7 +657,7 @@ impl Evaluator {
 
     /// Sorted numeric column values across the window batch, skipping
     /// nulls and non-numerics. Shared by the statistical aggregates.
-    pub(crate) fn agg_sorted_numbers(arg: &Expr, records: &[HashMap<String, Value>]) -> Vec<f64> {
+    pub(crate) fn agg_sorted_numbers<R: RowLookup>(arg: &Expr, records: &[R]) -> Vec<f64> {
         let mut vals: Vec<f64> = Self::agg_numeric_values(arg, records)
             .iter()
             .filter_map(|v| v.as_f64())
@@ -667,7 +666,7 @@ impl Evaluator {
         vals
     }
 
-    pub(crate) fn agg_median(args: &[Expr], records: &[HashMap<String, Value>]) -> Value {
+    pub(crate) fn agg_median<R: RowLookup>(args: &[Expr], records: &[R]) -> Value {
         if args.len() != 1 {
             return Value::Null;
         }
@@ -699,10 +698,7 @@ impl Evaluator {
 
     /// Single-pass Welford's online algorithm for sum-of-squared-deviations;
     /// returns `(ssd, count)` with zero heap allocations and zero sorting.
-    pub(crate) fn agg_ssd(
-        args: &[Expr],
-        records: &[HashMap<String, Value>],
-    ) -> Option<(f64, usize)> {
+    pub(crate) fn agg_ssd<R: RowLookup>(args: &[Expr], records: &[R]) -> Option<(f64, usize)> {
         if args.len() != 1 || matches!(args[0], Expr::Wildcard) {
             return None;
         }
@@ -727,7 +723,7 @@ impl Evaluator {
         }
     }
 
-    pub(crate) fn agg_stddev(args: &[Expr], records: &[HashMap<String, Value>]) -> Value {
+    pub(crate) fn agg_stddev<R: RowLookup>(args: &[Expr], records: &[R]) -> Value {
         match Self::agg_ssd(args, records) {
             None => Value::Null,
             Some((_, 0)) => Value::Null,
@@ -735,7 +731,7 @@ impl Evaluator {
         }
     }
 
-    pub(crate) fn agg_stddevs(args: &[Expr], records: &[HashMap<String, Value>]) -> Value {
+    pub(crate) fn agg_stddevs<R: RowLookup>(args: &[Expr], records: &[R]) -> Value {
         match Self::agg_ssd(args, records) {
             // Sample statistics need at least 2 points (0 dof otherwise).
             None => Value::Null,
@@ -744,7 +740,7 @@ impl Evaluator {
         }
     }
 
-    pub(crate) fn agg_var(args: &[Expr], records: &[HashMap<String, Value>]) -> Value {
+    pub(crate) fn agg_var<R: RowLookup>(args: &[Expr], records: &[R]) -> Value {
         match Self::agg_ssd(args, records) {
             None => Value::Null,
             Some((_, 0)) => Value::Null,
@@ -752,7 +748,7 @@ impl Evaluator {
         }
     }
 
-    pub(crate) fn agg_vars(args: &[Expr], records: &[HashMap<String, Value>]) -> Value {
+    pub(crate) fn agg_vars<R: RowLookup>(args: &[Expr], records: &[R]) -> Value {
         match Self::agg_ssd(args, records) {
             None => Value::Null,
             Some((_, n)) if n < 2 => Value::Null,
@@ -763,7 +759,7 @@ impl Evaluator {
     /// Evaluate the percentile fraction `p` against the first batch record
     /// (constants in practice); `None` when missing, non-numeric or outside
     /// `[0, 1]`.
-    fn agg_percentile_p(args: &[Expr], records: &[HashMap<String, Value>]) -> Option<f64> {
+    fn agg_percentile_p<R: RowLookup>(args: &[Expr], records: &[R]) -> Option<f64> {
         if args.len() != 2 {
             return None;
         }
@@ -778,7 +774,7 @@ impl Evaluator {
         Some(p)
     }
 
-    pub(crate) fn agg_percentile(args: &[Expr], records: &[HashMap<String, Value>]) -> Value {
+    pub(crate) fn agg_percentile<R: RowLookup>(args: &[Expr], records: &[R]) -> Value {
         let Some(p) = Self::agg_percentile_p(args, records) else {
             return Value::Null;
         };
@@ -799,7 +795,7 @@ impl Evaluator {
         serde_json::json!(vals[i] + frac * (vals[i + 1] - vals[i]))
     }
 
-    pub(crate) fn agg_percentile_disc(args: &[Expr], records: &[HashMap<String, Value>]) -> Value {
+    pub(crate) fn agg_percentile_disc<R: RowLookup>(args: &[Expr], records: &[R]) -> Value {
         let Some(p) = Self::agg_percentile_p(args, records) else {
             return Value::Null;
         };
@@ -826,7 +822,7 @@ impl Evaluator {
         raw[index].clone()
     }
 
-    pub(crate) fn agg_last_value(args: &[Expr], records: &[HashMap<String, Value>]) -> Value {
+    pub(crate) fn agg_last_value<R: RowLookup>(args: &[Expr], records: &[R]) -> Value {
         if args.is_empty() || args.len() > 2 {
             return Value::Null;
         }
@@ -843,15 +839,25 @@ impl Evaluator {
                 return records
                     .last()
                     .map(|rec| {
-                        Value::Object(rec.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+                        Value::Object(
+                            rec.iter_row()
+                                .map(|(k, v)| (k.clone(), v.clone()))
+                                .collect(),
+                        )
                     })
                     .unwrap_or(Value::Null);
             }
             return records
                 .iter()
                 .rev()
-                .find(|rec| rec.values().any(|v| !v.is_null()))
-                .map(|rec| Value::Object(rec.iter().map(|(k, v)| (k.clone(), v.clone())).collect()))
+                .find(|rec| rec.iter_row().any(|(_, v)| !v.is_null()))
+                .map(|rec| {
+                    Value::Object(
+                        rec.iter_row()
+                            .map(|(k, v)| (k.clone(), v.clone()))
+                            .collect(),
+                    )
+                })
                 .unwrap_or(Value::Null);
         }
         if !ignore_nulls {
@@ -868,14 +874,14 @@ impl Evaluator {
             .unwrap_or(Value::Null)
     }
 
-    pub(crate) fn agg_merge_agg(args: &[Expr], records: &[HashMap<String, Value>]) -> Value {
+    pub(crate) fn agg_merge_agg<R: RowLookup>(args: &[Expr], records: &[R]) -> Value {
         if args.len() != 1 {
             return Value::Null;
         }
         let mut merged = serde_json::Map::new();
         if matches!(args[0], Expr::Wildcard) {
             for rec in records {
-                for (k, v) in rec {
+                for (k, v) in rec.iter_row() {
                     merged.insert(k.clone(), v.clone());
                 }
             }
@@ -891,7 +897,7 @@ impl Evaluator {
         Value::Object(merged)
     }
 
-    pub(crate) fn agg_row_number(args: &[Expr], _records: &[HashMap<String, Value>]) -> Value {
+    pub(crate) fn agg_row_number<R: RowLookup>(args: &[Expr], _records: &[R]) -> Value {
         if !args.is_empty() {
             return Value::Null;
         }

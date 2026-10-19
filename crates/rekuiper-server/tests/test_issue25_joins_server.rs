@@ -171,7 +171,7 @@ async fn test_defect1_stream_table_lookup_join() {
                 ("label".to_string(), json!("one")),
             ]
             .into_iter()
-            .collect(),
+            .collect::<indexmap::IndexMap<_, _>>(),
         ),
     );
     let _ = state.stream_bus.publish(
@@ -182,7 +182,7 @@ async fn test_defect1_stream_table_lookup_join() {
                 ("label".to_string(), json!("two")),
             ]
             .into_iter()
-            .collect(),
+            .collect::<indexmap::IndexMap<_, _>>(),
         ),
     );
 
@@ -248,7 +248,7 @@ async fn test_defect1_stream_table_lookup_join() {
                 ("label".to_string(), json!("three")),
             ]
             .into_iter()
-            .collect(),
+            .collect::<indexmap::IndexMap<_, _>>(),
         ),
     );
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
