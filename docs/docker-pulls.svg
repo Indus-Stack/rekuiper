@@ -16,7 +16,7 @@
 </defs>
 <rect width="800" height="320" class="bg" />
 <text x="65" y="36" class="title">Docker Pulls</text>
-<text x="760" y="36" text-anchor="end" class="stat-text">100 total</text>
+<text x="760" y="36" text-anchor="end" class="stat-text">104 total</text>
 <line x1="65" y1="265.0" x2="760" y2="265.0" class="grid" />
 <text x="55" y="269.0" text-anchor="end" class="axis-text">0</text>
 <line x1="65" y1="200.0" x2="760" y2="200.0" class="grid" />
@@ -27,58 +27,55 @@
 <text x="55" y="74.0" text-anchor="end" class="axis-text">6.0k</text>
 <line x1="65.0" y1="265" x2="65.0" y2="270" stroke="#30363d" stroke-width="1px" />
 <text x="65.0" y="285" text-anchor="middle" class="axis-text">Sep 09</text>
-<line x1="149.2" y1="265" x2="149.2" y2="270" stroke="#30363d" stroke-width="1px" />
-<text x="149.2" y="285" text-anchor="middle" class="axis-text">Sep 16</text>
-<line x1="233.5" y1="265" x2="233.5" y2="270" stroke="#30363d" stroke-width="1px" />
-<text x="233.5" y="285" text-anchor="middle" class="axis-text">Sep 23</text>
-<line x1="317.7" y1="265" x2="317.7" y2="270" stroke="#30363d" stroke-width="1px" />
-<text x="317.7" y="285" text-anchor="middle" class="axis-text">Sep 27</text>
-<line x1="402.0" y1="265" x2="402.0" y2="270" stroke="#30363d" stroke-width="1px" />
-<text x="402.0" y="285" text-anchor="middle" class="axis-text">Oct 01</text>
-<line x1="486.2" y1="265" x2="486.2" y2="270" stroke="#30363d" stroke-width="1px" />
-<text x="486.2" y="285" text-anchor="middle" class="axis-text">Oct 05</text>
-<line x1="570.5" y1="265" x2="570.5" y2="270" stroke="#30363d" stroke-width="1px" />
-<text x="570.5" y="285" text-anchor="middle" class="axis-text">Oct 09</text>
-<line x1="654.7" y1="265" x2="654.7" y2="270" stroke="#30363d" stroke-width="1px" />
-<text x="654.7" y="285" text-anchor="middle" class="axis-text">Oct 13</text>
-<line x1="738.9" y1="265" x2="738.9" y2="270" stroke="#30363d" stroke-width="1px" />
-<text x="738.9" y="285" text-anchor="middle" class="axis-text">Oct 17</text>
+<line x1="167.2" y1="265" x2="167.2" y2="270" stroke="#30363d" stroke-width="1px" />
+<text x="167.2" y="285" text-anchor="middle" class="axis-text">Sep 19</text>
+<line x1="269.4" y1="265" x2="269.4" y2="270" stroke="#30363d" stroke-width="1px" />
+<text x="269.4" y="285" text-anchor="middle" class="axis-text">Sep 25</text>
+<line x1="371.6" y1="265" x2="371.6" y2="270" stroke="#30363d" stroke-width="1px" />
+<text x="371.6" y="285" text-anchor="middle" class="axis-text">Sep 30</text>
+<line x1="473.8" y1="265" x2="473.8" y2="270" stroke="#30363d" stroke-width="1px" />
+<text x="473.8" y="285" text-anchor="middle" class="axis-text">Oct 05</text>
+<line x1="576.0" y1="265" x2="576.0" y2="270" stroke="#30363d" stroke-width="1px" />
+<text x="576.0" y="285" text-anchor="middle" class="axis-text">Oct 10</text>
+<line x1="678.2" y1="265" x2="678.2" y2="270" stroke="#30363d" stroke-width="1px" />
+<text x="678.2" y="285" text-anchor="middle" class="axis-text">Oct 15</text>
 <line x1="760.0" y1="265" x2="760.0" y2="270" stroke="#30363d" stroke-width="1px" />
-<text x="760.0" y="285" text-anchor="middle" class="axis-text">Oct 18</text>
-<path d="M 65.0 248.4 L 86.1 227.9 L 107.1 203.6 L 128.2 191.9 L 149.2 174.7 L 170.3 167.2 L 191.4 159.7 L 212.4 153.0 L 233.5 153.0 L 254.5 153.0 L 275.6 152.8 L 296.7 149.5 L 317.7 149.4 L 338.8 149.4 L 359.8 149.4 L 380.9 149.3 L 402.0 149.3 L 423.0 121.5 L 444.1 106.1 L 465.2 96.5 L 486.2 93.5 L 507.3 93.4 L 528.3 93.2 L 549.4 93.2 L 570.5 90.6 L 591.5 90.5 L 612.6 90.4 L 633.6 89.5 L 654.7 86.8 L 675.8 86.6 L 696.8 81.9 L 717.9 79.6 L 738.9 261.8 L 760.0 261.8 L 760.0 265.0 L 65.0 265.0 Z" fill="url(#lineGrad)" />
-<path d="M 65.0 248.4 L 86.1 227.9 L 107.1 203.6 L 128.2 191.9 L 149.2 174.7 L 170.3 167.2 L 191.4 159.7 L 212.4 153.0 L 233.5 153.0 L 254.5 153.0 L 275.6 152.8 L 296.7 149.5 L 317.7 149.4 L 338.8 149.4 L 359.8 149.4 L 380.9 149.3 L 402.0 149.3 L 423.0 121.5 L 444.1 106.1 L 465.2 96.5 L 486.2 93.5 L 507.3 93.4 L 528.3 93.2 L 549.4 93.2 L 570.5 90.6 L 591.5 90.5 L 612.6 90.4 L 633.6 89.5 L 654.7 86.8 L 675.8 86.6 L 696.8 81.9 L 717.9 79.6 L 738.9 261.8 L 760.0 261.8" class="spark-line" />
+<text x="760.0" y="285" text-anchor="middle" class="axis-text">Oct 19</text>
+<path d="M 65.0 248.4 L 85.4 227.9 L 105.9 203.6 L 126.3 191.9 L 146.8 174.7 L 167.2 167.2 L 187.6 159.7 L 208.1 153.0 L 228.5 153.0 L 249.0 153.0 L 269.4 152.8 L 289.9 149.5 L 310.3 149.4 L 330.7 149.4 L 351.2 149.4 L 371.6 149.3 L 392.1 149.3 L 412.5 121.5 L 432.9 106.1 L 453.4 96.5 L 473.8 93.5 L 494.3 93.4 L 514.7 93.2 L 535.1 93.2 L 555.6 90.6 L 576.0 90.5 L 596.5 90.4 L 616.9 89.5 L 637.4 86.8 L 657.8 86.6 L 678.2 81.9 L 698.7 79.6 L 719.1 261.8 L 739.6 261.8 L 760.0 261.6 L 760.0 265.0 L 65.0 265.0 Z" fill="url(#lineGrad)" />
+<path d="M 65.0 248.4 L 85.4 227.9 L 105.9 203.6 L 126.3 191.9 L 146.8 174.7 L 167.2 167.2 L 187.6 159.7 L 208.1 153.0 L 228.5 153.0 L 249.0 153.0 L 269.4 152.8 L 289.9 149.5 L 310.3 149.4 L 330.7 149.4 L 351.2 149.4 L 371.6 149.3 L 392.1 149.3 L 412.5 121.5 L 432.9 106.1 L 453.4 96.5 L 473.8 93.5 L 494.3 93.4 L 514.7 93.2 L 535.1 93.2 L 555.6 90.6 L 576.0 90.5 L 596.5 90.4 L 616.9 89.5 L 637.4 86.8 L 657.8 86.6 L 678.2 81.9 L 698.7 79.6 L 719.1 261.8 L 739.6 261.8 L 760.0 261.6" class="spark-line" />
 <circle cx="65.0" cy="248.4" r="4" class="spark-point"><title>2026-09-09: 510 pulls</title></circle>
-<circle cx="86.1" cy="227.9" r="4" class="spark-point"><title>2026-09-10: 1,140 pulls</title></circle>
-<circle cx="107.1" cy="203.6" r="4" class="spark-point"><title>2026-09-12: 1,890 pulls</title></circle>
-<circle cx="128.2" cy="191.9" r="4" class="spark-point"><title>2026-09-13: 2,250 pulls</title></circle>
-<circle cx="149.2" cy="174.7" r="4" class="spark-point"><title>2026-09-16: 2,780 pulls</title></circle>
-<circle cx="170.3" cy="167.2" r="4" class="spark-point"><title>2026-09-19: 3,010 pulls</title></circle>
-<circle cx="191.4" cy="159.7" r="4" class="spark-point"><title>2026-09-21: 3,241 pulls</title></circle>
-<circle cx="212.4" cy="153.0" r="4" class="spark-point"><title>2026-09-22: 3,445 pulls</title></circle>
-<circle cx="233.5" cy="153.0" r="4" class="spark-point"><title>2026-09-23: 3,445 pulls</title></circle>
-<circle cx="254.5" cy="153.0" r="4" class="spark-point"><title>2026-09-24: 3,445 pulls</title></circle>
-<circle cx="275.6" cy="152.8" r="4" class="spark-point"><title>2026-09-25: 3,452 pulls</title></circle>
-<circle cx="296.7" cy="149.5" r="4" class="spark-point"><title>2026-09-26: 3,555 pulls</title></circle>
-<circle cx="317.7" cy="149.4" r="4" class="spark-point"><title>2026-09-27: 3,558 pulls</title></circle>
-<circle cx="338.8" cy="149.4" r="4" class="spark-point"><title>2026-09-28: 3,558 pulls</title></circle>
-<circle cx="359.8" cy="149.4" r="4" class="spark-point"><title>2026-09-29: 3,558 pulls</title></circle>
-<circle cx="380.9" cy="149.3" r="4" class="spark-point"><title>2026-09-30: 3,560 pulls</title></circle>
-<circle cx="402.0" cy="149.3" r="4" class="spark-point"><title>2026-10-01: 3,561 pulls</title></circle>
-<circle cx="423.0" cy="121.5" r="4" class="spark-point"><title>2026-10-02: 4,415 pulls</title></circle>
-<circle cx="444.1" cy="106.1" r="4" class="spark-point"><title>2026-10-03: 4,889 pulls</title></circle>
-<circle cx="465.2" cy="96.5" r="4" class="spark-point"><title>2026-10-04: 5,185 pulls</title></circle>
-<circle cx="486.2" cy="93.5" r="4" class="spark-point"><title>2026-10-05: 5,276 pulls</title></circle>
-<circle cx="507.3" cy="93.4" r="4" class="spark-point"><title>2026-10-06: 5,281 pulls</title></circle>
-<circle cx="528.3" cy="93.2" r="4" class="spark-point"><title>2026-10-07: 5,285 pulls</title></circle>
-<circle cx="549.4" cy="93.2" r="4" class="spark-point"><title>2026-10-08: 5,285 pulls</title></circle>
-<circle cx="570.5" cy="90.6" r="4" class="spark-point"><title>2026-10-09: 5,367 pulls</title></circle>
-<circle cx="591.5" cy="90.5" r="4" class="spark-point"><title>2026-10-10: 5,370 pulls</title></circle>
-<circle cx="612.6" cy="90.4" r="4" class="spark-point"><title>2026-10-11: 5,372 pulls</title></circle>
-<circle cx="633.6" cy="89.5" r="4" class="spark-point"><title>2026-10-12: 5,401 pulls</title></circle>
-<circle cx="654.7" cy="86.8" r="4" class="spark-point"><title>2026-10-13: 5,483 pulls</title></circle>
-<circle cx="675.8" cy="86.6" r="4" class="spark-point"><title>2026-10-14: 5,488 pulls</title></circle>
-<circle cx="696.8" cy="81.9" r="4" class="spark-point"><title>2026-10-15: 5,633 pulls</title></circle>
-<circle cx="717.9" cy="79.6" r="4" class="spark-point"><title>2026-10-16: 5,706 pulls</title></circle>
-<circle cx="738.9" cy="261.8" r="4" class="spark-point"><title>2026-10-17: 100 pulls</title></circle>
-<circle cx="760.0" cy="261.8" r="4" class="spark-point"><title>2026-10-18: 100 pulls</title></circle>
+<circle cx="85.4" cy="227.9" r="4" class="spark-point"><title>2026-09-10: 1,140 pulls</title></circle>
+<circle cx="105.9" cy="203.6" r="4" class="spark-point"><title>2026-09-12: 1,890 pulls</title></circle>
+<circle cx="126.3" cy="191.9" r="4" class="spark-point"><title>2026-09-13: 2,250 pulls</title></circle>
+<circle cx="146.8" cy="174.7" r="4" class="spark-point"><title>2026-09-16: 2,780 pulls</title></circle>
+<circle cx="167.2" cy="167.2" r="4" class="spark-point"><title>2026-09-19: 3,010 pulls</title></circle>
+<circle cx="187.6" cy="159.7" r="4" class="spark-point"><title>2026-09-21: 3,241 pulls</title></circle>
+<circle cx="208.1" cy="153.0" r="4" class="spark-point"><title>2026-09-22: 3,445 pulls</title></circle>
+<circle cx="228.5" cy="153.0" r="4" class="spark-point"><title>2026-09-23: 3,445 pulls</title></circle>
+<circle cx="249.0" cy="153.0" r="4" class="spark-point"><title>2026-09-24: 3,445 pulls</title></circle>
+<circle cx="269.4" cy="152.8" r="4" class="spark-point"><title>2026-09-25: 3,452 pulls</title></circle>
+<circle cx="289.9" cy="149.5" r="4" class="spark-point"><title>2026-09-26: 3,555 pulls</title></circle>
+<circle cx="310.3" cy="149.4" r="4" class="spark-point"><title>2026-09-27: 3,558 pulls</title></circle>
+<circle cx="330.7" cy="149.4" r="4" class="spark-point"><title>2026-09-28: 3,558 pulls</title></circle>
+<circle cx="351.2" cy="149.4" r="4" class="spark-point"><title>2026-09-29: 3,558 pulls</title></circle>
+<circle cx="371.6" cy="149.3" r="4" class="spark-point"><title>2026-09-30: 3,560 pulls</title></circle>
+<circle cx="392.1" cy="149.3" r="4" class="spark-point"><title>2026-10-01: 3,561 pulls</title></circle>
+<circle cx="412.5" cy="121.5" r="4" class="spark-point"><title>2026-10-02: 4,415 pulls</title></circle>
+<circle cx="432.9" cy="106.1" r="4" class="spark-point"><title>2026-10-03: 4,889 pulls</title></circle>
+<circle cx="453.4" cy="96.5" r="4" class="spark-point"><title>2026-10-04: 5,185 pulls</title></circle>
+<circle cx="473.8" cy="93.5" r="4" class="spark-point"><title>2026-10-05: 5,276 pulls</title></circle>
+<circle cx="494.3" cy="93.4" r="4" class="spark-point"><title>2026-10-06: 5,281 pulls</title></circle>
+<circle cx="514.7" cy="93.2" r="4" class="spark-point"><title>2026-10-07: 5,285 pulls</title></circle>
+<circle cx="535.1" cy="93.2" r="4" class="spark-point"><title>2026-10-08: 5,285 pulls</title></circle>
+<circle cx="555.6" cy="90.6" r="4" class="spark-point"><title>2026-10-09: 5,367 pulls</title></circle>
+<circle cx="576.0" cy="90.5" r="4" class="spark-point"><title>2026-10-10: 5,370 pulls</title></circle>
+<circle cx="596.5" cy="90.4" r="4" class="spark-point"><title>2026-10-11: 5,372 pulls</title></circle>
+<circle cx="616.9" cy="89.5" r="4" class="spark-point"><title>2026-10-12: 5,401 pulls</title></circle>
+<circle cx="637.4" cy="86.8" r="4" class="spark-point"><title>2026-10-13: 5,483 pulls</title></circle>
+<circle cx="657.8" cy="86.6" r="4" class="spark-point"><title>2026-10-14: 5,488 pulls</title></circle>
+<circle cx="678.2" cy="81.9" r="4" class="spark-point"><title>2026-10-15: 5,633 pulls</title></circle>
+<circle cx="698.7" cy="79.6" r="4" class="spark-point"><title>2026-10-16: 5,706 pulls</title></circle>
+<circle cx="719.1" cy="261.8" r="4" class="spark-point"><title>2026-10-17: 100 pulls</title></circle>
+<circle cx="739.6" cy="261.8" r="4" class="spark-point"><title>2026-10-18: 100 pulls</title></circle>
+<circle cx="760.0" cy="261.6" r="4" class="spark-point"><title>2026-10-19: 104 pulls</title></circle>
 </svg>
