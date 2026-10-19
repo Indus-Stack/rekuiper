@@ -74,19 +74,27 @@ async fn test_high_throughput_streaming_pipeline() {
     // the sender awaits subscriber capacity, so no record is ever lost to
     // ring overwrite. The handle is resolved once outside the loop.
     let total = perf_records();
+    // Pre-construct 64 raw JSON byte payloads simulating incoming network packets.
+    let payloads: Vec<Vec<u8>> = (0..64)
+        .map(|n| {
+            format!(
+                r#"{{"id": "dev_{}", "temp": {}}}"#,
+                n,
+                25.0 + (n % 10) as f64
+            )
+            .into_bytes()
+        })
+        .collect();
+
     let tx = state.stream_bus.get_or_create("perf_stream");
     let start = std::time::Instant::now();
     let mut sent = 0u64;
     for n in 0..total {
-        let data: HashMap<String, Value> = serde_json::from_str(&format!(
-            r#"{{"id": "dev_{}", "temp": {}}}"#,
-            n,
-            25.0 + (n % 10) as f64
-        ))
-        .unwrap();
+        let data: rekuiper_core::model::SharedMap =
+            serde_json::from_slice(&payloads[(n & 63) as usize]).unwrap();
         tx.send(StreamRecord {
             timestamp: n as i64,
-            data: data.into(),
+            data,
         })
         .await
         .expect("subscriber closed mid-benchmark");
@@ -96,9 +104,10 @@ async fn test_high_throughput_streaming_pipeline() {
 
     // 5. Rule status reflects every ingested record.
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    let status_url = format!("{}/rules/rule_perf/status", base_url);
     loop {
         let status: serde_json::Value = client
-            .get(format!("{}/rules/rule_perf/status", base_url))
+            .get(&status_url)
             .send()
             .await
             .unwrap()
@@ -115,9 +124,8 @@ async fn test_high_throughput_streaming_pipeline() {
             "timed out waiting for {} ingested records",
             total
         );
-        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(1)).await;
     }
-
     // 6. Throughput report + floor assertion.
     let elapsed = start.elapsed();
     let events_per_sec = total as f64 / elapsed.as_secs_f64();
@@ -197,9 +205,10 @@ async fn test_pure_engine_throughput_prebuilt_records() {
 
     // 5. Rule status reflects every ingested record.
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    let status_url = format!("{}/rules/rule_pure_perf/status", base_url);
     loop {
         let status: serde_json::Value = client
-            .get(format!("{}/rules/rule_pure_perf/status", base_url))
+            .get(&status_url)
             .send()
             .await
             .unwrap()
@@ -216,7 +225,7 @@ async fn test_pure_engine_throughput_prebuilt_records() {
             "timed out waiting for {} ingested records",
             total
         );
-        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(1)).await;
     }
 
     // 6. Pure Engine Throughput report + floor assertion.

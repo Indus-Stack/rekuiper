@@ -1791,7 +1791,7 @@ pub(crate) fn spawn_rule_task(
         source_configs,
     );
 
-    let (bus_pred, _bus_pred_exhaustive) =
+    let (bus_pred, bus_pred_exhaustive) =
         if !rekuiper_sql::Evaluator::stmt_has_analytic(&select_stmt)
             && !is_event_time
             && !send_error
@@ -2053,6 +2053,7 @@ pub(crate) fn spawn_rule_task(
 
                     let mut cur_output = output_record;
                     let mut drained = 0;
+                    let mut batch_sink_out = 0u64;
                     loop {
                         if tracing_active {
                             maybe_trace_record(
@@ -2062,22 +2063,22 @@ pub(crate) fn spawn_rule_task(
                                 Some(&cur_output.data),
                             );
                         }
-                        let num_records = if let Some(Value::Array(a)) =
-                            cur_output.data.get(BATCH_ROWS_KEY)
-                        {
-                            a.len() as u64
-                        } else {
-                            1
-                        };
                         if all_nop {
-                            sink_counters.sink_out.fetch_add(num_records, Relaxed);
+                            batch_sink_out += 1;
                         } else {
+                            let num_records = if let Some(Value::Array(a)) =
+                                cur_output.data.get(BATCH_ROWS_KEY)
+                            {
+                                a.len() as u64
+                            } else {
+                                1
+                            };
                             match deliver_record(&mut runtimes, &cur_output, &ctx, &mut files).await {
                                 Delivery::Delivered => {
                                     if file_actions {
                                         pending_file_records += num_records;
                                     } else {
-                                        sink_counters.sink_out.fetch_add(num_records, Relaxed);
+                                        batch_sink_out += num_records;
                                     }
                                 }
                                 Delivery::Cached => {}
@@ -2094,6 +2095,9 @@ pub(crate) fn spawn_rule_task(
                             Ok(next) => cur_output = next,
                             Err(_) => break,
                         }
+                    }
+                    if batch_sink_out > 0 {
+                        sink_counters.sink_out.fetch_add(batch_sink_out, Relaxed);
                     }
                     let need_flush = files.values().any(|w| w.should_flush());
                     if need_flush {
@@ -2237,6 +2241,7 @@ pub(crate) fn spawn_rule_task(
             rule_manager.clone(),
             checkpoint_interval_ms,
             dlq_router.clone(),
+            bus_pred_exhaustive,
         )),
         Some(WindowDef::Count { size, interval }) => tokio::spawn(run_count_window_rule(
             loop_counters,

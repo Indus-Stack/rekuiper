@@ -316,7 +316,7 @@ impl Evaluator {
                     if let Some(rec) = first {
                         for (k, v) in rec.iter_row() {
                             if k != META_KEY && !k.starts_with("__") {
-                                output.entry(k.clone()).or_insert_with(|| v.clone());
+                                output.insert(k.clone(), v.clone());
                             }
                         }
                     }
@@ -330,7 +330,7 @@ impl Evaluator {
                                 {
                                     continue;
                                 }
-                                output.entry(k.clone()).or_insert_with(|| v.clone());
+                                output.insert(k.clone(), v.clone());
                             }
                         }
                     }
@@ -347,11 +347,10 @@ impl Evaluator {
                 }
                 Expr::Identifier(name) => {
                     let key = field_names[idx].clone();
-                    output.entry(key).or_insert_with(|| {
-                        first
-                            .and_then(|rec| rec.get(name).cloned())
-                            .unwrap_or(Value::Null)
-                    });
+                    let val = first
+                        .and_then(|rec| rec.get(name).cloned())
+                        .unwrap_or(Value::Null);
+                    output.insert(key, val);
                 }
                 Expr::FieldAccess {
                     parent,
@@ -362,7 +361,7 @@ impl Evaluator {
                         if let Value::Object(map) = parent_val {
                             for (k, v) in map {
                                 if k != META_KEY && !k.starts_with("__") {
-                                    output.entry(k).or_insert_with(|| v);
+                                    output.insert(k, v);
                                 }
                             }
                         } else if let Expr::Identifier(p_name) = parent.as_ref() {
@@ -372,7 +371,7 @@ impl Evaluator {
                             if !has_other_namespace {
                                 for (k, v) in rec.iter_row() {
                                     if k != META_KEY && !k.starts_with("__") {
-                                        output.entry(k.clone()).or_insert_with(|| v.clone());
+                                        output.insert(k.clone(), v.clone());
                                     }
                                 }
                             }
@@ -384,10 +383,11 @@ impl Evaluator {
                     field: _leaf,
                 } => {
                     let key = field_names[idx].clone();
-                    output.entry(key).or_insert_with(|| match first {
+                    let val = match first {
                         Some(rec) => Self::eval_val(field, rec),
                         None => Value::Null,
-                    });
+                    };
+                    output.insert(key, val);
                 }
                 Expr::Call { name, args } if Self::is_aggregate_call(name) => {
                     let val = Self::eval_aggregate_call_stateful(
@@ -406,8 +406,7 @@ impl Evaluator {
                     let val =
                         Self::eval_agg_expr_stateful(field, records, &output, state, partition_key);
                     let key = field_names[idx].clone();
-                    // Don't overwrite group keys / wildcard copies with same key.
-                    output.entry(key).or_insert(val);
+                    output.insert(key, val);
                 }
             }
         }

@@ -68,7 +68,9 @@ pub(crate) fn spawn_checkpoint_ticker(
 #[inline]
 pub(crate) fn check_record_error<R: RowLookup + ?Sized>(data: &R) -> Option<String> {
     for (k, v) in data.iter_row() {
-        if k == "error" || k == "__error" || k == "__raw_error__" {
+        if (k.starts_with('e') || k.starts_with('_'))
+            && (k == "error" || k == "__error" || k == "__raw_error__")
+        {
             return Some(
                 v.as_str()
                     .map(|s| s.to_string())
@@ -208,6 +210,7 @@ pub(crate) async fn run_stateless_rule(
     rule_manager: RuleManager,
     checkpoint_interval_ms: u64,
     dlq_router: crate::engine::dlq::DlqRouter,
+    where_pre_filtered: bool,
 ) {
     // Running analytic state for acc_* cumulative functions. The stateful
     // projection below runs for every input row (advancing cumulative state
@@ -392,11 +395,28 @@ pub(crate) async fn run_stateless_rule(
                 None
             };
             let mut drained = 0usize;
+            let mut batch_source_in = 0u64;
+            let mut batch_filtered = 0u64;
+            let mut batch_enqueued = 0u64;
             loop {
                 'process: {
-                    counters.inc_source(1);
+                    batch_source_in += 1;
                     // Synchronous check: only `.await` when an error field actually exists
                     if let Some(err_msg) = check_record_error(&record.data) {
+                        counters.inc_source(batch_source_in);
+                        batch_source_in = 0;
+                        if batch_filtered > 0 {
+                            counters
+                                .filtered
+                                .fetch_add(batch_filtered, std::sync::atomic::Ordering::Relaxed);
+                            batch_filtered = 0;
+                        }
+                        if batch_enqueued > 0 {
+                            counters
+                                .enqueued
+                                .fetch_add(batch_enqueued, std::sync::atomic::Ordering::Relaxed);
+                            batch_enqueued = 0;
+                        }
                         handle_runtime_error(
                             &counters,
                             &rule_id,
@@ -428,7 +448,7 @@ pub(crate) async fn run_stateless_rule(
                             if has_delay {
                                 let _ = Evaluator::finish_async_eval();
                             }
-                            counters.inc_filtered(1);
+                            batch_filtered += 1;
                             break 'process;
                         };
                         Evaluator::eval_select_stateless_fast(
@@ -436,6 +456,13 @@ pub(crate) async fn run_stateless_rule(
                             &field_names,
                             has_analytic,
                             &joined,
+                            &rule_state,
+                        )
+                    } else if where_pre_filtered && !has_analytic {
+                        Evaluator::eval_select_stateful_with_names(
+                            &select_stmt,
+                            &field_names,
+                            &record.data,
                             &rule_state,
                         )
                     } else {
@@ -456,12 +483,75 @@ pub(crate) async fn run_stateless_rule(
                     match eval_res {
                         Ok(Some(output)) => {
                             let out_rec = StreamRecord::with_timestamp(output, record.timestamp);
-                            if !enqueue_sink_record(&counters, &sink, out_rec).await {
-                                return;
+                            match sink.try_send(out_rec) {
+                                Ok(()) => {
+                                    batch_enqueued += 1;
+                                }
+                                Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+                                    counters.inc_source(batch_source_in);
+                                    if batch_filtered > 0 {
+                                        counters.filtered.fetch_add(
+                                            batch_filtered,
+                                            std::sync::atomic::Ordering::Relaxed,
+                                        );
+                                    }
+                                    if batch_enqueued > 0 {
+                                        counters.enqueued.fetch_add(
+                                            batch_enqueued,
+                                            std::sync::atomic::Ordering::Relaxed,
+                                        );
+                                    }
+                                    return;
+                                }
+                                Err(tokio::sync::mpsc::error::TrySendError::Full(rec)) => {
+                                    if batch_enqueued > 0 {
+                                        counters.enqueued.fetch_add(
+                                            batch_enqueued,
+                                            std::sync::atomic::Ordering::Relaxed,
+                                        );
+                                        batch_enqueued = 0;
+                                    }
+                                    counters.observe_high_water(sink.max_capacity());
+                                    let wait_start = std::time::Instant::now();
+                                    match sink.send(rec).await {
+                                        Ok(()) => {
+                                            counters.add_blocked_micros(
+                                                wait_start.elapsed().as_micros() as u64,
+                                            );
+                                            counters.inc_enqueued(1);
+                                        }
+                                        Err(_) => {
+                                            counters.inc_source(batch_source_in);
+                                            if batch_filtered > 0 {
+                                                counters.filtered.fetch_add(
+                                                    batch_filtered,
+                                                    std::sync::atomic::Ordering::Relaxed,
+                                                );
+                                            }
+                                            return;
+                                        }
+                                    }
+                                }
                             }
                         }
-                        Ok(None) => counters.inc_filtered(1),
+                        Ok(None) => batch_filtered += 1,
                         Err(err) => {
+                            counters.inc_source(batch_source_in);
+                            batch_source_in = 0;
+                            if batch_filtered > 0 {
+                                counters.filtered.fetch_add(
+                                    batch_filtered,
+                                    std::sync::atomic::Ordering::Relaxed,
+                                );
+                                batch_filtered = 0;
+                            }
+                            if batch_enqueued > 0 {
+                                counters.enqueued.fetch_add(
+                                    batch_enqueued,
+                                    std::sync::atomic::Ordering::Relaxed,
+                                );
+                                batch_enqueued = 0;
+                            }
                             handle_runtime_error(
                                 &counters,
                                 &rule_id,
@@ -488,6 +578,19 @@ pub(crate) async fn run_stateless_rule(
                     Ok(next) => record = next,
                     Err(_) => break,
                 }
+            }
+            if batch_source_in > 0 {
+                counters.inc_source(batch_source_in);
+            }
+            if batch_filtered > 0 {
+                counters
+                    .filtered
+                    .fetch_add(batch_filtered, std::sync::atomic::Ordering::Relaxed);
+            }
+            if batch_enqueued > 0 {
+                counters
+                    .enqueued
+                    .fetch_add(batch_enqueued, std::sync::atomic::Ordering::Relaxed);
             }
             if let Some(start) = batch_start {
                 counters
