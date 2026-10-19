@@ -1,7 +1,9 @@
 use crate::engine::{resolve_modbus_table_config, resolve_opcua_table_config, resolve_redis_addr};
+use indexmap::IndexMap;
 use parking_lot::RwLock;
 use rekuiper_connectors::SqlConnectorConfig;
 use rekuiper_core::TableManager;
+use rekuiper_sql::eval::RowLookup;
 use rekuiper_sql::{Evaluator, Expr, JoinClause, JoinType, RuleState, SelectStmt};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -19,11 +21,11 @@ use std::sync::Arc;
 /// Derive the point-lookup key for an external table join from an equality
 /// `ON` condition between the stream side and the table side (either order).
 /// Returns `(table_column, key_value)`; `None` when no usable key exists.
-pub(crate) fn join_key_parts(
+pub(crate) fn join_key_parts<R: RowLookup + ?Sized>(
     join: &JoinClause,
     from: &str,
     from_alias: Option<&str>,
-    combined: &HashMap<String, Value>,
+    combined: &R,
 ) -> Option<(String, String)> {
     fn side(expr: &Expr, from: &str, from_alias: Option<&str>, target: &JoinClause) -> u8 {
         match expr {
@@ -83,11 +85,11 @@ pub(crate) fn join_key_parts(
 }
 
 /// Derive the point-lookup key value for a Redis table join.
-pub(crate) fn extract_lookup_key(
+pub(crate) fn extract_lookup_key<R: RowLookup + ?Sized>(
     join: &JoinClause,
     from: &str,
     from_alias: Option<&str>,
-    combined: &HashMap<String, Value>,
+    combined: &R,
 ) -> Option<String> {
     join_key_parts(join, from, from_alias, combined).map(|(_, value)| value)
 }
@@ -173,13 +175,13 @@ pub(crate) fn resolve_sql_lookup(
 /// Fetch candidate rows for one join clause: a Redis `GET` point lookup for
 /// `TYPE="redis"` tables, a SQL point lookup for `TYPE="sql"` tables,
 /// otherwise the locally stored table rows.
-pub(crate) async fn lookup_candidates(
+pub(crate) async fn lookup_candidates<R: RowLookup + ?Sized>(
     table_manager: &TableManager,
     source_configs: &Arc<RwLock<HashMap<String, Value>>>,
     from: &str,
     from_alias: Option<&str>,
     join: &JoinClause,
-    combined: &HashMap<String, Value>,
+    combined: &R,
 ) -> Vec<HashMap<String, Value>> {
     let table_type = table_manager
         .get_table(&join.target)
@@ -258,8 +260,8 @@ pub(crate) async fn apply_lookup_joins(
     table_manager: &TableManager,
     source_configs: &Arc<RwLock<HashMap<String, Value>>>,
     select_stmt: &SelectStmt,
-    record: &HashMap<String, Value>,
-) -> Option<HashMap<String, Value>> {
+    record: &IndexMap<String, Value>,
+) -> Option<IndexMap<String, Value>> {
     if select_stmt.joins.is_empty() {
         return Some(record.clone());
     }
@@ -318,13 +320,19 @@ pub(crate) async fn apply_lookup_joins(
 
 /// Insert a row under its stream/table name plus alias so qualified
 /// references (`A.id`, `a.id`) resolve through nested objects.
-pub(crate) fn insert_namespaced(
-    map: &mut HashMap<String, Value>,
+pub(crate) fn insert_namespaced<'a, I>(
+    map: &mut IndexMap<String, Value>,
     name: &str,
     alias: Option<&str>,
-    row: &HashMap<String, Value>,
-) {
-    let obj = Value::Object(row.iter().map(|(k, v)| (k.clone(), v.clone())).collect());
+    row: I,
+) where
+    I: IntoIterator<Item = (&'a String, &'a Value)>,
+{
+    let obj = Value::Object(
+        row.into_iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect(),
+    );
     map.insert(name.to_string(), obj.clone());
     if let Some(a) = alias {
         if a != name {
@@ -352,7 +360,7 @@ pub(crate) const MAX_ASOF_KEYS: usize = 10_000;
 #[derive(Debug, Default)]
 pub(crate) struct AsofJoinState {
     /// Maps `(target_stream_name, join_key_value)` -> `(right_timestamp_ms, right_row)`.
-    latest_by_key: HashMap<(String, String), (i64, HashMap<String, Value>)>,
+    latest_by_key: HashMap<(String, String), (i64, IndexMap<String, Value>)>,
 }
 
 #[allow(dead_code)]
@@ -368,7 +376,7 @@ impl AsofJoinState {
         select_stmt: &SelectStmt,
         target_stream: &str,
         right_ts: i64,
-        right_row: &HashMap<String, Value>,
+        right_row: &IndexMap<String, Value>,
     ) {
         for join in &select_stmt.joins {
             if join.target != target_stream
@@ -420,8 +428,8 @@ impl AsofJoinState {
         &self,
         select_stmt: &SelectStmt,
         left_ts: i64,
-        left_row: &HashMap<String, Value>,
-    ) -> Option<HashMap<String, Value>> {
+        left_row: &IndexMap<String, Value>,
+    ) -> Option<IndexMap<String, Value>> {
         let mut combined = left_row.clone();
         insert_namespaced(
             &mut combined,
@@ -470,7 +478,7 @@ impl AsofJoinState {
         join: &JoinClause,
         from: &str,
         from_alias: Option<&str>,
-        right_probe: &HashMap<String, Value>,
+        right_probe: &IndexMap<String, Value>,
     ) -> Option<String> {
         let (col, _) = join_key_parts(join, from, from_alias, right_probe).or_else(|| {
             // Fallback: evaluate the right-side column directly from `right_probe`
@@ -526,16 +534,16 @@ pub(crate) async fn eval_window_join_batch(
     select_stmt: &SelectStmt,
     batch: &[TaggedRow],
     rule_state: Option<&RuleState>,
-) -> Vec<HashMap<String, Value>> {
+) -> Vec<IndexMap<String, Value>> {
     if batch.is_empty() {
         return Vec::new();
     }
-    let from_rows: Vec<&HashMap<String, Value>> = batch
+    let from_rows: Vec<&IndexMap<String, Value>> = batch
         .iter()
         .filter(|r| r.source == select_stmt.from)
         .map(|r| &*r.data)
         .collect();
-    let mut combined_rows: Vec<HashMap<String, Value>> = Vec::new();
+    let mut combined_rows: Vec<IndexMap<String, Value>> = Vec::new();
     for row in from_rows {
         let mut combined = row.clone();
         insert_namespaced(
@@ -548,7 +556,7 @@ pub(crate) async fn eval_window_join_batch(
     }
     for join in &select_stmt.joins {
         let is_table = table_manager.get_table(&join.target).is_some();
-        let mut next: Vec<HashMap<String, Value>> = Vec::new();
+        let mut next: Vec<IndexMap<String, Value>> = Vec::new();
         if is_table {
             for left in &combined_rows {
                 let mut matched: Option<HashMap<String, Value>> = None;
@@ -608,7 +616,7 @@ pub(crate) async fn eval_window_join_batch(
                 }
             }
         } else {
-            let right_rows: Vec<&HashMap<String, Value>> = batch
+            let right_rows: Vec<&IndexMap<String, Value>> = batch
                 .iter()
                 .filter(|r| r.source == join.target)
                 .map(|r| &*r.data)
@@ -623,7 +631,7 @@ pub(crate) async fn eval_window_join_batch(
                         .and_then(|v| v.as_i64().or_else(|| v.as_f64().map(|f| f as i64)))
                         .unwrap_or(i64::MAX);
 
-                    let mut best: Option<(i64, HashMap<String, Value>)> = None;
+                    let mut best: Option<(i64, IndexMap<String, Value>)> = None;
                     for right in &right_rows {
                         let right_ts = right
                             .get("timestamp")
@@ -637,7 +645,7 @@ pub(crate) async fn eval_window_join_batch(
                         for (k, v) in right.iter() {
                             probe.entry(k.clone()).or_insert(v.clone());
                         }
-                        insert_namespaced(&mut probe, &join.target, join.alias.as_deref(), right);
+                        insert_namespaced(&mut probe, &join.target, join.alias.as_deref(), *right);
                         let cond_ok = match &join.on {
                             Some(cond) => Evaluator::eval_bool(cond, &probe),
                             None => true,
@@ -660,7 +668,7 @@ pub(crate) async fn eval_window_join_batch(
                         for (k, v) in right.iter() {
                             probe.entry(k.clone()).or_insert(v.clone());
                         }
-                        insert_namespaced(&mut probe, &join.target, join.alias.as_deref(), right);
+                        insert_namespaced(&mut probe, &join.target, join.alias.as_deref(), *right);
                         let cond_ok = match &join.on {
                             Some(cond) => Evaluator::eval_bool(cond, &probe),
                             // No ON: cross product of the window.
@@ -700,7 +708,7 @@ pub(crate) async fn eval_window_join_batch(
                             &mut preserved,
                             &join.target,
                             join.alias.as_deref(),
-                            right,
+                            *right,
                         );
                         next.push(preserved);
                     }
@@ -731,13 +739,13 @@ mod tests {
             .parse_select()
             .unwrap();
 
-        let mut right1 = HashMap::new();
+        let mut right1 = IndexMap::new();
         right1.insert("id".to_string(), Value::Number(1.into()));
         right1.insert("temp".to_string(), Value::Number(20.into()));
         state.ingest_right_event(&stmt, "b", 100, &right1);
 
         // Probe before right1 timestamp (left_ts = 50) -> None (ASOF requires right_ts <= left_ts)
-        let mut left0 = HashMap::new();
+        let mut left0 = IndexMap::new();
         left0.insert("id".to_string(), Value::Number(1.into()));
         left0.insert("vib".to_string(), Value::Number(100.into()));
         assert!(state.probe_left_event(&stmt, 50, &left0).is_none());
@@ -747,7 +755,7 @@ mod tests {
         assert_eq!(matched1.get("temp"), Some(&Value::Number(20.into())));
 
         // Ingest next right event at ts 200
-        let mut right2 = HashMap::new();
+        let mut right2 = IndexMap::new();
         right2.insert("id".to_string(), Value::Number(1.into()));
         right2.insert("temp".to_string(), Value::Number(25.into()));
         state.ingest_right_event(&stmt, "b", 200, &right2);
@@ -764,7 +772,7 @@ mod tests {
             .parse_select()
             .unwrap();
 
-        let mut left0 = HashMap::new();
+        let mut left0 = IndexMap::new();
         left0.insert("id".to_string(), Value::Number(99.into()));
         left0.insert("vib".to_string(), Value::Number(100.into()));
         // Left ASOF preserves left row even if no prior right row exists

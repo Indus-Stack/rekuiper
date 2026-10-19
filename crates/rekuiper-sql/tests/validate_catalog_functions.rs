@@ -11,7 +11,7 @@ fn eval_expr(sql_expr: &str, record: &Record) -> Value {
         .parse_select()
         .unwrap_or_else(|e| panic!("Failed to parse {}: {}", sql, e));
     match Evaluator::eval_select(&stmt, record) {
-        Some(mut row) => row.remove("v").unwrap_or(Value::Null),
+        Some(mut row) => row.shift_remove("v").unwrap_or(Value::Null),
         None => Value::Null,
     }
 }

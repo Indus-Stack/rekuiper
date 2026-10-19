@@ -604,7 +604,7 @@ pub(crate) fn bootstrap_table_source(state: &AppState, table_name: &str) {
             tokio::select! {
                 record = bus_rx.recv() => {
                     match record {
-                        Some(rec) => table_mgr_bus.insert_table_row(&t_name_bus, rec.data.into_inner()),
+                        Some(rec) => table_mgr_bus.insert_table_row(&t_name_bus, rec.data.to_hashmap()),
                         None => break,
                     }
                 }
@@ -616,7 +616,7 @@ pub(crate) fn bootstrap_table_source(state: &AppState, table_name: &str) {
                     }
                 } => {
                     match record {
-                        Some(rec) => table_mgr_bus.insert_table_row(&t_name_bus, rec.data.into_inner()),
+                        Some(rec) => table_mgr_bus.insert_table_row(&t_name_bus, rec.data.to_hashmap()),
                         None => break,
                     }
                 }
@@ -649,7 +649,7 @@ pub(crate) fn bootstrap_table_source(state: &AppState, table_name: &str) {
                     tokio::select! {
                         record = mqtt_rx.recv() => {
                             match record {
-                                Some(rec) => table_mgr_mqtt.insert_table_row(&t_name_mqtt, rec.data.into_inner()),
+                                Some(rec) => table_mgr_mqtt.insert_table_row(&t_name_mqtt, rec.data.to_hashmap()),
                                 None => break,
                             }
                         }

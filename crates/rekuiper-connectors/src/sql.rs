@@ -1,5 +1,6 @@
 use crate::META_KEY;
 use anyhow::{bail, Result};
+use indexmap::IndexMap;
 use parking_lot::RwLock;
 use rekuiper_core::model::StreamRecord;
 use rekuiper_core::StreamSender;
@@ -968,7 +969,9 @@ impl SqlSource {
                     let name = col.name();
                     map.insert(name.to_string(), sqlite_column_value(r, name));
                 }
-                out.push(StreamRecord::new(map.into_iter().collect()));
+                out.push(StreamRecord::new(
+                    map.into_iter().collect::<IndexMap<_, _>>(),
+                ));
             }
             advance_index(&mut self.index, &out);
             return Ok(out);
@@ -990,7 +993,9 @@ impl SqlSource {
                     let name = col.name();
                     map.insert(name.to_string(), pg_column_value(r, name));
                 }
-                out.push(StreamRecord::new(map.into_iter().collect()));
+                out.push(StreamRecord::new(
+                    map.into_iter().collect::<IndexMap<_, _>>(),
+                ));
             }
             advance_index(&mut self.index, &out);
             return Ok(out);

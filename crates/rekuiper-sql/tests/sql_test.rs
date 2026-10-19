@@ -1165,7 +1165,7 @@ fn test_lag_stateful() {
         record.insert("temp".to_string(), t);
         Evaluator::eval_select_stateful(&stmt, &record, &state)
             .expect("row always projects")
-            .remove("prev")
+            .shift_remove("prev")
             .unwrap()
     };
 
@@ -1183,7 +1183,7 @@ fn test_lag_stateful() {
         record.insert("temp".to_string(), t);
         Evaluator::eval_select_stateful(&stmt, &record, &state)
             .expect("row always projects")
-            .remove("prev2")
+            .shift_remove("prev2")
             .unwrap()
     };
     assert_eq!(row(json!(10)), json!(-1));

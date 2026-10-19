@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use bytes::Bytes;
+use indexmap::IndexMap;
 use rekuiper_core::model::StreamRecord;
 use rekuiper_core::StreamSender;
 use serde::{Deserialize, Serialize};
@@ -176,7 +177,7 @@ pub fn decode_zmq_payload(payload: &[u8], topic: Option<&str>) -> Result<Vec<Str
     let mut records = Vec::new();
     match value {
         Value::Object(map) => {
-            let mut rec = StreamRecord::new(map.into_iter().collect());
+            let mut rec = StreamRecord::new(map.into_iter().collect::<IndexMap<_, _>>());
             if let Some(t) = topic {
                 let mut meta = std::collections::HashMap::new();
                 meta.insert("topic".to_string(), Value::String(t.to_string()));
@@ -190,7 +191,7 @@ pub fn decode_zmq_payload(payload: &[u8], topic: Option<&str>) -> Result<Vec<Str
         Value::Array(items) => {
             for item in items {
                 if let Value::Object(map) = item {
-                    let mut rec = StreamRecord::new(map.into_iter().collect());
+                    let mut rec = StreamRecord::new(map.into_iter().collect::<IndexMap<_, _>>());
                     if let Some(t) = topic {
                         let mut meta = std::collections::HashMap::new();
                         meta.insert("topic".to_string(), Value::String(t.to_string()));

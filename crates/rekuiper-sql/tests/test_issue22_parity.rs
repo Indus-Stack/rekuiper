@@ -9,7 +9,7 @@ fn json_to_record(v: &Value) -> HashMap<String, Value> {
     }
 }
 
-fn run_sql(sql: &str, record: &serde_json::Value) -> HashMap<String, Value> {
+fn run_sql(sql: &str, record: &serde_json::Value) -> indexmap::IndexMap<String, Value> {
     let mut parser = Parser::new(sql);
     let stmt = parser.parse_select().expect("failed to parse SQL");
     let rec = json_to_record(record);

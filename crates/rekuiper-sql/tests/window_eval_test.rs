@@ -2,13 +2,13 @@
 //! the row-free incremental evaluator, SESSIONWINDOW parsing and source
 //! metadata visibility.
 
+use indexmap::IndexMap;
 use rekuiper_sql::{
     Evaluator, IncrementalWindow, Parser, SlidingIncrementalWindow, TimeUnit, WindowDef,
 };
 use serde_json::{json, Value};
-use std::collections::HashMap;
 
-type Row = HashMap<String, Value>;
+type Row = IndexMap<String, Value>;
 
 fn row(v: Value) -> Row {
     v.as_object().unwrap().clone().into_iter().collect()

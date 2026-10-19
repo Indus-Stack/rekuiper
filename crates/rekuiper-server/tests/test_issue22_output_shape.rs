@@ -336,9 +336,9 @@ async fn test_stable_sorted_json_key_order_in_rest_sink() {
     }
 
     let raw = payload.expect("REST sink did not deliver payload");
-    // Keys must be alphabetical: a, then m, then z
+    // Keys must preserve SELECT order: z, then a, then m (Issue #45)
     assert_eq!(
-        raw, r#"{"a":200,"m":300,"z":100}"#,
-        "JSON key order must be stable and sorted alphabetically"
+        raw, r#"{"z":100,"a":200,"m":300}"#,
+        "JSON key order must preserve SELECT field order"
     );
 }

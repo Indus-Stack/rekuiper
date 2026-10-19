@@ -2164,6 +2164,8 @@ checksum = "cc4e190f5d26ca7051642629da2c52fc03bde85a03197c99408dcd291734c855"
 dependencies = [
  "equivalent",
  "hashbrown 0.17.1",
+ "serde",
+ "serde_core",
 ]
 
 [[package]]
@@ -3396,6 +3398,7 @@ dependencies = [
  "bytes",
  "chrono",
  "futures",
+ "indexmap",
  "lapin",
  "parking_lot",
  "parquet",
@@ -3425,6 +3428,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "chrono",
+ "indexmap",
  "parking_lot",
  "regex",
  "rekuiper-conf",
@@ -3466,6 +3470,7 @@ dependencies = [
  "boa_engine",
  "chrono",
  "futures",
+ "indexmap",
  "parking_lot",
  "rekuiper-conf",
  "rekuiper-connectors",
@@ -3497,6 +3502,7 @@ dependencies = [
  "chrono-tz",
  "crc32fast",
  "flate2",
+ "indexmap",
  "md-5",
  "parking_lot",
  "rand 0.8.8",
@@ -3933,6 +3939,7 @@ version = "1.0.151"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c841b55ecdae098c80dcae9cf767f6f8a0c2cdb3416bbef72181df4d0fe73f14"
 dependencies = [
+ "indexmap",
  "itoa",
  "memchr",
  "serde",

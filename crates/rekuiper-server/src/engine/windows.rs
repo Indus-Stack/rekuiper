@@ -3,9 +3,11 @@ use crate::engine::runtime::{
     extract_event_timestamp, handle_error_record, is_rule_running, EventTimeConfig,
 };
 use crate::engine::sinks::{enqueue_sink_record, BATCH_ROWS_KEY};
+use indexmap::IndexMap;
 use parking_lot::RwLock;
 use rekuiper_core::model::{RuleStatus, StreamRecord};
 use rekuiper_core::{RuleCounters, StreamReceiver, TableManager};
+use rekuiper_sql::eval::RowLookup;
 use rekuiper_sql::{Evaluator, Expr, IncrementalWindow, RuleState, SelectStmt, TimeUnit};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
@@ -36,7 +38,7 @@ pub(crate) async fn emit_window_batch(
     }
     let eval_start = std::time::Instant::now();
     let outputs = if select_stmt.joins.is_empty() {
-        let rows: Vec<HashMap<String, Value>> =
+        let rows: Vec<IndexMap<String, Value>> =
             batch.into_iter().map(|r| r.data.into_inner()).collect();
         if prefiltered {
             Evaluator::eval_window_filtered_stateful(select_stmt, rows, rule_state)
@@ -63,7 +65,7 @@ pub(crate) async fn emit_window_batch(
 pub(crate) async fn emit_window_outputs(
     counters: &RuleCounters,
     sink: &tokio::sync::mpsc::Sender<StreamRecord>,
-    outputs: Vec<HashMap<String, Value>>,
+    outputs: Vec<IndexMap<String, Value>>,
 ) {
     if outputs.is_empty() {
         return;
@@ -76,7 +78,7 @@ pub(crate) async fn emit_window_outputs(
         )
         .await;
     } else {
-        let mut map = HashMap::new();
+        let mut map = IndexMap::new();
         let arr: Vec<Value> = outputs
             .into_iter()
             .map(|m| serde_json::to_value(m).unwrap_or(Value::Null))
@@ -90,9 +92,9 @@ pub(crate) async fn emit_window_outputs(
 /// window (as eKuiper's predicate push-down does), so rejected rows are
 /// never buffered. With joins it may reference joined columns and runs at
 /// trigger time instead. FILTER (WHERE ...) is always evaluated before the window.
-pub(crate) fn window_ingest_passes(
+pub(crate) fn window_ingest_passes<R: RowLookup + ?Sized>(
     select_stmt: &SelectStmt,
-    data: &HashMap<String, Value>,
+    data: &R,
 ) -> bool {
     let where_pass = !select_stmt.joins.is_empty() || Evaluator::passes_where(select_stmt, data);
     if !where_pass {

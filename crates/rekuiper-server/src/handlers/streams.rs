@@ -7,6 +7,7 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
+use indexmap::IndexMap;
 use rekuiper_core::model::{StreamField, StreamRecord};
 use rekuiper_core::{StreamDefinition, TableDefinition, MAX_HTTP_BATCH_RECORDS};
 use rekuiper_sql::{Parser, StreamColumn};
@@ -517,11 +518,15 @@ pub async fn push_stream_data(
         if let Ok(Value::Array(items)) = serde_json::from_slice::<Value>(&body_bytes) {
             for item in items {
                 if let Value::Object(map) = item {
-                    records.push(StreamRecord::new(map.into_iter().collect()));
+                    records.push(StreamRecord::new(
+                        map.into_iter().collect::<IndexMap<_, _>>(),
+                    ));
                 }
             }
         } else if let Ok(Value::Object(map)) = serde_json::from_slice::<Value>(&body_bytes) {
-            records.push(StreamRecord::new(map.into_iter().collect()));
+            records.push(StreamRecord::new(
+                map.into_iter().collect::<IndexMap<_, _>>(),
+            ));
         } else if let Ok(text) = std::str::from_utf8(&body_bytes) {
             for line in text.lines() {
                 let line = line.trim();

@@ -1,29 +1,41 @@
+use indexmap::IndexMap;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 
-/// Copy-on-write map wrapper backed by `Arc<HashMap<String, Value>>`.
+/// Copy-on-write map wrapper backed by `Arc<IndexMap<String, Value>>`.
+/// Preserves the SELECT projection field order or input record field order.
 /// Cloning a `StreamRecord` across N subscribers in `StreamBus` is an O(1)
 /// atomic refcount increment; mutation via `DerefMut` triggers `Arc::make_mut`.
 #[derive(Debug, Clone, Default)]
-pub struct SharedMap(pub Arc<HashMap<String, Value>>);
+pub struct SharedMap(pub Arc<IndexMap<String, Value>>);
 
 impl SharedMap {
     #[inline]
-    pub fn new(map: HashMap<String, Value>) -> Self {
+    pub fn new(map: IndexMap<String, Value>) -> Self {
         Self(Arc::new(map))
     }
 
     #[inline]
-    pub fn into_inner(self) -> HashMap<String, Value> {
+    pub fn from_hashmap(map: HashMap<String, Value>) -> Self {
+        Self(Arc::new(map.into_iter().collect()))
+    }
+
+    #[inline]
+    pub fn into_inner(self) -> IndexMap<String, Value> {
         Arc::try_unwrap(self.0).unwrap_or_else(|arc| (*arc).clone())
+    }
+
+    #[inline]
+    pub fn to_hashmap(&self) -> HashMap<String, Value> {
+        self.0.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
     }
 }
 
 impl Deref for SharedMap {
-    type Target = HashMap<String, Value>;
+    type Target = IndexMap<String, Value>;
     #[inline]
     fn deref(&self) -> &Self::Target {
         &self.0
@@ -43,13 +55,28 @@ impl PartialEq for SharedMap {
     }
 }
 
-impl PartialEq<HashMap<String, Value>> for SharedMap {
-    fn eq(&self, other: &HashMap<String, Value>) -> bool {
+impl PartialEq<IndexMap<String, Value>> for SharedMap {
+    fn eq(&self, other: &IndexMap<String, Value>) -> bool {
         *self.0 == *other
     }
 }
 
+impl PartialEq<HashMap<String, Value>> for SharedMap {
+    fn eq(&self, other: &HashMap<String, Value>) -> bool {
+        if self.0.len() != other.len() {
+            return false;
+        }
+        self.0.iter().all(|(k, v)| other.get(k) == Some(v))
+    }
+}
+
 impl PartialEq<SharedMap> for HashMap<String, Value> {
+    fn eq(&self, other: &SharedMap) -> bool {
+        other == self
+    }
+}
+
+impl PartialEq<SharedMap> for IndexMap<String, Value> {
     fn eq(&self, other: &SharedMap) -> bool {
         *self == *other.0
     }
@@ -57,7 +84,7 @@ impl PartialEq<SharedMap> for HashMap<String, Value> {
 
 impl<'a> IntoIterator for &'a SharedMap {
     type Item = (&'a String, &'a Value);
-    type IntoIter = std::collections::hash_map::Iter<'a, String, Value>;
+    type IntoIter = indexmap::map::Iter<'a, String, Value>;
 
     #[inline]
     fn into_iter(self) -> Self::IntoIter {
@@ -67,7 +94,7 @@ impl<'a> IntoIterator for &'a SharedMap {
 
 impl IntoIterator for SharedMap {
     type Item = (String, Value);
-    type IntoIter = std::collections::hash_map::IntoIter<String, Value>;
+    type IntoIter = indexmap::map::IntoIter<String, Value>;
 
     #[inline]
     fn into_iter(self) -> Self::IntoIter {
@@ -82,17 +109,31 @@ impl FromIterator<(String, Value)> for SharedMap {
     }
 }
 
+impl From<IndexMap<String, Value>> for SharedMap {
+    #[inline]
+    fn from(map: IndexMap<String, Value>) -> Self {
+        Self::new(map)
+    }
+}
+
 impl From<HashMap<String, Value>> for SharedMap {
     #[inline]
     fn from(map: HashMap<String, Value>) -> Self {
-        Self::new(map)
+        Self::from_hashmap(map)
+    }
+}
+
+impl From<SharedMap> for IndexMap<String, Value> {
+    #[inline]
+    fn from(shared: SharedMap) -> Self {
+        shared.into_inner()
     }
 }
 
 impl From<SharedMap> for HashMap<String, Value> {
     #[inline]
     fn from(shared: SharedMap) -> Self {
-        shared.into_inner()
+        shared.into_inner().into_iter().collect()
     }
 }
 
@@ -104,7 +145,7 @@ impl Serialize for SharedMap {
 
 impl<'de> Deserialize<'de> for SharedMap {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        HashMap::<String, Value>::deserialize(deserializer).map(Self::new)
+        IndexMap::<String, Value>::deserialize(deserializer).map(Self::new)
     }
 }
 
@@ -115,10 +156,17 @@ pub struct StreamRecord {
 }
 
 impl StreamRecord {
-    pub fn new(data: HashMap<String, Value>) -> Self {
+    pub fn new(data: impl Into<SharedMap>) -> Self {
         Self {
             timestamp: chrono::Utc::now().timestamp_millis(),
-            data: SharedMap::new(data),
+            data: data.into(),
+        }
+    }
+
+    pub fn from_hashmap(data: HashMap<String, Value>) -> Self {
+        Self {
+            timestamp: chrono::Utc::now().timestamp_millis(),
+            data: SharedMap::from_hashmap(data),
         }
     }
 
@@ -130,10 +178,10 @@ impl StreamRecord {
     }
 
     #[inline]
-    pub fn with_timestamp(data: HashMap<String, Value>, timestamp: i64) -> Self {
+    pub fn with_timestamp(data: impl Into<SharedMap>, timestamp: i64) -> Self {
         Self {
             timestamp,
-            data: SharedMap::new(data),
+            data: data.into(),
         }
     }
 
@@ -813,9 +861,89 @@ pub fn parse_default_value(raw: &str, field_type: &str) -> Value {
     coerce_value_to_type(Value::String(s.to_string()), field_type)
 }
 
+pub trait SchemaMap {
+    fn contains_key(&self, key: &str) -> bool;
+    fn get(&self, key: &str) -> Option<&Value>;
+    fn remove(&mut self, key: &str) -> Option<Value>;
+    fn insert(&mut self, key: String, val: Value) -> Option<Value>;
+    fn find_key_case_insensitive(&self, name: &str) -> Option<String>;
+}
+
+impl SchemaMap for HashMap<String, Value> {
+    #[inline]
+    fn contains_key(&self, key: &str) -> bool {
+        self.contains_key(key)
+    }
+    #[inline]
+    fn get(&self, key: &str) -> Option<&Value> {
+        self.get(key)
+    }
+    #[inline]
+    fn remove(&mut self, key: &str) -> Option<Value> {
+        self.remove(key)
+    }
+    #[inline]
+    fn insert(&mut self, key: String, val: Value) -> Option<Value> {
+        self.insert(key, val)
+    }
+    #[inline]
+    fn find_key_case_insensitive(&self, name: &str) -> Option<String> {
+        self.keys().find(|k| k.eq_ignore_ascii_case(name)).cloned()
+    }
+}
+
+impl SchemaMap for IndexMap<String, Value> {
+    #[inline]
+    fn contains_key(&self, key: &str) -> bool {
+        self.contains_key(key)
+    }
+    #[inline]
+    fn get(&self, key: &str) -> Option<&Value> {
+        self.get(key)
+    }
+    #[inline]
+    fn remove(&mut self, key: &str) -> Option<Value> {
+        self.shift_remove(key)
+    }
+    #[inline]
+    fn insert(&mut self, key: String, val: Value) -> Option<Value> {
+        self.insert(key, val)
+    }
+    #[inline]
+    fn find_key_case_insensitive(&self, name: &str) -> Option<String> {
+        self.keys().find(|k| k.eq_ignore_ascii_case(name)).cloned()
+    }
+}
+
+impl SchemaMap for SharedMap {
+    #[inline]
+    fn contains_key(&self, key: &str) -> bool {
+        self.0.contains_key(key)
+    }
+    #[inline]
+    fn get(&self, key: &str) -> Option<&Value> {
+        self.0.get(key)
+    }
+    #[inline]
+    fn remove(&mut self, key: &str) -> Option<Value> {
+        Arc::make_mut(&mut self.0).shift_remove(key)
+    }
+    #[inline]
+    fn insert(&mut self, key: String, val: Value) -> Option<Value> {
+        Arc::make_mut(&mut self.0).insert(key, val)
+    }
+    #[inline]
+    fn find_key_case_insensitive(&self, name: &str) -> Option<String> {
+        self.0
+            .keys()
+            .find(|k| k.eq_ignore_ascii_case(name))
+            .cloned()
+    }
+}
+
 /// Coerce an incoming record map according to declared stream fields.
 /// When `fields` is empty (schemaless stream), this returns immediately (zero-cost no-op).
-pub fn enforce_stream_schema(data: &mut HashMap<String, Value>, fields: &[StreamField]) {
+pub fn enforce_stream_schema<M: SchemaMap + ?Sized>(data: &mut M, fields: &[StreamField]) {
     if fields.is_empty() {
         return;
     }
@@ -824,9 +952,7 @@ pub fn enforce_stream_schema(data: &mut HashMap<String, Value>, fields: &[Stream
         let existing_key = if data.contains_key(&field.name) {
             Some(field.name.clone())
         } else {
-            data.keys()
-                .find(|k| k.eq_ignore_ascii_case(&field.name))
-                .cloned()
+            data.find_key_case_insensitive(&field.name)
         };
 
         if let Some(key) = existing_key {
@@ -1009,8 +1135,8 @@ impl std::error::Error for SchemaMismatchError {}
 
 /// Strict schema validator: validates and coerces declared fields, returning an error
 /// if any non-null present value cannot be coerced into the declared type.
-pub fn enforce_stream_schema_checked(
-    data: &mut HashMap<String, Value>,
+pub fn enforce_stream_schema_checked<M: SchemaMap + ?Sized>(
+    data: &mut M,
     fields: &[StreamField],
 ) -> Result<(), SchemaMismatchError> {
     if fields.is_empty() {
@@ -1020,9 +1146,7 @@ pub fn enforce_stream_schema_checked(
         let existing_key = if data.contains_key(&field.name) {
             Some(field.name.clone())
         } else {
-            data.keys()
-                .find(|k| k.eq_ignore_ascii_case(&field.name))
-                .cloned()
+            data.find_key_case_insensitive(&field.name)
         };
 
         if let Some(key) = existing_key {

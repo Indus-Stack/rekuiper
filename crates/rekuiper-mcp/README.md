@@ -10,7 +10,7 @@ An enterprise-grade, native Rust **Model Context Protocol (MCP)** server providi
 
 - **Zero-Network Offline SQL Intelligence & Simulation**:
   - `validate_sql`: Offline AST parsing, static analysis, column resolution, and DDL validation directly through the embedded `rekuiper-sql` parser without network overhead.
-  - `test_sql_expression`: Instant in-memory execution of streaming SQL transformations against mock event payloads using `Evaluator::eval_select`.
+  - `test_sql_expression`: Instant in-memory execution of streaming SQL transformations against mock event payloads with deterministic SELECT column order preservation using `Evaluator::eval_select`.
   - `explain_sql`: Deep AST query deconstruction into sources, projections, joins, where filters, group by keys, and time/count window clauses.
 
 - **Full-Fidelity Stream & Table DDL & Event Ingestion**:
@@ -76,7 +76,7 @@ An enterprise-grade, native Rust **Model Context Protocol (MCP)** server providi
 | Tool | Description |
 | :--- | :--- |
 | `validate_sql` | Offline AST syntax parser and static validator for SQL, window functions, CEP pattern matchers (`sequence_match`, `sequence_count`), `ASOF JOIN` syntax, and DDL statements (including `DEFAULT` column values and `BUFFER_FULL_POLICY`). |
-| `test_sql_expression` | In-memory streaming query evaluator against mock JSON telemetry payloads, supporting vector search (`cosine_similarity`), CEP sequence patterns (`sequence_match`), array/object transforms (`json_map`, `object_erase`), and stateful analytics (`acc_distinct_collect`, `lead`). |
+| `test_sql_expression` | In-memory streaming query evaluator against mock JSON telemetry payloads with exact SELECT field order preservation, supporting vector search (`cosine_similarity`), CEP sequence patterns (`sequence_match`), array/object transforms (`json_map`, `object_erase`), and stateful analytics (`acc_distinct_collect`, `lead`). |
 | `explain_sql` | Deconstructs streaming SQL into projections, sources, joins, and window clauses. |
 | `explain_pipeline_profile` | Static performance profiler analyzing whether a query qualifies for zero-allocation WHERE fast-paths, Rete-Lite StreamBus indexing, IncrementalWindow, or bounded ASOF JOIN state. |
 

@@ -10,8 +10,9 @@
 //! (group columns plus `count/sum/avg/min/max`) without retaining rows: memory
 //! is O(groups) instead of O(rows in the window).
 
-use super::{Evaluator, RuleState};
+use super::{Evaluator, RowLookup, RuleState};
 use crate::ast::{Expr, SelectStmt, SortOrder};
+use indexmap::IndexMap;
 use serde_json::Value;
 use std::borrow::Cow;
 use std::collections::{HashMap, VecDeque};
@@ -19,7 +20,7 @@ use std::fmt::Write as _;
 
 static NULL: Value = Value::Null;
 
-type Row = HashMap<String, Value>;
+type Row = IndexMap<String, Value>;
 
 impl Evaluator {
     /// True when `expr` calls an aggregate function anywhere inside it.
@@ -94,7 +95,7 @@ impl Evaluator {
     }
 
     /// Input-row `WHERE` test (rows pass when there is no `WHERE`).
-    pub fn passes_where(stmt: &SelectStmt, row: &Row) -> bool {
+    pub fn passes_where<R: RowLookup + ?Sized>(stmt: &SelectStmt, row: &R) -> bool {
         match &stmt.where_clause {
             Some(cond) => Self::eval_bool(cond, row),
             None => true,
@@ -742,7 +743,7 @@ impl IncrementalWindow {
         let groups = std::mem::take(&mut self.groups);
         let mut out = Vec::with_capacity(groups.len());
         for group in groups {
-            let mut row: Row = HashMap::with_capacity(self.group_names.len() + self.plans.len());
+            let mut row: Row = IndexMap::with_capacity(self.group_names.len() + self.plans.len());
             for (name, value) in self.group_names.iter().zip(group.group_values) {
                 row.insert(name.clone(), value);
             }
@@ -1140,7 +1141,7 @@ impl SlidingIncrementalWindow {
             if !has_active && !group.accs.is_empty() {
                 continue;
             }
-            let mut row: Row = HashMap::with_capacity(self.group_names.len() + self.plans.len());
+            let mut row: Row = IndexMap::with_capacity(self.group_names.len() + self.plans.len());
             for (name, value) in self.group_names.iter().zip(&group.group_values) {
                 row.insert(name.clone(), value.clone());
             }

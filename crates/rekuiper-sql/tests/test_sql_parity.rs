@@ -126,7 +126,7 @@ fn test_complex_case_expression() {
     let grade = |score: i64| {
         Evaluator::eval_select(&stmt, &rec(&[("score", json!(score))]))
             .expect("row projects")
-            .remove("grade")
+            .shift_remove("grade")
             .unwrap()
     };
     assert_eq!(grade(95), json!("EXCELLENT"));
@@ -141,7 +141,7 @@ fn test_complex_case_expression() {
     let level = |s: &str| {
         Evaluator::eval_select(&stmt, &rec(&[("level", json!(s))]))
             .expect("row projects")
-            .remove("n")
+            .shift_remove("n")
             .unwrap()
     };
     assert_eq!(level("high"), json!(3));

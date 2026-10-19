@@ -1,13 +1,17 @@
+use indexmap::IndexMap;
 use rekuiper_sql::{
     eval::{Evaluator, RuleState},
     parser::Parser,
 };
 use serde_json::{json, Value};
-use std::collections::HashMap;
 
-fn run(sql: &str, row: Value, state: &RuleState) -> Result<Option<HashMap<String, Value>>, String> {
+fn run(
+    sql: &str,
+    row: Value,
+    state: &RuleState,
+) -> Result<Option<IndexMap<String, Value>>, String> {
     let stmt = Parser::new(sql).parse_select().unwrap();
-    let row = serde_json::from_value(row).unwrap();
+    let row: IndexMap<String, Value> = serde_json::from_value(row).unwrap();
     Evaluator::eval_select_filtered_stateful_fallible(&stmt, &row, state)
 }
 

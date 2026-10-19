@@ -131,11 +131,11 @@ impl TraceManager {
     }
 }
 
-pub fn maybe_trace_record(
+pub fn maybe_trace_record<M1: serde::Serialize + ?Sized, M2: serde::Serialize + ?Sized>(
     trace_mgr: &TraceManager,
     rule_id: &str,
-    input_data: &HashMap<String, Value>,
-    output_data: Option<&HashMap<String, Value>>,
+    input_data: &M1,
+    output_data: Option<&M2>,
 ) {
     if !trace_mgr.is_tracing(rule_id) {
         return;
