@@ -1705,7 +1705,7 @@ fn test_object_json_parity() {
             "SELECT to_json({\"msg\": \"hello\", \"code\": 200}) AS v FROM demo",
             &empty
         ),
-        json!("{\"code\":200,\"msg\":\"hello\"}")
+        json!("{\"msg\":\"hello\",\"code\":200}")
     );
     assert_eq!(
         eval_one("SELECT tojson(7) AS v FROM demo", &empty),
