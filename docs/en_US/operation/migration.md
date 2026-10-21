@@ -2,7 +2,7 @@
 
 This comprehensive guide details migration strategies, architectural patterns, and step-by-step procedures for transitioning legacy edge streaming workloads to **rekuiper**.
 
-Whether migrating from **LF Edge eKuiper (Go)**, **InfluxData Telegraf**, **Node-RED**, or **Vector / Fluent Bit**, rekuiper delivers a single statically-linked, memory-efficient Rust runtime (<35 MB RAM) with zero garbage-collection pauses and sub-millisecond p99 latencies.
+Whether migrating from **upstream eKuiper (Go)**, **InfluxData Telegraf**, **Node-RED**, or **Vector / Fluent Bit**, rekuiper delivers a single statically-linked, memory-efficient Rust runtime (<35 MB RAM) with zero garbage-collection pauses and sub-millisecond p99 latencies.
 
 ---
 
@@ -10,14 +10,14 @@ Whether migrating from **LF Edge eKuiper (Go)**, **InfluxData Telegraf**, **Node
 
 | Source Engine | Primary Migration Reason | Configuration Mapping | Rule / Logic Mapping | Migration Effort |
 | :--- | :--- | :--- | :--- | :--- |
-| **LF Edge eKuiper** | 10× memory reduction, zero GC jitter, 100% drop-in compatibility | Identical `kuiper.yaml` / REST API | 100% direct SQL & JSON reuse | **2 Minutes (Drop-in)** |
+| **upstream eKuiper** | 10× memory reduction, zero GC jitter, 100% drop-in compatibility | Identical `kuiper.yaml` / REST API | 100% direct SQL & JSON reuse | **2 Minutes (Drop-in)** |
 | **Telegraf** | Stateful windowing, joins, and edge-native SQL filtering | TOML `inputs/outputs` → rekuiper Streams/Sinks | `processors.regex` / `aggregators` → SQL `SELECT ... GROUP BY` | **Low (Direct SQL conversion)** |
 | **Node-RED** | 90% memory reduction, thread-safe concurrency, headless CI/GitOps | Flow JSON → Declarative YAML / REST Rules | JavaScript `function` nodes → SQL expressions / JS UDFs | **Moderate (Flow to SQL)** |
 | **Vector / Fluent Bit** | Temporal window aggregations, stateful joins, edge anomaly detection | Vector YAML / Fluent Conf → Source/Sink definitions | Vector VRL / Lua scripts → ANSI SQL queries | **Low–Moderate** |
 
 ---
 
-## 1. Migrating from LF Edge eKuiper (Go)
+## 1. Migrating from upstream eKuiper (Go)
 
 `rekuiper` is engineered as an exact drop-in replacement for eKuiper. All REST API endpoints, CLI syntax, SQL grammar, window functions, and connector configurations remain 100% compatible.
 

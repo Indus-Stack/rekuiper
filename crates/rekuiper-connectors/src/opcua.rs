@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use anyhow::{bail, Context, Result};
-use rekuiper_core::model::StreamRecord;
+use rekuiper_core::model::{RecordMeta, StreamRecord};
 use rekuiper_core::StreamSender;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -1298,11 +1298,21 @@ pub async fn opcua_read_snapshot(config: &OpcUaConfig) -> Result<HashMap<String,
 pub struct OpcUaSource {
     config: OpcUaConfig,
     tx: StreamSender,
+    status_callback: Option<crate::ConnectorStatusCallback>,
 }
 
 impl OpcUaSource {
     pub fn new(config: OpcUaConfig, tx: StreamSender) -> Self {
-        Self { config, tx }
+        Self {
+            config,
+            tx,
+            status_callback: None,
+        }
+    }
+
+    pub fn with_status_callback(mut self, cb: Option<crate::ConnectorStatusCallback>) -> Self {
+        self.status_callback = cb;
+        self
     }
 
     pub fn spawn(self, mut cancel_rx: watch::Receiver<bool>) -> tokio::task::JoinHandle<()> {
@@ -1323,6 +1333,9 @@ impl OpcUaSource {
 
                 match client.read_nodes(&self.config.nodes).await {
                     Ok(read_map) => {
+                        if let Some(ref cb) = self.status_callback {
+                            cb(self.config.endpoint(), "opcua", "connected", None);
+                        }
                         let mut record = HashMap::new();
                         let mut decode_errors = Vec::new();
 
@@ -1375,7 +1388,12 @@ impl OpcUaSource {
                                         .collect::<Vec<_>>()
                                 )),
                             );
-                            let stream_rec = StreamRecord::new(err_rec);
+                            let mut stream_rec = StreamRecord::new(err_rec);
+                            stream_rec.meta = Some(Arc::new(RecordMeta {
+                                topic: None,
+                                source: Some(Arc::from("opcua")),
+                                custom: None,
+                            }));
                             if matches!(
                                 self.tx.send(stream_rec).await,
                                 Err(rekuiper_core::PublishError::Closed)
@@ -1383,7 +1401,12 @@ impl OpcUaSource {
                                 break;
                             }
                         } else if !record.is_empty() {
-                            let stream_rec = StreamRecord::new(record);
+                            let mut stream_rec = StreamRecord::new(record);
+                            stream_rec.meta = Some(Arc::new(RecordMeta {
+                                topic: None,
+                                source: Some(Arc::from("opcua")),
+                                custom: None,
+                            }));
                             if matches!(
                                 self.tx.send(stream_rec).await,
                                 Err(rekuiper_core::PublishError::Closed)
@@ -1398,6 +1421,14 @@ impl OpcUaSource {
                             self.config.endpoint(),
                             e
                         );
+                        if let Some(ref cb) = self.status_callback {
+                            cb(
+                                self.config.endpoint(),
+                                "opcua",
+                                "error",
+                                Some(&e.to_string()),
+                            );
+                        }
                         let mut err_rec = HashMap::new();
                         err_rec.insert(
                             "__raw_error__".to_string(),

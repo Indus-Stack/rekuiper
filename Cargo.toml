@@ -16,17 +16,18 @@ version = "1.0.0-rc4"
 edition = "2021"
 authors = ["I-Dacs Labs <measure@i-dacs.com>", "rekuiper contributors"]
 license = "MIT OR Apache-2.0"
+description = "Single-binary Rust MQTT rule engine and streaming SQL processor for edge gateways."
 repository = "https://github.com/Indus-Stack/rekuiper"
-homepage = "https://i-dacs.com"
-documentation = "https://github.com/Indus-Stack/rekuiper#documentation"
+homepage = "https://rekuiper.indramqtt.com"
+documentation = "https://rekuiper.indramqtt.com"
 readme = "README.md"
-keywords = ["iot", "stream-processing", "edge-computing", "sql", "mqtt"]
-categories = ["embedded", "network-programming", "science"]
+keywords = ["mqtt", "rule-engine", "sql", "stream-processing", "iot"]
+categories = ["network-programming", "database", "embedded", "asynchronous"]
 
 
 [workspace.dependencies]
 tokio = { version = "1.38", features = ["full"] }
-axum = { version = "0.7", features = ["macros"] }
+axum = { version = "0.7", features = ["macros", "ws"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["preserve_order"] }
 indexmap = { version = "2.6", features = ["serde"] }
@@ -61,6 +62,7 @@ sha1 = "0.10"
 uuid = { version = "1", features = ["v4"] }
 rand = "0.8"
 boa_engine = "0.20"
+yamux = "0.13"
 
 # Internal crate dependencies
 rekuiper-core = { path = "crates/rekuiper-core" }

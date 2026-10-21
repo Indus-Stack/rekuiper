@@ -202,6 +202,473 @@ pub async fn list_operator_metadata() -> impl IntoResponse {
     ]))
 }
 
+/// Dynamic Palette Schema for Visual Stream Studio
+pub async fn get_palette_metadata() -> impl IntoResponse {
+    let palette = json!({
+        "categories": ["sources", "operators", "sinks"],
+        "nodes": [
+            // Sources
+            {
+                "category": "source",
+                "type": "mqtt",
+                "label": "MQTT Source",
+                "icon": "radio",
+                "color": "#0284c7",
+                "description": "Subscribes to an MQTT broker topic and streams incoming payloads.",
+                "inputs": 0,
+                "outputs": 1,
+                "multi_port": false,
+                "properties": [
+                    { "name": "datasource", "type": "string", "label": "Stream / Topic", "default": "demo", "required": true },
+                    { "name": "server", "type": "string", "label": "Broker URL", "default": "tcp://127.0.0.1:1883" },
+                    { "name": "qos", "type": "number", "label": "QoS Level (0-2)", "default": 1 }
+                ]
+            },
+            {
+                "category": "source",
+                "type": "modbus",
+                "label": "Modbus PLC",
+                "icon": "cpu",
+                "color": "#0284c7",
+                "description": "Polls industrial Modbus TCP / RTU coils and holding registers.",
+                "inputs": 0,
+                "outputs": 1,
+                "multi_port": false,
+                "properties": [
+                    { "name": "datasource", "type": "string", "label": "Stream Name", "default": "modbus_plc", "required": true },
+                    { "name": "endpoint", "type": "string", "label": "TCP Endpoint", "default": "127.0.0.1:502" },
+                    { "name": "intervalMs", "type": "number", "label": "Poll Interval (ms)", "default": 1000 },
+                    { "name": "unitId", "type": "number", "label": "Unit / Slave ID", "default": 1 }
+                ]
+            },
+            {
+                "category": "source",
+                "type": "opcua",
+                "label": "OPC-UA Source",
+                "icon": "server",
+                "color": "#0284c7",
+                "description": "Polls or subscribes to OPC-UA node IDs via opc.tcp.",
+                "inputs": 0,
+                "outputs": 1,
+                "multi_port": false,
+                "properties": [
+                    { "name": "datasource", "type": "string", "label": "Stream Name", "default": "opcua_stream", "required": true },
+                    { "name": "endpoint", "type": "string", "label": "Server URL", "default": "opc.tcp://127.0.0.1:4840" },
+                    { "name": "intervalMs", "type": "number", "label": "Sampling Interval (ms)", "default": 1000 }
+                ]
+            },
+            {
+                "category": "source",
+                "type": "httppull",
+                "label": "HTTP Pull",
+                "icon": "globe",
+                "color": "#0284c7",
+                "description": "Periodically polls a REST JSON endpoint.",
+                "inputs": 0,
+                "outputs": 1,
+                "multi_port": false,
+                "properties": [
+                    { "name": "datasource", "type": "string", "label": "Stream Name", "default": "http_api", "required": true },
+                    { "name": "url", "type": "string", "label": "Target URL", "default": "http://127.0.0.1:8080/data" },
+                    { "name": "interval", "type": "number", "label": "Poll Interval (ms)", "default": 2000 }
+                ]
+            },
+            {
+                "category": "source",
+                "type": "kafka",
+                "label": "Kafka Source",
+                "icon": "layers",
+                "color": "#0284c7",
+                "description": "Consumes messages from Apache Kafka topic partitions.",
+                "inputs": 0,
+                "outputs": 1,
+                "multi_port": false,
+                "properties": [
+                    { "name": "datasource", "type": "string", "label": "Stream / Topic", "default": "kafka_stream", "required": true },
+                    { "name": "brokers", "type": "string", "label": "Brokers", "default": "127.0.0.1:9092" },
+                    { "name": "group_id", "type": "string", "label": "Consumer Group", "default": "rekuiper_group" }
+                ]
+            },
+            {
+                "category": "source",
+                "type": "simulator",
+                "label": "Simulator / Mock",
+                "icon": "play-circle",
+                "color": "#0284c7",
+                "description": "Generates synthetic or replayed test telemetry events.",
+                "inputs": 0,
+                "outputs": 1,
+                "multi_port": false,
+                "properties": [
+                    { "name": "datasource", "type": "string", "label": "Stream Name", "default": "sim_stream", "required": true },
+                    { "name": "interval", "type": "number", "label": "Event Spacing (ms)", "default": 100 }
+                ]
+            },
+            // Operators
+            {
+                "category": "operator",
+                "type": "switch",
+                "label": "Switch Router",
+                "icon": "git-branch",
+                "color": "#ea580c",
+                "description": "Multi-port selective predicate routing without broadcast fan-out.",
+                "inputs": 1,
+                "outputs": 2,
+                "multi_port": true,
+                "properties": [
+                    {
+                        "name": "cases",
+                        "type": "json",
+                        "label": "Routing Cases [{\"case\": \"expr\", \"port\": 0}]",
+                        "default": [
+                            { "case": "temperature > 50", "port": 0 },
+                            { "case": "temperature <= 50", "port": 1 }
+                        ]
+                    },
+                    { "name": "default_port", "type": "number", "label": "Default Port", "default": 1 }
+                ]
+            },
+            {
+                "category": "operator",
+                "type": "rate_limit",
+                "label": "Rate Limiter",
+                "icon": "shield",
+                "color": "#6366f1",
+                "description": "Token-bucket stream throttle: admits allowed messages and drops or sheds excess bursts.",
+                "inputs": 1,
+                "outputs": 1,
+                "multi_port": false,
+                "properties": [
+                    { "name": "rate_limit", "type": "number", "label": "Limit (msgs/sec)", "default": 10.0 },
+                    { "name": "burst", "type": "number", "label": "Max Burst Tokens", "default": 10.0 }
+                ]
+            },
+            {
+                "category": "operator",
+                "type": "watchdog",
+                "label": "Watchdog Timeout",
+                "icon": "clock",
+                "color": "#e11d48",
+                "description": "Inactivity timer: raises synthetic alert tuples if input stream goes silent.",
+                "inputs": 1,
+                "outputs": 1,
+                "multi_port": false,
+                "properties": [
+                    { "name": "timeout_ms", "type": "number", "label": "Silence Timeout (ms)", "default": 5000 },
+                    {
+                        "name": "alert_payload",
+                        "type": "json",
+                        "label": "Alert Payload",
+                        "default": { "status": "INACTIVE_TIMEOUT", "severity": "HIGH" }
+                    },
+                    { "name": "repeat", "type": "boolean", "label": "Repeat Alert Ticks", "default": true }
+                ]
+            },
+            {
+                "category": "operator",
+                "type": "filter",
+                "label": "Filter",
+                "icon": "filter",
+                "color": "#7c3aed",
+                "description": "Filters stream records based on a boolean SQL expression.",
+                "inputs": 1,
+                "outputs": 1,
+                "multi_port": false,
+                "properties": [
+                    { "name": "expr", "type": "string", "label": "Filter Expression", "default": "temperature > 25" }
+                ]
+            },
+            {
+                "category": "operator",
+                "type": "pick",
+                "label": "Pick Projection",
+                "icon": "columns",
+                "color": "#7c3aed",
+                "description": "Projects a subset of record fields forward.",
+                "inputs": 1,
+                "outputs": 1,
+                "multi_port": false,
+                "properties": [
+                    { "name": "fields", "type": "json", "label": "Field Names", "default": ["temperature", "humidity"] }
+                ]
+            },
+            {
+                "category": "operator",
+                "type": "window",
+                "label": "Window Aggregator",
+                "icon": "box",
+                "color": "#7c3aed",
+                "description": "Tumbling, hopping, sliding or session time/count windows.",
+                "inputs": 1,
+                "outputs": 1,
+                "multi_port": false,
+                "properties": [
+                    { "name": "window_type", "type": "string", "label": "Window Type (tumbling/hopping/sliding)", "default": "tumbling" },
+                    { "name": "length", "type": "number", "label": "Duration (ms) or Count", "default": 10000 }
+                ]
+            },
+            {
+                "category": "operator",
+                "type": "sql",
+                "label": "SQL Transform",
+                "icon": "database",
+                "color": "#7c3aed",
+                "description": "Embedded SQL projection and aggregation statement.",
+                "inputs": 1,
+                "outputs": 1,
+                "multi_port": false,
+                "properties": [
+                    { "name": "sql", "type": "string", "label": "SQL Statement", "default": "SELECT * FROM src WHERE temp > 20" }
+                ]
+            },
+            // Sinks
+            {
+                "category": "sink",
+                "type": "mqtt",
+                "label": "MQTT Sink",
+                "icon": "send",
+                "color": "#059669",
+                "description": "Publishes processed records to an MQTT broker topic.",
+                "inputs": 1,
+                "outputs": 0,
+                "multi_port": false,
+                "properties": [
+                    { "name": "server", "type": "string", "label": "Broker URL", "default": "tcp://127.0.0.1:1883" },
+                    { "name": "topic", "type": "string", "label": "Target Topic", "default": "rekuiper/alerts" },
+                    { "name": "qos", "type": "number", "label": "QoS Level", "default": 1 }
+                ]
+            },
+            {
+                "category": "sink",
+                "type": "rest",
+                "label": "REST / HTTP Sink",
+                "icon": "globe",
+                "color": "#059669",
+                "description": "Dispatches HTTP POST requests with output JSON payloads.",
+                "inputs": 1,
+                "outputs": 0,
+                "multi_port": false,
+                "properties": [
+                    { "name": "url", "type": "string", "label": "Target URL", "default": "http://127.0.0.1:8080/ingest" },
+                    { "name": "method", "type": "string", "label": "HTTP Method", "default": "POST" }
+                ]
+            },
+            {
+                "category": "sink",
+                "type": "log",
+                "label": "Log Sink",
+                "icon": "terminal",
+                "color": "#059669",
+                "description": "Emits output tuples to the daemon tracing console.",
+                "inputs": 1,
+                "outputs": 0,
+                "multi_port": false,
+                "properties": []
+            },
+            {
+                "category": "sink",
+                "type": "file",
+                "label": "File Sink",
+                "icon": "file-text",
+                "color": "#059669",
+                "description": "Appends records to rolling JSON / Parquet files.",
+                "inputs": 1,
+                "outputs": 0,
+                "multi_port": false,
+                "properties": [
+                    { "name": "path", "type": "string", "label": "File Path", "default": "output.json" }
+                ]
+            },
+            {
+                "category": "sink",
+                "type": "kafka",
+                "label": "Kafka Sink",
+                "icon": "layers",
+                "color": "#059669",
+                "description": "Publishes output records to an Apache Kafka topic.",
+                "inputs": 1,
+                "outputs": 0,
+                "multi_port": false,
+                "properties": [
+                    { "name": "brokers", "type": "string", "label": "Brokers", "default": "127.0.0.1:9092" },
+                    { "name": "topic", "type": "string", "label": "Kafka Topic", "default": "rekuiper_out" }
+                ]
+            },
+            {
+                "category": "sink",
+                "type": "influx",
+                "label": "InfluxDB v1",
+                "icon": "database",
+                "color": "#059669",
+                "description": "Writes stream records to InfluxDB 1.x using Line Protocol over HTTP.",
+                "inputs": 1,
+                "outputs": 0,
+                "multi_port": false,
+                "properties": [
+                    { "name": "addr", "type": "string", "label": "Server URL", "default": "http://127.0.0.1:8086", "required": true },
+                    { "name": "measurement", "type": "string", "label": "Measurement", "default": "rekuiper_metrics" },
+                    { "name": "precision", "type": "string", "label": "Precision", "default": "ms" }
+                ]
+            },
+            {
+                "category": "sink",
+                "type": "influx2",
+                "label": "InfluxDB v2",
+                "icon": "database",
+                "color": "#059669",
+                "description": "Writes stream records to InfluxDB 2.x/3.x with Org and Bucket authentication.",
+                "inputs": 1,
+                "outputs": 0,
+                "multi_port": false,
+                "properties": [
+                    { "name": "addr", "type": "string", "label": "Server URL", "default": "http://127.0.0.1:8086", "required": true },
+                    { "name": "org", "type": "string", "label": "Organization", "default": "my-org" },
+                    { "name": "bucket", "type": "string", "label": "Bucket", "default": "iot_bucket" },
+                    { "name": "token", "type": "string", "label": "API Token", "default": "******" },
+                    { "name": "measurement", "type": "string", "label": "Measurement", "default": "rekuiper_metrics" }
+                ]
+            },
+            {
+                "category": "sink",
+                "type": "tdengine",
+                "label": "TDengine 3.x",
+                "icon": "database",
+                "color": "#059669",
+                "description": "Writes high-throughput time-series records to TDengine database.",
+                "inputs": 1,
+                "outputs": 0,
+                "multi_port": false,
+                "properties": [
+                    { "name": "host", "type": "string", "label": "Host", "default": "localhost" },
+                    { "name": "port", "type": "number", "label": "Port", "default": 6041 },
+                    { "name": "database", "type": "string", "label": "Database", "default": "power" },
+                    { "name": "table", "type": "string", "label": "Table", "default": "meters" }
+                ]
+            },
+            {
+                "category": "sink",
+                "type": "iotdb",
+                "label": "Apache IoTDB",
+                "icon": "database",
+                "color": "#059669",
+                "description": "Streams device telemetry records directly to Apache IoTDB REST service.",
+                "inputs": 1,
+                "outputs": 0,
+                "multi_port": false,
+                "properties": [
+                    { "name": "addr", "type": "string", "label": "Server URL", "default": "http://127.0.0.1:18080" },
+                    { "name": "device", "type": "string", "label": "Device Path", "default": "root.factory.d1" }
+                ]
+            },
+            {
+                "category": "sink",
+                "type": "opcua",
+                "label": "OPC-UA Sink",
+                "icon": "server",
+                "color": "#059669",
+                "description": "Writes values to OPC-UA node attributes on industrial servers.",
+                "inputs": 1,
+                "outputs": 0,
+                "multi_port": false,
+                "properties": [
+                    { "name": "endpoint", "type": "string", "label": "Server URL", "default": "opc.tcp://127.0.0.1:4840" },
+                    { "name": "nodeId", "type": "string", "label": "Target Node ID", "default": "ns=2;s=Device1.SetPoint" }
+                ]
+            },
+            {
+                "category": "sink",
+                "type": "modbus",
+                "label": "Modbus PLC Sink",
+                "icon": "cpu",
+                "color": "#059669",
+                "description": "Writes output values to Modbus TCP coils or holding registers.",
+                "inputs": 1,
+                "outputs": 0,
+                "multi_port": false,
+                "properties": [
+                    { "name": "endpoint", "type": "string", "label": "TCP Endpoint", "default": "127.0.0.1:502" },
+                    { "name": "slaveId", "type": "number", "label": "Slave ID", "default": 1 },
+                    { "name": "address", "type": "number", "label": "Register Address", "default": 40001 }
+                ]
+            },
+            {
+                "category": "sink",
+                "type": "redis",
+                "label": "Redis Sink",
+                "icon": "layers",
+                "color": "#059669",
+                "description": "Publishes to Redis pub/sub channel or appends to Redis stream/list.",
+                "inputs": 1,
+                "outputs": 0,
+                "multi_port": false,
+                "properties": [
+                    { "name": "addr", "type": "string", "label": "Redis URL", "default": "redis://127.0.0.1:6379" },
+                    { "name": "topic", "type": "string", "label": "Channel / Stream Key", "default": "rekuiper_alerts" },
+                    { "name": "datatype", "type": "string", "label": "Data Type (channel/stream/list)", "default": "channel" }
+                ]
+            },
+            {
+                "category": "sink",
+                "type": "parquet",
+                "label": "Parquet Rolling Sink",
+                "icon": "file-text",
+                "color": "#059669",
+                "description": "Rolls high-velocity records into compressed Apache Parquet columnar files.",
+                "inputs": 1,
+                "outputs": 0,
+                "multi_port": false,
+                "properties": [
+                    { "name": "path", "type": "string", "label": "Directory Path", "default": "/data/parquet/telemetry" },
+                    { "name": "rollingCount", "type": "number", "label": "Rolling Record Count", "default": 100000 },
+                    { "name": "rollingIntervalMs", "type": "number", "label": "Rolling Interval (ms)", "default": 60000 }
+                ]
+            },
+            {
+                "category": "sink",
+                "type": "otlp",
+                "label": "OpenTelemetry OTLP",
+                "icon": "activity",
+                "color": "#059669",
+                "description": "Exports edge stream metrics, logs, and spans to OpenTelemetry collectors.",
+                "inputs": 1,
+                "outputs": 0,
+                "multi_port": false,
+                "properties": [
+                    { "name": "endpoint", "type": "string", "label": "Collector Endpoint", "default": "http://127.0.0.1:4318/v1/metrics" },
+                    { "name": "protocol", "type": "string", "label": "Protocol", "default": "http/json" }
+                ]
+            },
+            {
+                "category": "sink",
+                "type": "websocket",
+                "label": "WebSocket Sink",
+                "icon": "radio",
+                "color": "#059669",
+                "description": "Broadcasts stream records in real-time to connected WebSocket clients.",
+                "inputs": 1,
+                "outputs": 0,
+                "multi_port": false,
+                "properties": [
+                    { "name": "addr", "type": "string", "label": "WebSocket URL / Path", "default": "ws://127.0.0.1:9090/ws/alerts" }
+                ]
+            },
+            {
+                "category": "sink",
+                "type": "nop",
+                "label": "NOP Drop",
+                "icon": "slash",
+                "color": "#64748b",
+                "description": "Black-hole drop sink for benchmarking and dead-ends.",
+                "inputs": 1,
+                "outputs": 0,
+                "multi_port": false,
+                "properties": []
+            }
+        ]
+    });
+    Json(palette)
+}
+
 pub async fn list_metadata_connections(State(state): State<AppState>) -> impl IntoResponse {
     let conns: Vec<Value> = state.connections.read().values().cloned().collect();
     Json(conns)

@@ -1,6 +1,6 @@
-# Benchmark Overview
+# Benchmarks: Streaming SQL & MQTT Rule Engine Performance (Single Core)
 
-This document describes the benchmark methodology, test principles, and release-specific benchmark history for rekuiper.
+rekuiper is a high-performance MQTT rule engine and streaming SQL processor written in Rust, evaluated under strict container resource limits of one physical CPU core and 1 GiB of RAM. This document describes the benchmark methodology, test principles, and release-specific benchmark history for rekuiper.
 
 ---
 

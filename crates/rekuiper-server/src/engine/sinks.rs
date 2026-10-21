@@ -958,10 +958,8 @@ impl FileBatchWriter {
     }
 
     pub(crate) fn push_parquet_record(&mut self, data: HashMap<String, Value>, ts: i64) {
-        self.parquet_buf.push(StreamRecord {
-            timestamp: ts,
-            data: data.into(),
-        });
+        self.parquet_buf
+            .push(StreamRecord::with_timestamp(data, ts));
         self.pending += 1;
     }
 

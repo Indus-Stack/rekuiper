@@ -146,7 +146,9 @@ pub async fn export_ruleset(State(state): State<AppState>) -> Response {
     }
     let mut rules_map = serde_json::Map::new();
     for rule in state.rule_manager.list_rules() {
-        let rule_json = serde_json::to_string(&rule).unwrap_or_default();
+        let mut r_val = serde_json::to_value(&rule).unwrap_or(Value::Null);
+        crate::secrets::mask_secrets(&mut r_val);
+        let rule_json = serde_json::to_string(&r_val).unwrap_or_default();
         rules_map.insert(rule.id, Value::String(rule_json));
     }
     (
@@ -181,7 +183,9 @@ pub async fn export_data(State(state): State<AppState>) -> Response {
     }
     let mut rules_map = serde_json::Map::new();
     for rule in state.rule_manager.list_rules() {
-        let rule_json = serde_json::to_string(&rule).unwrap_or_default();
+        let mut r_val = serde_json::to_value(&rule).unwrap_or(Value::Null);
+        crate::secrets::mask_secrets(&mut r_val);
+        let rule_json = serde_json::to_string(&r_val).unwrap_or_default();
         rules_map.insert(rule.id, Value::String(rule_json));
     }
     (
@@ -225,7 +229,8 @@ pub async fn export_data_v2(State(state): State<AppState>) -> Response {
     }
     let mut rules_map = serde_json::Map::new();
     for rule in state.rule_manager.list_rules() {
-        let rule_val = serde_json::to_value(&rule).unwrap_or(Value::Null);
+        let mut rule_val = serde_json::to_value(&rule).unwrap_or(Value::Null);
+        crate::secrets::mask_secrets(&mut rule_val);
         rules_map.insert(rule.id, rule_val);
     }
     let doc = json!({

@@ -95,6 +95,7 @@ async fn test_high_throughput_streaming_pipeline() {
         tx.send(StreamRecord {
             timestamp: n as i64,
             data,
+            meta: None,
         })
         .await
         .expect("subscriber closed mid-benchmark");
@@ -189,6 +190,7 @@ async fn test_pure_engine_throughput_prebuilt_records() {
             StreamRecord {
                 timestamp: n,
                 data: data.into(),
+                meta: None,
             }
         })
         .collect();

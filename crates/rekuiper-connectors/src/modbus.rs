@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use anyhow::{bail, Context, Result};
-use rekuiper_core::model::StreamRecord;
+use rekuiper_core::model::{RecordMeta, StreamRecord};
 use rekuiper_core::StreamSender;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -1005,11 +1005,21 @@ pub async fn modbus_read_snapshot(config: &ModbusConfig) -> Result<HashMap<Strin
 pub struct ModbusSource {
     config: ModbusConfig,
     tx: StreamSender,
+    status_callback: Option<crate::ConnectorStatusCallback>,
 }
 
 impl ModbusSource {
     pub fn new(config: ModbusConfig, tx: StreamSender) -> Self {
-        Self { config, tx }
+        Self {
+            config,
+            tx,
+            status_callback: None,
+        }
+    }
+
+    pub fn with_status_callback(mut self, cb: Option<crate::ConnectorStatusCallback>) -> Self {
+        self.status_callback = cb;
+        self
     }
 
     pub fn spawn(self, mut cancel_rx: watch::Receiver<bool>) -> tokio::task::JoinHandle<()> {
@@ -1104,11 +1114,25 @@ impl ModbusSource {
                                 range.function,
                                 e
                             );
+                            if let Some(ref cb) = self.status_callback {
+                                cb(
+                                    self.config.endpoint(),
+                                    "modbus",
+                                    "error",
+                                    Some(&e.to_string()),
+                                );
+                            }
                             decode_errors.push(format!(
                                 "Modbus poll failure at address {}: {}",
                                 range.start_address, e
                             ));
                         }
+                    }
+                }
+
+                if decode_errors.is_empty() {
+                    if let Some(ref cb) = self.status_callback {
+                        cb(self.config.endpoint(), "modbus", "connected", None);
                     }
                 }
 
@@ -1129,7 +1153,12 @@ impl ModbusSource {
                         Value::String(format!("raw Modbus bytes: [{}]", raw_hex)),
                     );
 
-                    let stream_rec = StreamRecord::new(err_record);
+                    let mut stream_rec = StreamRecord::new(err_record);
+                    stream_rec.meta = Some(Arc::new(RecordMeta {
+                        topic: None,
+                        source: Some(Arc::from("modbus")),
+                        custom: None,
+                    }));
                     if matches!(
                         self.tx.send(stream_rec).await,
                         Err(rekuiper_core::PublishError::Closed)
@@ -1137,7 +1166,12 @@ impl ModbusSource {
                         break;
                     }
                 } else if !record_map.is_empty() {
-                    let stream_rec = StreamRecord::new(record_map);
+                    let mut stream_rec = StreamRecord::new(record_map);
+                    stream_rec.meta = Some(Arc::new(RecordMeta {
+                        topic: None,
+                        source: Some(Arc::from("modbus")),
+                        custom: None,
+                    }));
                     if matches!(
                         self.tx.send(stream_rec).await,
                         Err(rekuiper_core::PublishError::Closed)

@@ -32,9 +32,9 @@ function transformSidebar(items: DirectoryItem[]): any[] {
 
 export default withMermaid(
   defineConfig({
-  title: 'rekuiper',
-  titleTemplate: ':title — Rust Edge SQL Stream Processing Engine',
-  description: 'Pure-Rust, drop-in compatible rewrite of LF Edge eKuiper. Process 1,000,000–2,200,000+ IoT, MQTT, Modbus, and OPC-UA events/sec on a single core in <50 MB RAM with native GitOps, Wasm, and MCP.',
+  title: 'rekuiper — Rust MQTT Rule Engine & Streaming SQL Processor',
+  titleTemplate: ':title — rekuiper',
+  description: 'Single-binary MQTT rule engine and streaming SQL processor written in Rust. Filter, aggregate, and route MQTT, Kafka, Modbus, and OPC-UA data on the edge.',
   srcDir: './en_US',
   outDir: './.vitepress/dist',
   cleanUrls: false,
@@ -64,27 +64,55 @@ export default withMermaid(
   },
 
   head: [
-    ['meta', { name: 'keywords', content: 'rekuiper, eKuiper alternative, Rust stream processing, edge SQL engine, IoT rule engine, MQTT SQL filter, Modbus OPC-UA edge gateway, MCP server IoT' }],
+    ['meta', { name: 'keywords', content: 'rekuiper, Rust MQTT rule engine, MQTT rule engine, streaming SQL processor, edge SQL engine, IoT rule engine, Modbus, OPC-UA, stream processing' }],
     ['meta', { property: 'og:type', content: 'website' }],
     ['meta', { property: 'og:site_name', content: 'rekuiper' }],
-    ['meta', { property: 'og:title', content: 'rekuiper — Edge SQL Stream Processing at Rust Speed' }],
-    ['meta', { property: 'og:description', content: '100% eKuiper-compatible SQL rule engine in pure Rust. 1M–2.2M+ events/s on a single core, zero GC pauses, native Modbus/OPC-UA, and built-in MCP server.' }],
+    ['meta', { property: 'og:title', content: 'rekuiper — Rust MQTT Rule Engine & Streaming SQL Processor' }],
+    ['meta', { property: 'og:description', content: 'Single-binary MQTT rule engine and streaming SQL processor written in Rust. Filter, aggregate, and route MQTT, Kafka, Modbus, and OPC-UA data on the edge.' }],
     ['meta', { property: 'og:image', content: 'https://rekuiper.indramqtt.com/cover.jpg' }],
     ['meta', { name: 'twitter:card', content: 'summary_large_image' }],
-    ['meta', { name: 'twitter:title', content: 'rekuiper — Rust Edge SQL Stream Processing Engine' }],
-    ['meta', { name: 'twitter:description', content: 'Filter, aggregate, and route MQTT, Modbus, and OPC-UA streams on the gateway before they hit your cloud bill.' }],
-    ['meta', { name: 'twitter:image', content: 'https://rekuiper.indramqtt.com/cover.jpg' }]
+    ['meta', { name: 'twitter:title', content: 'rekuiper — Rust MQTT Rule Engine & Streaming SQL Processor' }],
+    ['meta', { name: 'twitter:description', content: 'Single-binary MQTT rule engine and streaming SQL processor written in Rust. Filter, aggregate, and route MQTT, Kafka, Modbus, and OPC-UA data on the edge.' }],
+    ['meta', { name: 'twitter:image', content: 'https://rekuiper.indramqtt.com/cover.jpg' }],
+    ['script', { type: 'application/ld+json' }, JSON.stringify({
+      "@context": "https://schema.org",
+      "@type": "SoftwareApplication",
+      "name": "rekuiper",
+      "operatingSystem": "Linux, macOS, Windows, ARM64",
+      "applicationCategory": "DeveloperApplication",
+      "programmingLanguage": "Rust",
+      "description": "Single-binary MQTT rule engine and streaming SQL processor written in Rust for edge gateways and telemetry pipelines.",
+      "url": "https://rekuiper.indramqtt.com",
+      "codeRepository": "https://github.com/Indus-Stack/rekuiper",
+      "offers": {
+        "@type": "Offer",
+        "price": "0",
+        "priceCurrency": "USD"
+      }
+    })]
   ],
+  transformHead: ({ pageData }) => {
+    const cleanPath = pageData.relativePath === 'index.md'
+      ? ''
+      : pageData.relativePath.replace(/\.md$/, '.html');
+    return [
+      ['link', { rel: 'canonical', href: `https://rekuiper.indramqtt.com/${cleanPath}` }]
+    ];
+  },
   themeConfig: {
     nav: [
       { text: 'Quick Start', link: '/getting_started/getting_started' },
       {
         text: 'Documentation',
         items: [
+          { text: 'MQTT Rule Engine Architecture', link: '/mqtt-rule-engine' },
           { text: 'Core Concepts & SQL', link: '/concepts/rekuiper' },
           { text: 'Native Connectors', link: '/guide/connector' },
           { text: 'Declarative GitOps Mode', link: '/operation/declarative_gitops' },
           { text: 'Built-in Web UI & Observability', link: '/operation/observability_ui_top' },
+          { text: 'Fleet Management & Control Plane', link: '/operation/fleet_management' },
+          { text: 'Visual Pipeline Studio', link: '/guide/rules/visual_studio' },
+          { text: 'Rule Designer & Schema Builder', link: '/guide/rules/designer_and_schema_builder' },
           { text: 'REST API & CLI Reference', link: '/api/restapi/overview' },
           { text: 'Interactive OpenAPI / Swagger UI', link: '/api/swagger' }
         ]
@@ -96,6 +124,7 @@ export default withMermaid(
         items: [
           { text: 'rekuiper vs. Go eKuiper', link: '/compare/rekuiper-vs-ekuiper' },
           { text: 'rekuiper vs. Node-RED / Vector', link: '/compare/rekuiper-vs-nodered-vector' },
+          { text: 'MQTT Rule Engine Landscape', link: '/mqtt-rule-engine#2-architectural-comparison-matrix' },
           { text: 'Migration & Modernization Guide', link: '/operation/migration' }
         ]
       },
@@ -109,6 +138,8 @@ export default withMermaid(
           { text: 'ESPHome Fleet Telemetry', link: '/usecases/esphome' }
         ]
       },
+      { text: 'FAQ & Help', link: '/faq' },
+      { text: 'GitHub', link: 'https://github.com/Indus-Stack/rekuiper' },
       { text: 'IndraMQTT Platform', link: 'https://indramqtt.com' }
     ],
     sidebar: transformSidebar((directory as any).en || []),

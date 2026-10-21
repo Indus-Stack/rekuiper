@@ -1,0 +1,109 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 440" role="img" aria-labelledby="t d" font-family="-apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+  <title id="t">rekuiper MQTT Rule Engine Architecture</title>
+  <desc id="d">Telemetry flows from MQTT publishers through the rekuiper Rust engine for SQL filtering and windowing, routing summarized records to MQTT brokers, databases, and cloud sinks.</desc>
+
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#475569"/>
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="980" height="440" rx="14" fill="#f8fafc" stroke="#e2e8f0" stroke-width="1"/>
+
+  <!-- Column Headers -->
+  <g font-size="12" font-weight="700" fill="#64748b" letter-spacing="1.2">
+    <text x="50" y="44">1. MQTT TELEMETRY SOURCES</text>
+    <text x="350" y="44">2. REKUIPER RUST RULE ENGINE</text>
+    <text x="730" y="44">3. ROUTED DESTINATIONS</text>
+  </g>
+
+  <!-- Left: MQTT Sources -->
+  <g font-size="13" fill="#1e293b">
+    <g>
+      <rect x="50" y="70" width="230" height="64" rx="8" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5"/>
+      <text x="66" y="96" font-weight="600">MQTT Sensor Fleets</text>
+      <text x="66" y="116" font-size="11" fill="#64748b">QoS 0/1/2, TLS 1.3, mTLS</text>
+    </g>
+    <g>
+      <rect x="50" y="150" width="230" height="64" rx="8" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5"/>
+      <text x="66" y="176" font-weight="600">Industrial Edge Gateways</text>
+      <text x="66" y="196" font-size="11" fill="#64748b">Modbus &amp; OPC-UA to MQTT</text>
+    </g>
+    <g>
+      <rect x="50" y="230" width="230" height="64" rx="8" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5"/>
+      <text x="66" y="256" font-weight="600">Vehicle &amp; Asset Feeds</text>
+      <text x="66" y="276" font-size="11" fill="#64748b">10,000+ wildcard topics</text>
+    </g>
+    <g>
+      <rect x="50" y="310" width="230" height="64" rx="8" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5"/>
+      <text x="66" y="336" font-weight="600">Local Brokers</text>
+      <text x="66" y="356" font-size="11" fill="#64748b">Mosquitto, EMQX, NanoMQ</text>
+    </g>
+  </g>
+
+  <!-- Center: rekuiper Engine Container -->
+  <g>
+    <rect x="330" y="70" width="340" height="304" rx="12" fill="#ffffff" stroke="#0284c7" stroke-width="2"/>
+    <rect x="330" y="70" width="340" height="38" rx="12" fill="#0284c7"/>
+    <rect x="330" y="96" width="340" height="12" fill="#0284c7"/>
+    <text x="350" y="95" font-size="14" font-weight="700" fill="#ffffff">Single-Binary Rust Runtime (No GC)</text>
+
+    <!-- Sub-blocks inside Engine -->
+    <g font-size="12" fill="#0f172a">
+      <rect x="350" y="124" width="300" height="48" rx="6" fill="#f0f9ff" stroke="#bae6fd"/>
+      <text x="366" y="145" font-weight="600">rumqttc Ingestion Actor</text>
+      <text x="366" y="161" font-size="11" fill="#0369a1">Bounded ring buffers, backpressure control</text>
+
+      <rect x="350" y="184" width="300" height="58" rx="6" fill="#f8fafc" stroke="#cbd5e1"/>
+      <text x="366" y="204" font-weight="600">Streaming SQL Evaluator</text>
+      <text x="366" y="220" font-size="11" fill="#475569">Zero-copy WHERE filtering, register math</text>
+      <text x="366" y="234" font-size="11" fill="#64748b">221 built-in functions, DFA pattern matcher</text>
+
+      <rect x="350" y="254" width="300" height="48" rx="6" fill="#f8fafc" stroke="#cbd5e1"/>
+      <text x="366" y="275" font-weight="600">Stateful Windowing</text>
+      <text x="366" y="291" font-size="11" fill="#475569">Tumbling, sliding, hopping, session windows</text>
+
+      <rect x="350" y="314" width="300" height="44" rx="6" fill="#f0fdf4" stroke="#bbf7d0"/>
+      <text x="366" y="334" font-weight="600">Store-and-Forward Cache</text>
+      <text x="366" y="348" font-size="11" fill="#15803d">Zero data loss on disconnected uplinks</text>
+    </g>
+  </g>
+
+  <!-- Right: Destinations -->
+  <g font-size="13" fill="#1e293b">
+    <g>
+      <rect x="720" y="70" width="210" height="64" rx="8" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5"/>
+      <text x="736" y="96" font-weight="600">Alert Topics (MQTT)</text>
+      <text x="736" y="116" font-size="11" fill="#64748b">Sub-ms threshold alerts</text>
+    </g>
+    <g>
+      <rect x="720" y="150" width="210" height="64" rx="8" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5"/>
+      <text x="736" y="176" font-weight="600">Time-Series DB</text>
+      <text x="736" y="196" font-size="11" fill="#64748b">InfluxDB, TDengine, SQLite</text>
+    </g>
+    <g>
+      <rect x="720" y="230" width="210" height="64" rx="8" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5"/>
+      <text x="736" y="256" font-weight="600">Cloud Broker / Kafka</text>
+      <text x="736" y="276" font-size="11" fill="#64748b">95% downsampled summary</text>
+    </g>
+    <g>
+      <rect x="720" y="310" width="210" height="64" rx="8" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5"/>
+      <text x="736" y="336" font-weight="600">Local Actuators</text>
+      <text x="736" y="356" font-size="11" fill="#64748b">HTTP webhook, Modbus write</text>
+    </g>
+  </g>
+
+  <!-- Connectors / Arrows -->
+  <path d="M280 102 L330 148" stroke="#64748b" stroke-width="1.5" fill="none" marker-end="url(#arrow)"/>
+  <path d="M280 182 L330 148" stroke="#64748b" stroke-width="1.5" fill="none" marker-end="url(#arrow)"/>
+  <path d="M280 262 L330 148" stroke="#64748b" stroke-width="1.5" fill="none" marker-end="url(#arrow)"/>
+  <path d="M280 342 L330 148" stroke="#64748b" stroke-width="1.5" fill="none" marker-end="url(#arrow)"/>
+
+  <path d="M670 278 L720 102" stroke="#64748b" stroke-width="1.5" fill="none" marker-end="url(#arrow)"/>
+  <path d="M670 278 L720 182" stroke="#64748b" stroke-width="1.5" fill="none" marker-end="url(#arrow)"/>
+  <path d="M670 278 L720 262" stroke="#64748b" stroke-width="1.5" fill="none" marker-end="url(#arrow)"/>
+  <path d="M670 278 L720 342" stroke="#64748b" stroke-width="1.5" fill="none" marker-end="url(#arrow)"/>
+
+  <!-- Footer note -->
+  <text x="50" y="415" font-size="12" fill="#64748b">Tested on 1 physical CPU core and 1 GiB RAM · 150,000–200,000 msg/s sustainable MQTT ingest · 4.4–10.2 MiB heap</text>
+</svg>

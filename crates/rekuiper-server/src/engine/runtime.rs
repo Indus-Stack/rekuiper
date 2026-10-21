@@ -352,7 +352,12 @@ pub(crate) async fn run_stateless_rule(
                     }
                     match eval_res {
                         Ok(Some(output)) => {
-                            if !enqueue_sink_record(&counters, &sink, StreamRecord::new(output)).await {
+                            let out_rec = StreamRecord::with_timestamp_and_meta(
+                                output,
+                                record.timestamp,
+                                record.meta.clone(),
+                            );
+                            if !enqueue_sink_record(&counters, &sink, out_rec).await {
                                 return;
                             }
                         }
@@ -482,7 +487,11 @@ pub(crate) async fn run_stateless_rule(
                     }
                     match eval_res {
                         Ok(Some(output)) => {
-                            let out_rec = StreamRecord::with_timestamp(output, record.timestamp);
+                            let out_rec = StreamRecord::with_timestamp_and_meta(
+                                output,
+                                record.timestamp,
+                                record.meta.clone(),
+                            );
                             match sink.try_send(out_rec) {
                                 Ok(()) => {
                                     batch_enqueued += 1;

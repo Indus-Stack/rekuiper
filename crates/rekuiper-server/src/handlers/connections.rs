@@ -270,7 +270,7 @@ pub async fn save_connection_conf_key(
     if let Err(resp) = check_valid_name(&conf_key) {
         return resp;
     }
-    let payload = if body.is_empty() {
+    let mut payload = if body.is_empty() {
         json!({})
     } else {
         serde_json::from_slice::<Value>(&body).unwrap_or_else(|_| json!({}))
@@ -278,6 +278,18 @@ pub async fn save_connection_conf_key(
     let canonical_key = format!("{}/{}", name, conf_key);
     let dot_key = format!("{}.{}", name, conf_key);
     let _guard = state.config_op_lock.lock().await;
+
+    // Preserve existing secrets when updated with "******" placeholder
+    let existing_val = {
+        let conns = state.connections.read();
+        conns
+            .get(&canonical_key)
+            .or_else(|| conns.get(&dot_key))
+            .cloned()
+    };
+    if let Some(existing) = existing_val {
+        crate::secrets::preserve_masked_secrets(&mut payload, &existing);
+    }
 
     if let Some(kv) = state.kv.as_ref() {
         let ops = [
@@ -326,15 +338,17 @@ pub async fn get_connection_conf_key(
             .or_else(|| conns.get(&dot_key))
             .cloned()
     };
-    if let Some(val) = mem_val {
+    if let Some(mut val) = mem_val {
+        crate::secrets::mask_secrets(&mut val);
         return Json(val).into_response();
     }
 
     if let Some(kv) = state.kv.as_ref() {
         match kv.get("connections", &canonical_key).await {
             Ok(Some(raw)) => {
-                if let Ok(val) = serde_json::from_str::<Value>(&raw) {
+                if let Ok(mut val) = serde_json::from_str::<Value>(&raw) {
                     state.connections.write().insert(canonical_key, val.clone());
+                    crate::secrets::mask_secrets(&mut val);
                     return Json(val).into_response();
                 }
             }
@@ -349,8 +363,9 @@ pub async fn get_connection_conf_key(
         }
         match kv.get("connections", &dot_key).await {
             Ok(Some(raw)) => {
-                if let Ok(val) = serde_json::from_str::<Value>(&raw) {
+                if let Ok(mut val) = serde_json::from_str::<Value>(&raw) {
                     state.connections.write().insert(dot_key, val.clone());
+                    crate::secrets::mask_secrets(&mut val);
                     return Json(val).into_response();
                 }
             }
@@ -519,13 +534,16 @@ pub async fn register_lookup_connection(
 }
 
 pub async fn list_connections(State(state): State<AppState>) -> impl IntoResponse {
-    let conns: Vec<Value> = state.connections.read().values().cloned().collect();
+    let mut conns: Vec<Value> = state.connections.read().values().cloned().collect();
+    for c in &mut conns {
+        crate::secrets::mask_secrets(c);
+    }
     Json(conns)
 }
 
 pub async fn create_connection(
     State(state): State<AppState>,
-    Json(payload): Json<Value>,
+    Json(mut payload): Json<Value>,
 ) -> Response {
     let id = payload
         .get("id")
@@ -554,6 +572,7 @@ pub async fn create_connection(
                 .into_response();
         }
     }
+    crate::secrets::interpolate_secrets(&mut payload, state.kv.as_deref());
     let _guard = state.config_op_lock.lock().await;
     if let Err(e) = persist_config_entry(&state, "connections", &id, &payload).await {
         return (
@@ -579,7 +598,8 @@ pub async fn get_connection(State(state): State<AppState>, Path(id): Path<String
             .or_else(|| conns.get(&dot))
             .cloned()
     };
-    if let Some(conn) = mem_val {
+    if let Some(mut conn) = mem_val {
+        crate::secrets::mask_secrets(&mut conn);
         return Json(conn).into_response();
     }
 
@@ -587,11 +607,12 @@ pub async fn get_connection(State(state): State<AppState>, Path(id): Path<String
         for candidate in [&id, &canonical, &dot] {
             match kv.get("connections", candidate).await {
                 Ok(Some(raw)) => {
-                    if let Ok(val) = serde_json::from_str::<Value>(&raw) {
+                    if let Ok(mut val) = serde_json::from_str::<Value>(&raw) {
                         state
                             .connections
                             .write()
                             .insert(candidate.to_string(), val.clone());
+                        crate::secrets::mask_secrets(&mut val);
                         return Json(val).into_response();
                     }
                 }
@@ -674,7 +695,7 @@ pub async fn delete_connection(State(state): State<AppState>, Path(id): Path<Str
 pub async fn update_connection(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    Json(payload): Json<Value>,
+    Json(mut payload): Json<Value>,
 ) -> Response {
     let _guard = state.config_op_lock.lock().await;
     let mut stored = state
@@ -683,6 +704,8 @@ pub async fn update_connection(
         .get(&id)
         .cloned()
         .unwrap_or_else(|| json!({"id": id}));
+    crate::secrets::preserve_masked_secrets(&mut payload, &stored);
+    crate::secrets::interpolate_secrets(&mut payload, state.kv.as_deref());
     merge_json_object(&mut stored, &payload);
     if let Some(obj) = stored.as_object_mut() {
         obj.insert("id".to_string(), Value::String(id.clone()));
@@ -695,7 +718,9 @@ pub async fn update_connection(
             .into_response();
     }
     state.connections.write().insert(id, stored.clone());
-    Json(stored).into_response()
+    let mut masked = stored;
+    crate::secrets::mask_secrets(&mut masked);
+    Json(masked).into_response()
 }
 
 #[cfg(test)]

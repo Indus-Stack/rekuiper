@@ -2,11 +2,12 @@ use crate::{Sink, META_KEY};
 use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
 use indexmap::IndexMap;
-use rekuiper_core::model::StreamRecord;
+use rekuiper_core::model::{RecordMeta, StreamRecord};
 use rekuiper_core::StreamSender;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 pub struct HttpSink {
     pub url: String,
@@ -76,6 +77,7 @@ fn default_http_interval() -> u64 {
 pub struct HttpPullSource {
     pub config: HttpPullConfig,
     pub tx: StreamSender,
+    pub status_callback: Option<crate::ConnectorStatusCallback>,
 }
 
 impl HttpPullSource {
@@ -93,6 +95,9 @@ impl HttpPullSource {
                     _ = ticker.tick() => {
                         match self.fetch_once(&client).await {
                             Ok(records) => {
+                                if let Some(ref cb) = self.status_callback {
+                                    cb(&self.config.url, "http", "connected", None);
+                                }
                                 for record in records {
                                     // All subscribers dropped: shut down cleanly.
                                     if self.tx.send(record).await.is_err() {
@@ -106,6 +111,9 @@ impl HttpPullSource {
                                     self.config.url,
                                     e
                                 );
+                                if let Some(ref cb) = self.status_callback {
+                                    cb(&self.config.url, "http", "error", Some(&e.to_string()));
+                                }
                             }
                         }
                     }
@@ -149,17 +157,25 @@ impl HttpPullSource {
             .json()
             .await
             .with_context(|| format!("HTTP pull response from {} is not JSON", self.config.url))?;
+        let rec_meta = Arc::new(RecordMeta {
+            topic: None,
+            source: Some(Arc::from(self.config.url.as_str())),
+            custom: None,
+        });
         match payload {
-            Value::Object(map) => Ok(vec![StreamRecord::new(
-                map.into_iter().collect::<IndexMap<_, _>>(),
-            )]),
+            Value::Object(map) => {
+                let mut rec = StreamRecord::new(map.into_iter().collect::<IndexMap<_, _>>());
+                rec.meta = Some(rec_meta);
+                Ok(vec![rec])
+            }
             Value::Array(items) => {
                 let mut records = Vec::new();
                 for item in items {
                     if let Value::Object(map) = item {
-                        records.push(StreamRecord::new(
-                            map.into_iter().collect::<IndexMap<_, _>>(),
-                        ));
+                        let mut rec =
+                            StreamRecord::new(map.into_iter().collect::<IndexMap<_, _>>());
+                        rec.meta = Some(rec_meta.clone());
+                        records.push(rec);
                     } else {
                         tracing::warn!(
                             "Skipping non-object element in HTTP pull response from {}",

@@ -25,6 +25,12 @@ pub trait RowLookup {
     fn contains_key(&self, key: &str) -> bool {
         self.get(key).is_some()
     }
+
+    /// Retrieve a metadata field value from an attached RecordMeta header.
+    #[inline(always)]
+    fn get_meta_field(&self, _key: &str) -> Option<Value> {
+        None
+    }
 }
 
 impl RowLookup for HashMap<String, Value> {
@@ -83,6 +89,66 @@ impl RowLookup for rekuiper_core::model::SharedMap {
     }
 }
 
+impl RowLookup for rekuiper_core::model::StreamRecord {
+    type Iter<'a> = indexmap::map::Iter<'a, String, Value>;
+
+    #[inline(always)]
+    fn get(&self, key: &str) -> Option<&Value> {
+        self.data.get(key)
+    }
+
+    #[inline(always)]
+    fn iter(&self) -> Self::Iter<'_> {
+        self.data.iter()
+    }
+
+    #[inline(always)]
+    fn get_meta_field(&self, key: &str) -> Option<Value> {
+        // 1. Read from StreamRecord.meta (Arc<RecordMeta>) first
+        if let Some(ref m) = self.meta {
+            match key.to_ascii_lowercase().as_str() {
+                "topic" => {
+                    if let Some(ref t) = m.topic {
+                        return Some(Value::String(t.to_string()));
+                    }
+                }
+                "source" => {
+                    if let Some(ref s) = m.source {
+                        return Some(Value::String(s.to_string()));
+                    }
+                }
+                _ => {
+                    if let Some(ref c) = m.custom {
+                        if let Some(v) = c.get(key).or_else(|| {
+                            c.iter()
+                                .find(|(k, _)| k.eq_ignore_ascii_case(key))
+                                .map(|(_, v)| v)
+                        }) {
+                            return Some(v.clone());
+                        }
+                    }
+                }
+            }
+        }
+        // 2. Fall back to data.get("__meta__") / data.get("meta")
+        let meta_keys = ["__meta__", "meta"];
+        for mk in meta_keys {
+            if let Some(val) = self.data.get(mk) {
+                if let Some(obj) = val.as_object() {
+                    if let Some(field) = obj.get(key).or_else(|| {
+                        obj.iter()
+                            .find(|(k, _)| k.eq_ignore_ascii_case(key))
+                            .map(|(_, v)| v)
+                    }) {
+                        return Some(field.clone());
+                    }
+                }
+            }
+        }
+        None
+    }
+}
+
 impl<T: RowLookup + ?Sized> RowLookup for &T {
     type Iter<'a>
         = T::Iter<'a>
@@ -97,6 +163,11 @@ impl<T: RowLookup + ?Sized> RowLookup for &T {
     #[inline(always)]
     fn iter(&self) -> Self::Iter<'_> {
         (**self).iter()
+    }
+
+    #[inline(always)]
+    fn get_meta_field(&self, key: &str) -> Option<Value> {
+        (**self).get_meta_field(key)
     }
 }
 
@@ -114,6 +185,11 @@ impl<T: RowLookup + ?Sized> RowLookup for Arc<T> {
     #[inline(always)]
     fn iter(&self) -> Self::Iter<'_> {
         (**self).iter()
+    }
+
+    #[inline(always)]
+    fn get_meta_field(&self, key: &str) -> Option<Value> {
+        (**self).get_meta_field(key)
     }
 }
 
@@ -3059,6 +3135,9 @@ impl Evaluator {
             }) {
                 return value.clone();
             }
+        }
+        if let Some(val) = record.get_meta_field(&key) {
+            return val;
         }
         record.get(&key).cloned().unwrap_or(Value::Null)
     }

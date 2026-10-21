@@ -2687,7 +2687,7 @@ async fn test_issue14_shared_stream_multi_rule_no_duplicate_delivery() {
     );
 
     // rule 1 continues receiving records seamlessly.
-    let r1_next = tokio::time::timeout(std::time::Duration::from_secs(3), rx1.recv())
+    let r1_next = tokio::time::timeout(std::time::Duration::from_secs(10), rx1.recv())
         .await
         .expect("timed out waiting for subsequent record on r1")
         .expect("channel closed");

@@ -44,6 +44,36 @@ pub struct BasicConfig {
     /// Whether rules and sinks can connect to private networks (default false for security).
     #[serde(default)]
     pub enable_private_net: bool,
+    /// Control plane WebSocket URL for fleet management (e.g. ws://control-plane:9081/fleet/ws).
+    #[serde(default)]
+    pub control_plane_url: Option<String>,
+    /// Unique identifier for this edge device (agent mode).
+    #[serde(default)]
+    pub device_id: Option<String>,
+    /// Display name for this edge device.
+    #[serde(default)]
+    pub device_name: Option<String>,
+    /// Plant/facility tag (e.g. Plant-Austin).
+    #[serde(default)]
+    pub device_plant: Option<String>,
+    /// Geographic region tag (e.g. US-South).
+    #[serde(default)]
+    pub device_region: Option<String>,
+    /// Hardware device type tag (e.g. IPC-Industrial).
+    #[serde(default)]
+    pub device_type: Option<String>,
+    /// Optional shared bearer or provisioning token for fleet authentication.
+    #[serde(default)]
+    pub fleet_token: Option<String>,
+    /// Whether the web console UI (/ui) is enabled. Default false for security.
+    #[serde(default)]
+    pub enable_ui: bool,
+    /// Allowed client IP addresses or CIDR ranges for web console access (empty = all allowed).
+    #[serde(default)]
+    pub ui_ip_allowlist: Vec<String>,
+    /// Optional custom password for Web UI access.
+    #[serde(default)]
+    pub ui_password: Option<String>,
 }
 
 fn default_ip() -> String {
@@ -94,6 +124,16 @@ impl Default for BasicConfig {
             http_server_ip: default_http_server_ip(),
             http_server_port: default_http_server_port(),
             enable_private_net: false,
+            control_plane_url: None,
+            device_id: None,
+            device_name: None,
+            device_plant: None,
+            device_region: None,
+            device_type: None,
+            fleet_token: None,
+            enable_ui: false,
+            ui_ip_allowlist: Vec::new(),
+            ui_password: None,
         }
     }
 }
@@ -236,6 +276,55 @@ fn apply_basic_override(basic: &mut BasicConfig, key: &str, val: &str) {
             if let Some(v) = parse_env_bool(val) {
                 basic.enable_private_net = v;
             }
+        }
+        "CONTROLPLANEURL" => {
+            basic.control_plane_url = if val.trim().is_empty() {
+                None
+            } else {
+                Some(val.trim().to_string())
+            };
+        }
+        "DEVICEID" => {
+            basic.device_id = if val.trim().is_empty() {
+                None
+            } else {
+                Some(val.trim().to_string())
+            };
+        }
+        "DEVICENAME" => {
+            basic.device_name = if val.trim().is_empty() {
+                None
+            } else {
+                Some(val.trim().to_string())
+            };
+        }
+        "DEVICEPLANT" | "PLANT" => {
+            basic.device_plant = if val.trim().is_empty() {
+                None
+            } else {
+                Some(val.trim().to_string())
+            };
+        }
+        "DEVICEREGION" | "REGION" => {
+            basic.device_region = if val.trim().is_empty() {
+                None
+            } else {
+                Some(val.trim().to_string())
+            };
+        }
+        "DEVICETYPE" => {
+            basic.device_type = if val.trim().is_empty() {
+                None
+            } else {
+                Some(val.trim().to_string())
+            };
+        }
+        "FLEETTOKEN" => {
+            basic.fleet_token = if val.trim().is_empty() {
+                None
+            } else {
+                Some(val.trim().to_string())
+            };
         }
         _ => {}
     }

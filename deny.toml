@@ -17,4 +17,5 @@ ignore = [
     # Transitive unmaintained notices (non-vulnerability):
     { id = "RUSTSEC-2024-0384", reason = "Transitive via lapin -> async-io -> fastrand -> instant 0.1.13 (wasm32-only target dependency, never compiled on native targets)" },
     { id = "RUSTSEC-2024-0436", reason = "Transitive proc-macro paste 1.0.15 via parquet/wasmi/boa_engine; compile-time only, awaiting upstream migration to pastey" },
+    { id = "RUSTSEC-2026-0382", reason = "Transitive via rumqttc -> rustls-webpki 0.102.8 and rustls 0.23 -> rustls-webpki 0.103.15; emSign intermediate certificates not used in MQTT TLS or edge gateway connections" },
 ]

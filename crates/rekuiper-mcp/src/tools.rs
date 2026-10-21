@@ -763,6 +763,150 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
                 "required": ["sql"]
             }),
         },
+
+        // =========================================================================
+        // 12. Fleet Management & Edge Control Plane (Rekuiper Manager)
+        // =========================================================================
+        ToolDefinition {
+            name: "list_fleet_devices".to_string(),
+            description: "Queries the Rekuiper Fleet Control Plane to enumerate all connected and registered edge gateway nodes. Returns device IDs, names, plant locations, geographical regions, hardware architecture types, tunnel ports, active rule count, uptime, and last heartbeat timestamps.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {}
+            }),
+        },
+        ToolDefinition {
+            name: "get_fleet_rollouts".to_string(),
+            description: "Retrieves active and historical staged configuration rollouts across the edge fleet, returning rollout IDs, declarative snapshot hashes, deployment strategies (canary, rolling, all_at_once), canary percentages, and per-device rollout states (pending, applying, verified, rolled_back).".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {}
+            }),
+        },
+        ToolDefinition {
+            name: "trigger_fleet_rollout".to_string(),
+            description: "Initiates a staged declarative rollout across edge gateways in the fleet. Distributes stream topologies, rule definitions, and configurations with automated Canary percentage gating, error thresholds, and rollback safety.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "strategy": {
+                        "type": "string",
+                        "enum": ["canary", "rolling", "all_at_once"],
+                        "description": "Deployment progression strategy: 'canary' for percentage-staged verification, 'rolling' for batch progression, or 'all_at_once'."
+                    },
+                    "canary_percentage": {
+                        "type": "integer",
+                        "description": "Initial target gateway percentage (1-100) for canary deployments before full promotion."
+                    },
+                    "rules": {
+                        "type": "array",
+                        "description": "Optional list of rule definitions to deploy in this rollout."
+                    }
+                }
+            }),
+        },
+        ToolDefinition {
+            name: "list_fleet_snapshots".to_string(),
+            description: "Retrieves the catalog of historical declarative snapshots, backup hashes, and GitOps state manifests stored across the edge fleet.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {}
+            }),
+        },
+        ToolDefinition {
+            name: "proxy_fleet_device_api".to_string(),
+            description: "Transparently tunnels and executes an arbitrary REST API call directly into a remote edge gateway over Yamux multiplexed WebSocket streams (/api/v1/fleet/devices/{device_id}/proxy/{path}).".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "device_id": {
+                        "type": "string",
+                        "description": "Target edge gateway device identifier (e.g. 'edge-gateway-01', 'edge-gateway-04')."
+                    },
+                    "method": {
+                        "type": "string",
+                        "enum": ["GET", "POST", "PUT", "DELETE", "PATCH"],
+                        "description": "HTTP verb to invoke on the target edge node's local daemon."
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "Local API path on the edge gateway (e.g. '/rules', '/metrics', '/ping', '/streams')."
+                    },
+                    "body": {
+                        "type": "object",
+                        "description": "Optional JSON request payload for POST/PUT/PATCH calls."
+                    }
+                },
+                "required": ["device_id", "method", "path"]
+            }),
+        },
+
+        // =========================================================================
+        // 13. Visual Stream Studio & Real-time Wire-Tap Telemetry
+        // =========================================================================
+        ToolDefinition {
+            name: "toggle_wire_tap".to_string(),
+            description: "Enables or disables visual wire-tap probe sampling (up to 20 msgs/s with dropped message accounting) on a specific node or stage of a running pipeline rule (/rules/{rule_id}/tap/{node_id}/enable or disable).".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "rule_id": {
+                        "type": "string",
+                        "description": "Target rule identifier containing the node."
+                    },
+                    "node_id": {
+                        "type": "string",
+                        "description": "Specific DAG node ID or stage key to tap (e.g. 'switch_router', 'sql_processor', 'sink_high')."
+                    },
+                    "action": {
+                        "type": "string",
+                        "enum": ["enable", "disable"],
+                        "description": "Action to perform: 'enable' to start live tuple probe, 'disable' to stop."
+                    }
+                },
+                "required": ["rule_id", "node_id", "action"]
+            }),
+        },
+        ToolDefinition {
+            name: "get_wire_tap_status".to_string(),
+            description: "Queries whether real-time wire-tap sampling is currently enabled for a specific rule node or pipeline stage (/rules/{rule_id}/tap/{node_id}/status).".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "rule_id": {
+                        "type": "string",
+                        "description": "Target rule identifier."
+                    },
+                    "node_id": {
+                        "type": "string",
+                        "description": "Specific DAG node ID to check."
+                    }
+                },
+                "required": ["rule_id", "node_id"]
+            }),
+        },
+        ToolDefinition {
+            name: "get_studio_palette".to_string(),
+            description: "Retrieves the Visual Stream Studio component catalog, returning available source connectors, stream processors (switch, filter, watchdog, rate_limit), and sink drivers with their multi-port definitions and property schemas (/api/v1/palette).".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {}
+            }),
+        },
+        ToolDefinition {
+            name: "validate_graph_rule".to_string(),
+            description: "Offline static analyzer and validator for Visual Stream DAG GraphRules: verifies node topologies, input and output port bindings, multi-port switch routing predicates, and detects dangling edges or cyclic deadlocks.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "graph": {
+                        "type": "object",
+                        "description": "The complete GraphRule definition containing 'nodes' and 'edges' maps."
+                    }
+                },
+                "required": ["graph"]
+            }),
+        },
     ]
 }
 
@@ -1566,6 +1710,192 @@ pub async fn execute_tool(
                 "valid": valid,
                 "secret_references_count": secrets_found.len(),
                 "secret_references": secrets_found,
+                "errors": errors,
+            });
+            CallToolResult::ok(serde_json::to_string_pretty(&res).unwrap_or_default())
+        }
+
+        // --- 12. Fleet Management & Control Plane Tools ---
+        "list_fleet_devices" => {
+            forward_request(
+                client,
+                base_url,
+                reqwest::Method::GET,
+                "/api/v1/fleet/devices",
+                None,
+            )
+            .await
+        }
+
+        "get_fleet_rollouts" => {
+            forward_request(
+                client,
+                base_url,
+                reqwest::Method::GET,
+                "/api/v1/fleet/rollouts",
+                None,
+            )
+            .await
+        }
+
+        "trigger_fleet_rollout" => {
+            forward_request(
+                client,
+                base_url,
+                reqwest::Method::POST,
+                "/api/v1/fleet/rollouts",
+                Some(args),
+            )
+            .await
+        }
+
+        "list_fleet_snapshots" => {
+            forward_request(
+                client,
+                base_url,
+                reqwest::Method::GET,
+                "/api/v1/fleet/snapshots",
+                None,
+            )
+            .await
+        }
+
+        "proxy_fleet_device_api" => {
+            let Some(device_id) = args.get("device_id").and_then(|v| v.as_str()) else {
+                return CallToolResult::err("Missing required string parameter: 'device_id'");
+            };
+            let Some(method_str) = args.get("method").and_then(|v| v.as_str()) else {
+                return CallToolResult::err("Missing required string parameter: 'method'");
+            };
+            let Some(path) = args.get("path").and_then(|v| v.as_str()) else {
+                return CallToolResult::err("Missing required string parameter: 'path'");
+            };
+            let method = match method_str.to_uppercase().as_str() {
+                "GET" => reqwest::Method::GET,
+                "POST" => reqwest::Method::POST,
+                "PUT" => reqwest::Method::PUT,
+                "DELETE" => reqwest::Method::DELETE,
+                "PATCH" => reqwest::Method::PATCH,
+                other => {
+                    return CallToolResult::err(format!("Unsupported HTTP method: '{}'", other))
+                }
+            };
+            let clean_path = path.trim_start_matches('/');
+            let proxy_url = format!("/api/v1/fleet/devices/{}/proxy/{}", device_id, clean_path);
+            let body = args.get("body").cloned();
+            forward_request(client, base_url, method, &proxy_url, body).await
+        }
+
+        // --- 13. Visual Stream Studio & Wire-Tap Tools ---
+        "toggle_wire_tap" => {
+            let Some(rule_id) = args.get("rule_id").and_then(|v| v.as_str()) else {
+                return CallToolResult::err("Missing required string parameter: 'rule_id'");
+            };
+            let Some(node_id) = args.get("node_id").and_then(|v| v.as_str()) else {
+                return CallToolResult::err("Missing required string parameter: 'node_id'");
+            };
+            let action = args
+                .get("action")
+                .and_then(|v| v.as_str())
+                .unwrap_or("enable");
+            let path = format!("/rules/{}/tap/{}/{}", rule_id, node_id, action);
+            forward_request(client, base_url, reqwest::Method::POST, &path, None).await
+        }
+
+        "get_wire_tap_status" => {
+            let Some(rule_id) = args.get("rule_id").and_then(|v| v.as_str()) else {
+                return CallToolResult::err("Missing required string parameter: 'rule_id'");
+            };
+            let Some(node_id) = args.get("node_id").and_then(|v| v.as_str()) else {
+                return CallToolResult::err("Missing required string parameter: 'node_id'");
+            };
+            let path = format!("/rules/{}/tap/{}/status", rule_id, node_id);
+            forward_request(client, base_url, reqwest::Method::GET, &path, None).await
+        }
+
+        "get_studio_palette" => {
+            forward_request(
+                client,
+                base_url,
+                reqwest::Method::GET,
+                "/api/v1/palette",
+                None,
+            )
+            .await
+        }
+
+        "validate_graph_rule" => {
+            let Some(graph) = args
+                .get("graph")
+                .or_else(|| (args.get("nodes").is_some()).then_some(&args))
+            else {
+                return CallToolResult::err(
+                    "Missing required parameter: 'graph' object containing 'nodes' and 'edges'",
+                );
+            };
+
+            let nodes = graph.get("nodes").and_then(|v| v.as_object());
+            let edges = graph.get("edges");
+
+            let Some(nodes_map) = nodes else {
+                return CallToolResult::err("Invalid GraphRule: 'nodes' must be a valid key-value object of node definitions");
+            };
+
+            let mut sources = Vec::new();
+            let mut operators = Vec::new();
+            let mut sinks = Vec::new();
+            let mut errors = Vec::new();
+
+            for (node_id, node_def) in nodes_map {
+                let node_type = node_def
+                    .get("type")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown");
+                let cat = node_def
+                    .get("node_type")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                match cat {
+                    "source" => sources.push(node_id.clone()),
+                    "sink" => sinks.push(node_id.clone()),
+                    _ => operators.push(node_id.clone()),
+                }
+
+                if node_type == "switch" {
+                    if let Some(props) = node_def.get("props") {
+                        if props.get("cases").is_none() {
+                            errors.push(format!(
+                                "Switch node '{}' is missing required 'cases' array in props",
+                                node_id
+                            ));
+                        }
+                    }
+                }
+            }
+
+            if sources.is_empty() {
+                errors.push(
+                    "GraphRule has no source nodes: at least one source connector is required"
+                        .to_string(),
+                );
+            }
+            if sinks.is_empty() {
+                errors.push(
+                    "GraphRule has no sink nodes: at least one sink action is required".to_string(),
+                );
+            }
+
+            let valid = errors.is_empty();
+            let res = json!({
+                "valid": valid,
+                "total_nodes": nodes_map.len(),
+                "sources_count": sources.len(),
+                "sources": sources,
+                "operators_count": operators.len(),
+                "operators": operators,
+                "sinks_count": sinks.len(),
+                "sinks": sinks,
+                "has_edges": edges.is_some(),
                 "errors": errors,
             });
             CallToolResult::ok(serde_json::to_string_pretty(&res).unwrap_or_default())

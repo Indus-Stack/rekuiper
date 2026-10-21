@@ -10,6 +10,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > See `BENCHMARK-AUDIT.md` and `test/BENCHMARKS.md` for the audited methodology.
 > No latency-histogram p99 is claimed.
 
+## [Unreleased] - Rekuiper Manager & Visual Stream Studio (Phases 1–4)
+
+### Added
+- **Zero-Copy Record Metadata (`RecordMeta`)**: Added an immutable, `Arc`-shared `RecordMeta` structure (`topic`, `source`, `custom`) to `StreamRecord`. Metadata passes through SQL projection pipelines and multi-port graph stages with zero map allocations and constant time ($O(1)$) overhead. Added zero-copy `meta()` SQL function with backward-compatible `__meta__` and JSON envelope fallback.
+- **Multi-Port DAG Execution Engine**: Added native Directed Acyclic Graph (DAG) rule routing with port-indexed selective edge dispatch (`EdgeTargets::Multi`). Nodes selectively route records across output ports `0..N` based on ordered predicates without broadcast flattening.
+- **Native Stream Control Operators**: Added `SwitchNode` (multi-port predicate routing), `RateLimitNode` (token-bucket drop and buffer rate limiter), and `WatchdogNode` (inactivity timeout dead-man alert generator).
+- **CommsHub and Wire-Tap Observability**: Added an asynchronous event bus (`CommsHub`) in `AppState`. Added rate-limited wire-tap probes (capped at 20 events per second with drop counters) toggleable via `POST /rules/:id/tap/:node_id/enable|disable`. Added real-time `/comms` WebSocket broadcast stream.
+- **Visual Stream Studio**: Embedded a visual flow canvas directly in `/ui`. Users can design stream pipelines with drag-and-drop source, operator, and sink nodes, inspect live node badges (events per second, queue depth, error count), and sample live tuple data in an interactive wire-tap drawer.
+- **Outbound Edge Agent and Yamux Tunneling**: Added `--control-plane-url` CLI option and `REKUIPER_CONTROL_PLANE_URL` environment configuration to `kuiperd`. The edge agent establishes an outbound mTLS WebSocket connection with exponential backoff. Yamux multiplexing handles control telemetry on stream 0 and tunnels remote HTTP and WebSocket requests into the local Axum router on streams 1..N.
+- **Transactional Deployment Watchdog and Auto-Rollback**: Added automatic health monitoring for 30 seconds following declarative configuration deployment. The watchdog automatically reverts the edge gateway to the previous configuration snapshot and raises an alert if error counts or panics exceed thresholds.
+- **Credential Masking and Secret Protection**: Added automatic credential redaction (`***REDACTED***`) for sensitive fields (passwords, bearer tokens, private keys, client secrets) across all configuration export and inspection APIs. Preserves original credentials bidirectionally during declarative reloads.
+- **Fleet Control Plane ("Rekuiper Manager")**: Added device fleet catalog (`/api/v1/fleet/devices`) and group management (`/api/v1/fleet/groups`). Added staged canary rollout engine (`/api/v1/fleet/rollouts`) supporting progressive rollout stages (5% -> 25% -> 100%) and automatic canary rollback. Added remote Yamux proxy (`/fleet/proxy/:device_id/*path`), unified audit logging (`/api/v1/fleet/audit`), and fleet control dashboard in `/ui`.
+- **Fleet Provisioning and Bearer Authentication**: Added token validation (`BasicConfig.fleet_token`, `REKUIPER_FLEET_TOKEN`) for `/fleet/ws` and `/api/v1/fleet/*` endpoints. Rejects unauthorized registrations, proxy requests, and rollout commands with HTTP 401 Unauthorized.
+- **Model Context Protocol (`rekuiper-mcp`) Expansion**: Expanded the native MCP server to 57 tools with dedicated categories for Fleet Management (`list_fleet_devices`, `get_fleet_rollouts`, `trigger_fleet_rollout`, `list_fleet_snapshots`, `proxy_fleet_device_api`) and Visual Stream Studio & Wire-Tap (`get_studio_palette`, `validate_graph_rule`, `toggle_wire_tap`, `get_wire_tap_status`). Added 3 new MCP live resources (`rekuiper://fleet/devices`, `rekuiper://fleet/rollouts`, `rekuiper://studio/palette`) and 2 interactive orchestration prompts (`staged_fleet_rollout`, `design_visual_dag_pipeline`).
+
 ## [1.0.0-rc4] - 2026-10-16
 
 ### Added

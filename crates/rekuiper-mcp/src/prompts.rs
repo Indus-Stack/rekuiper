@@ -151,6 +151,38 @@ pub fn get_prompt_definitions() -> Vec<PromptDefinition> {
                 },
             ],
         },
+        PromptDefinition {
+            name: "staged_fleet_rollout".to_string(),
+            description: Some("Guides progressive phased canary rollout of rules/binaries across fleet devices with health check verification and rollback validation.".to_string()),
+            arguments: vec![
+                PromptArgument {
+                    name: "version".to_string(),
+                    description: Some("Target rollout version tag or configuration release.".to_string()),
+                    required: true,
+                },
+                PromptArgument {
+                    name: "group_filter".to_string(),
+                    description: Some("Optional fleet group or tag filter (e.g. 'edge-gateways', 'turbine-cluster').".to_string()),
+                    required: false,
+                },
+            ],
+        },
+        PromptDefinition {
+            name: "design_visual_dag_pipeline".to_string(),
+            description: Some("Architects a multi-port Visual Stream DAG rule structure with sources, transforms, routers, and sinks, validating graph topology and wire-tap diagnostic points.".to_string()),
+            arguments: vec![
+                PromptArgument {
+                    name: "rule_name".to_string(),
+                    description: Some("Unique identifier for the visual DAG rule.".to_string()),
+                    required: true,
+                },
+                PromptArgument {
+                    name: "pipeline_goal".to_string(),
+                    description: Some("Operational goal (e.g. 'Route high vibration to MQTT alert and raw telemetry to Parquet').".to_string()),
+                    required: true,
+                },
+            ],
+        },
     ]
 }
 
@@ -421,6 +453,61 @@ pub fn get_prompt_messages(name: &str, args: Option<Value>) -> Result<Vec<Prompt
                          3. Validate the streaming query with `validate_sql`.\n\
                          4. Test sample event sequences with `test_sql_expression` to verify positive matches and negative non-matches.",
                         stream, pattern, ts_field, pattern, ts_field
+                    )),
+                },
+            ])
+        }
+
+        "staged_fleet_rollout" => {
+            let version = args
+                .as_ref()
+                .and_then(|a| a.get("version"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("latest");
+            let group = args
+                .as_ref()
+                .and_then(|a| a.get("group_filter"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("all");
+
+            Ok(vec![
+                PromptMessage {
+                    role: "user".to_string(),
+                    content: ContentItem::text(format!(
+                        "Execute a staged canary rollout for fleet devices (group: '{}', target version: '{}'):\n\
+                         1. Execute `list_fleet_devices` and read resource `rekuiper://fleet/devices` to audit current device states, versions, and online health.\n\
+                         2. Query `list_fleet_snapshots` to confirm backup state before rollout initiation.\n\
+                         3. Initiate canary rollout with `trigger_fleet_rollout` targeting a small canary slice.\n\
+                         4. Poll `get_fleet_rollouts` to monitor step progression, error rates, and node convergence.\n\
+                         5. Proxy runtime rule checks via `proxy_fleet_device_api` on canary nodes before approving global rollout.",
+                        group, version
+                    )),
+                },
+            ])
+        }
+
+        "design_visual_dag_pipeline" => {
+            let rule_name = args
+                .as_ref()
+                .and_then(|a| a.get("rule_name"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("visual_rule_01");
+            let goal = args
+                .as_ref()
+                .and_then(|a| a.get("pipeline_goal"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("Process telemetry and route alerts");
+
+            Ok(vec![
+                PromptMessage {
+                    role: "user".to_string(),
+                    content: ContentItem::text(format!(
+                        "Design a visual DAG streaming rule '{}' to achieve: {}\n\
+                         1. Query `get_studio_palette` (or read `rekuiper://studio/palette`) to inspect available nodes, input/output port definitions, and properties.\n\
+                         2. Construct the DAG JSON representation including nodes (type, id, name, props) and edges (source_node, source_port, target_node, target_port).\n\
+                         3. Validate graph topology and connectivity using `validate_graph_rule`.\n\
+                         4. Deploy rule and configure real-time wire-tap diagnostic probes using `toggle_wire_tap` and `get_wire_tap_status`.",
+                        rule_name, goal
                     )),
                 },
             ])

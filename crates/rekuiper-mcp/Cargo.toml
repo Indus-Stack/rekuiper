@@ -6,6 +6,9 @@ license.workspace = true
 authors.workspace = true
 repository.workspace = true
 homepage.workspace = true
+documentation.workspace = true
+keywords.workspace = true
+categories.workspace = true
 description = "High-performance Model Context Protocol (MCP) server providing zero-network AST analysis, in-memory query simulation, and comprehensive edge streaming control plane for rekuiper"
 
 [[bin]]

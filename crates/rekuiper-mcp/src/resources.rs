@@ -135,6 +135,24 @@ pub fn get_resource_definitions() -> Vec<ResourceDefinition> {
             description: Some("Configuration template for Video source stream extracting camera frames via FFmpeg with MJPEG encoding.".to_string()),
             mime_type: Some("application/json".to_string()),
         },
+        ResourceDefinition {
+            uri: "rekuiper://fleet/devices".to_string(),
+            name: "Active Fleet Edge Devices".to_string(),
+            description: Some("Real-time list of all edge gateways connected to the Fleet Control Plane with health, heartbeat, plant, and telemetry status.".to_string()),
+            mime_type: Some("application/json".to_string()),
+        },
+        ResourceDefinition {
+            uri: "rekuiper://fleet/rollouts".to_string(),
+            name: "Fleet Rollouts & Audit Log".to_string(),
+            description: Some("Staged declarative rollout history, canary progress, and device deployment audit log across the edge fleet.".to_string()),
+            mime_type: Some("application/json".to_string()),
+        },
+        ResourceDefinition {
+            uri: "rekuiper://studio/palette".to_string(),
+            name: "Visual Stream Studio Palette Catalog".to_string(),
+            description: Some("Catalog of Visual Stream Studio components, multi-port definitions, and property configuration schemas.".to_string()),
+            mime_type: Some("application/json".to_string()),
+        },
     ]
 }
 
@@ -161,6 +179,13 @@ pub async fn read_resource(
 ) -> Result<ResourceContent, String> {
     let text = match uri {
         "rekuiper://rules" => fetch_endpoint(client, base_url, "/rules").await?,
+        "rekuiper://fleet/devices" => {
+            fetch_endpoint(client, base_url, "/api/v1/fleet/devices").await?
+        }
+        "rekuiper://fleet/rollouts" => {
+            fetch_endpoint(client, base_url, "/api/v1/fleet/rollouts").await?
+        }
+        "rekuiper://studio/palette" => fetch_endpoint(client, base_url, "/api/v1/palette").await?,
         "rekuiper://streams" => fetch_endpoint(client, base_url, "/streams").await?,
         "rekuiper://tables" => fetch_endpoint(client, base_url, "/tables").await?,
         "rekuiper://connections" => fetch_endpoint(client, base_url, "/connections").await?,

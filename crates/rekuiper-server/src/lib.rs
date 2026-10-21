@@ -1,7 +1,13 @@
+#![recursion_limit = "256"]
+
+pub mod agent;
+pub mod comms;
 pub mod declarative;
 pub mod engine;
+pub mod fleet;
 pub mod handlers;
 pub mod routes;
+pub mod secrets;
 pub mod sink_cache;
 pub mod state;
 
@@ -27,6 +33,16 @@ use tower_http::trace::TraceLayer;
 pub struct ServerOptions {
     pub declarative_path: Option<std::path::PathBuf>,
     pub declarative_watch: bool,
+    pub control_plane_url: Option<String>,
+    pub device_id: Option<String>,
+    pub device_name: Option<String>,
+    pub plant: Option<String>,
+    pub region: Option<String>,
+    pub device_type: Option<String>,
+    pub fleet_token: Option<String>,
+    pub enable_ui: bool,
+    pub ui_allow_ip: Option<Vec<String>>,
+    pub ui_password: Option<String>,
 }
 
 pub async fn start_server(config: KuiperConfig, version: String) -> Result<()> {
@@ -34,10 +50,22 @@ pub async fn start_server(config: KuiperConfig, version: String) -> Result<()> {
 }
 
 pub async fn start_server_with_options(
-    config: KuiperConfig,
+    mut config: KuiperConfig,
     version: String,
     options: ServerOptions,
 ) -> Result<()> {
+    if options.fleet_token.is_some() {
+        config.basic.fleet_token = options.fleet_token.clone();
+    }
+    if options.enable_ui {
+        config.basic.enable_ui = true;
+    }
+    if let Some(ref allow) = options.ui_allow_ip {
+        config.basic.ui_ip_allowlist = allow.clone();
+    }
+    if options.ui_password.is_some() {
+        config.basic.ui_password = options.ui_password.clone();
+    }
     let init_start = Instant::now();
     let is_declarative = options.declarative_path.is_some();
 
@@ -55,6 +83,8 @@ pub async fn start_server_with_options(
     let table_manager = TableManager::new_with_kv(kv.clone());
     let schema_manager = SchemaManager::new_with_kv(kv.clone());
     let plugin_manager = PluginManager::new_with_kv(kv.clone());
+
+    let fleet = Arc::new(fleet::FleetManager::new_with_kv(kv.clone()));
 
     let state = AppState {
         start_time: Instant::now(),
@@ -95,6 +125,9 @@ pub async fn start_server_with_options(
         declarative_watch: options.declarative_watch,
         active_rule_hashes: Arc::new(RwLock::new(HashMap::new())),
         declarative_reload_failures: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        comms_hub: comms::CommsHub::default(),
+        last_watchdog_rollback: Arc::new(RwLock::new(None)),
+        fleet: fleet.clone(),
     };
 
     if let Some(ref d_path) = options.declarative_path {
@@ -150,6 +183,45 @@ pub async fn start_server_with_options(
     let app = create_router(state.clone())
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http());
+
+    // Connect outbound edge agent loop if control_plane_url is provided
+    let cp_url = options
+        .control_plane_url
+        .clone()
+        .or_else(|| config.basic.control_plane_url.clone());
+    if let Some(url) = cp_url {
+        let dev_id = options
+            .device_id
+            .clone()
+            .or_else(|| config.basic.device_id.clone())
+            .unwrap_or_else(|| format!("device-{}", uuid::Uuid::new_v4().simple()));
+        let meta = agent::AgentMetadata {
+            device_id: dev_id.clone(),
+            name: options
+                .device_name
+                .clone()
+                .or_else(|| config.basic.device_name.clone())
+                .unwrap_or_else(|| dev_id.clone()),
+            plant: options
+                .plant
+                .clone()
+                .or_else(|| config.basic.device_plant.clone())
+                .unwrap_or_else(|| "Plant-Austin".to_string()),
+            region: options
+                .region
+                .clone()
+                .or_else(|| config.basic.device_region.clone())
+                .unwrap_or_else(|| "US-South".to_string()),
+            device_type: options
+                .device_type
+                .clone()
+                .or_else(|| config.basic.device_type.clone())
+                .unwrap_or_else(|| "IPC-Edge".to_string()),
+            version: state.version.clone(),
+        };
+        let (_cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
+        agent::spawn_agent_reconnect_loop(url, state.clone(), app.clone(), meta, cancel_rx);
+    }
 
     // Dedicated Prometheus listener when enabled on its own port, mirroring
     // eKuiper's prome_init behaviour.

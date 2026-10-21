@@ -75,12 +75,14 @@ Add `rekuiper-mcp` to your MCP client configuration file:
 | Tool Name | Parameters | Purpose |
 | :--- | :--- | :--- |
 | `list_streams` | None | Discovers all active input telemetry streams on the gateway. |
-| `describe_stream` | `name` | Returns schema fields, data types, and transport configuration (MQTT, Modbus, OPC-UA). |
+| `get_stream` | `name` | Returns schema fields, data types, and transport configuration (MQTT, Modbus, OPC-UA). |
 | `validate_sql` | `sql` | Checks SQL syntax and type safety offline using the `rekuiper` query parser. |
-| `dry_run_rule` | `sql`, `mock_data` | Simulates rule execution against synthetic or captured payloads using `ruletest`. |
+| `test_sql_expression` | `sql`, `mock_data` | Simulates rule execution against synthetic or captured payloads in memory. |
 | `list_rules` | None | Lists running, paused, and stopped stream processing rules. |
 | `create_rule` | `id`, `sql`, `actions` | Deploys a verified streaming pipeline to the gateway. |
-| `get_rule_metrics` | `id` | Inspects messages in, messages out, processing latency, and dead-letter queue counters. |
+| `get_rule_status` | `name` | Inspects messages in, messages out, processing latency, and error counters. |
+| `list_fleet_devices` | None | Inspects connected edge gateways, versions, and heartbeat telemetry. |
+| `toggle_wire_tap` | `rule_id`, `node_id`, `enabled` | Enables non-intrusive tuple inspection on any DAG execution stage. |
 
 ---
 

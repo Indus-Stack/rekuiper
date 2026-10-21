@@ -1,11 +1,15 @@
+pub mod dag;
 pub mod dlq;
 pub mod joins;
+pub mod operators;
 pub mod runtime;
 pub mod sinks;
 pub mod windows;
 
+pub use dag::*;
 pub(crate) use dlq::*;
 pub(crate) use joins::*;
+pub use operators::*;
 pub(crate) use runtime::*;
 pub(crate) use sinks::*;
 pub(crate) use windows::*;
@@ -735,7 +739,7 @@ pub(crate) fn register_rule_stream_source(
         .write()
         .entry(stream_name.to_string())
         .or_default()
-        .push(cancel_tx);
+        .push(cancel_tx.clone());
     state
         .stream_active_rules
         .write()
@@ -814,6 +818,11 @@ pub(crate) fn bootstrap_stream_sources(
     }
 
     let mask_flag = update_stream_field_mask(state, stream_name, rule_id, field_mask);
+    let comms = state.comms_hub.clone();
+    let status_cb: rekuiper_connectors::ConnectorStatusCallback =
+        Arc::new(move |id, kind, status, err| {
+            comms.publish_connector_status(id, kind, status, err.map(|s| s.to_string()));
+        });
 
     // HTTP Push source streams listen on the configured HTTP data server endpoint.
     if let Some(endpoint) =
@@ -865,6 +874,7 @@ pub(crate) fn bootstrap_stream_sources(
             .with_rule_counters(state.rule_manager.rule_counters(rule_id))
             .with_meta_flag(Some(meta_flag))
             .with_field_mask_flag(Some(mask_flag))
+            .with_status_callback(Some(status_cb.clone()))
             .spawn(cancel_rx);
         return;
     }
@@ -921,6 +931,7 @@ pub(crate) fn bootstrap_stream_sources(
         HttpPullSource {
             config: conf,
             tx: stream_tx,
+            status_callback: Some(status_cb.clone()),
         }
         .spawn(cancel_rx);
         return;
@@ -972,6 +983,7 @@ pub(crate) fn bootstrap_stream_sources(
         KafkaSource {
             config,
             tx: stream_tx,
+            status_callback: Some(status_cb.clone()),
         }
         .spawn(cancel_rx);
         return;
@@ -1046,7 +1058,9 @@ pub(crate) fn bootstrap_stream_sources(
         let stream_tx = state.stream_bus.get_or_create(stream_name);
         let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
         register_rule_stream_source(state, stream_name, rule_id, cancel_tx);
-        ModbusSource::new(config, stream_tx).spawn(cancel_rx);
+        ModbusSource::new(config, stream_tx)
+            .with_status_callback(Some(status_cb.clone()))
+            .spawn(cancel_rx);
         return;
     }
 
@@ -1057,7 +1071,9 @@ pub(crate) fn bootstrap_stream_sources(
         let stream_tx = state.stream_bus.get_or_create(stream_name);
         let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
         register_rule_stream_source(state, stream_name, rule_id, cancel_tx);
-        OpcUaSource::new(config, stream_tx).spawn(cancel_rx);
+        OpcUaSource::new(config, stream_tx)
+            .with_status_callback(Some(status_cb))
+            .spawn(cancel_rx);
         return;
     }
 
@@ -1154,6 +1170,97 @@ pub(crate) fn bootstrap_rule_sources(state: &AppState, rule_id: &str, select_stm
     }
 }
 
+pub(crate) fn bootstrap_graph_sources(
+    state: &AppState,
+    rule_id: &str,
+    graph: &rekuiper_core::model::GraphDefinition,
+) {
+    for node in graph.nodes.values() {
+        if node.node_category == "source" {
+            let stream_name = node
+                .props
+                .get("datasource")
+                .or_else(|| node.props.get("sourceName"))
+                .or_else(|| node.props.get("topic"))
+                .and_then(|v| v.as_str());
+            let src = match stream_name {
+                Some(s) if !s.trim().is_empty() => s.trim(),
+                _ => continue,
+            };
+
+            if state.stream_manager.get_stream(src).is_some() {
+                bootstrap_stream_sources(state, rule_id, src, true, None);
+            } else {
+                let n_type = node.node_type.to_lowercase();
+                let comms = state.comms_hub.clone();
+                let status_cb: rekuiper_connectors::ConnectorStatusCallback =
+                    Arc::new(move |id, kind, status, err| {
+                        comms.publish_connector_status(
+                            id,
+                            kind,
+                            status,
+                            err.map(|s| s.to_string()),
+                        );
+                    });
+                let stream_tx = state.stream_bus.get_or_create(src);
+                let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
+                register_rule_stream_source(state, src, rule_id, cancel_tx);
+
+                if n_type == "mqtt" || n_type == "source" {
+                    let mut config = MqttConfig::default();
+                    if let Some(srv) = node.props.get("server").and_then(|v| v.as_str()) {
+                        config.server = srv.to_string();
+                    }
+                    if let Some(topic) = node
+                        .props
+                        .get("topic")
+                        .or_else(|| node.props.get("datasource"))
+                        .and_then(|v| v.as_str())
+                    {
+                        config.topic = topic.to_string();
+                    }
+                    if let Some(u) = node.props.get("username").and_then(|v| v.as_str()) {
+                        config.username = Some(u.to_string());
+                    }
+                    if let Some(p) = node.props.get("password").and_then(|v| v.as_str()) {
+                        config.password = Some(p.to_string());
+                    }
+                    if let Some(qos) = node.props.get("qos").and_then(|v| v.as_u64()) {
+                        config.qos = qos as u8;
+                    }
+                    config.attach_meta = true;
+                    MqttSource::new(config, stream_tx)
+                        .with_rule_counters(state.rule_manager.rule_counters(rule_id))
+                        .with_status_callback(Some(status_cb))
+                        .spawn(cancel_rx);
+                } else if n_type == "modbus" {
+                    let conf_val =
+                        serde_json::Value::Object(node.props.clone().into_iter().collect());
+                    if let Ok(config) =
+                        serde_json::from_value::<rekuiper_connectors::ModbusConfig>(conf_val)
+                    {
+                        ModbusSource::new(config, stream_tx)
+                            .with_status_callback(Some(status_cb))
+                            .spawn(cancel_rx);
+                    }
+                } else if n_type == "opcua" {
+                    let conf_val =
+                        serde_json::Value::Object(node.props.clone().into_iter().collect());
+                    if let Ok(config) =
+                        serde_json::from_value::<rekuiper_connectors::OpcUaConfig>(conf_val)
+                    {
+                        OpcUaSource::new(config, stream_tx)
+                            .with_status_callback(Some(status_cb))
+                            .spawn(cancel_rx);
+                    }
+                } else {
+                    bootstrap_stream_sources(state, rule_id, src, true, None);
+                }
+            }
+        }
+    }
+}
+
 /// Respawns execution tasks (plus source producers) for every rule whose
 /// persisted status is `running`, so a restarted daemon resumes processing
 /// without manual intervention.
@@ -1168,6 +1275,38 @@ pub async fn restore_running_rules(state: &AppState) {
             .is_some_and(|s| s.status == "running");
         if !running {
             continue;
+        }
+        if rule.sql.trim().is_empty() {
+            if let Some(ref graph) = rule.graph {
+                let is_native_dag =
+                    graph.nodes.values().any(|n| {
+                        matches!(n.node_type.as_str(), "switch" | "rate_limit" | "watchdog")
+                    }) || graph
+                        .topo
+                        .edges
+                        .values()
+                        .any(|e| matches!(e, rekuiper_core::model::EdgeTargets::Multi(_)));
+                if is_native_dag {
+                    let buffer_len = rule
+                        .options
+                        .as_ref()
+                        .and_then(|o| o.get("bufferLength"))
+                        .and_then(|v| v.as_u64())
+                        .map(|n| n as usize)
+                        .unwrap_or(1024);
+                    spawn_graph_rule_task(
+                        &state.rule_manager,
+                        &state.stream_bus,
+                        rule.id.clone(),
+                        graph.clone(),
+                        state.comms_hub.clone(),
+                        buffer_len,
+                    );
+                    bootstrap_graph_sources(state, &rule.id, graph);
+                    tracing::info!("Restored running graph rule {}", rule.id);
+                    continue;
+                }
+            }
         }
         let mut parser = Parser::new(&rule.sql);
         let select_stmt = match parser.parse_select() {
