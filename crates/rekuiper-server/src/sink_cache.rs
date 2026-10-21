@@ -427,10 +427,7 @@ mod tests {
     fn rec(i: u64) -> StreamRecord {
         let mut data = HashMap::new();
         data.insert("seq".to_string(), json!(i));
-        StreamRecord {
-            timestamp: i as i64,
-            data: data.into(),
-        }
+        StreamRecord::with_timestamp(data, i as i64)
     }
 
     fn cfg(memory: usize, disk: usize, page: usize) -> CacheConfig {

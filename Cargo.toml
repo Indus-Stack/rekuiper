@@ -26,7 +26,7 @@ categories = ["embedded", "network-programming", "science"]
 
 [workspace.dependencies]
 tokio = { version = "1.38", features = ["full"] }
-axum = { version = "0.7", features = ["macros"] }
+axum = { version = "0.7", features = ["macros", "ws"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["preserve_order"] }
 indexmap = { version = "2.6", features = ["serde"] }
@@ -61,6 +61,7 @@ sha1 = "0.10"
 uuid = { version = "1", features = ["v4"] }
 rand = "0.8"
 boa_engine = "0.20"
+yamux = "0.13"
 
 # Internal crate dependencies
 rekuiper-core = { path = "crates/rekuiper-core" }

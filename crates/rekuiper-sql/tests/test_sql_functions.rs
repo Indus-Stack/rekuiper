@@ -16,7 +16,7 @@ fn rec(pairs: &[(&str, Value)]) -> Record {
 }
 
 /// Evaluate a single-projection `SELECT <expr> AS v ...` and return `v`.
-fn eval_one(sql: &str, record: &Record) -> Value {
+fn eval_one<R: rekuiper_sql::eval::RowLookup + ?Sized>(sql: &str, record: &R) -> Value {
     let mut parser = Parser::new(sql);
     let stmt = parser.parse_select().expect("Should parse");
     assert_eq!(stmt.fields.len(), 1);
@@ -894,6 +894,26 @@ fn test_system_and_meta_functions() {
     assert_eq!(
         eval_one("SELECT meta(topic) AS v FROM demo", &r),
         json!("plain")
+    );
+
+    // Zero-copy RecordMeta on StreamRecord
+    let stream_rec = rekuiper_core::model::StreamRecord::new(
+        vec![("temp".to_string(), json!(28.5))]
+            .into_iter()
+            .collect::<HashMap<_, _>>(),
+    )
+    .with_meta(std::sync::Arc::new(
+        rekuiper_core::model::RecordMeta::new()
+            .with_topic("sensors/sub/temperature")
+            .with_source("mqtt"),
+    ));
+    assert_eq!(
+        eval_one("SELECT meta(topic) AS v FROM demo", &stream_rec),
+        json!("sensors/sub/temperature")
+    );
+    assert_eq!(
+        eval_one("SELECT meta(source) AS v FROM demo", &stream_rec),
+        json!("mqtt")
     );
 
     // event_time(): timestamp keys win, otherwise now().

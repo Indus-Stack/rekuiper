@@ -1,4 +1,7 @@
-use crate::engine::{bootstrap_rule_sources, cancel_rule_source, spawn_rule_task};
+use crate::engine::{
+    bootstrap_graph_sources, bootstrap_rule_sources, cancel_rule_source, spawn_graph_rule_task,
+    spawn_rule_task,
+};
 use crate::state::{check_valid_name, AppState, TracerConfig};
 use axum::{
     body::Bytes,
@@ -7,7 +10,7 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
-use rekuiper_core::model::{compile_graph_to_sql_and_actions, RuleDefinition};
+use rekuiper_core::model::{compile_graph_to_sql_and_actions, EdgeTargets, RuleDefinition};
 use rekuiper_core::{PluginDefinition, PluginManager};
 use rekuiper_sql::{is_builtin_function, Evaluator, Expr, Parser, SelectStmt, TimeUnit, WindowDef};
 use serde::Deserialize;
@@ -52,6 +55,12 @@ pub async fn create_rule(
     State(state): State<AppState>,
     Json(mut rule): Json<RuleDefinition>,
 ) -> Response {
+    let mut inc_val = serde_json::to_value(&rule).unwrap_or(Value::Null);
+    crate::secrets::interpolate_secrets(&mut inc_val, state.kv.as_deref());
+    if let Ok(deser) = serde_json::from_value::<RuleDefinition>(inc_val) {
+        rule = deser;
+    }
+
     if rule.id.trim().is_empty() {
         return (
             StatusCode::BAD_REQUEST,
@@ -82,9 +91,62 @@ pub async fn create_rule(
         )
             .into_response();
     }
-    // Graph rules carry no SQL: compile the DAG into SQL + actions first.
+    // Graph rules carry no SQL: compile linear DAGs or spawn native DAG executor.
     if rule.sql.trim().is_empty() {
         if let Some(ref graph) = rule.graph {
+            let is_native_dag = graph
+                .nodes
+                .values()
+                .any(|n| matches!(n.node_type.as_str(), "switch" | "rate_limit" | "watchdog"))
+                || graph
+                    .topo
+                    .edges
+                    .values()
+                    .any(|e| matches!(e, EdgeTargets::Multi(_)));
+
+            if is_native_dag {
+                let rule_id = rule.id.clone();
+                if let Err(e) = state.rule_manager.create_rule(rule.clone()).await {
+                    let msg = if e.to_string().contains("already exists") {
+                        format!("Rule {} already exists", rule_id)
+                    } else {
+                        e.to_string()
+                    };
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        Json(json!({
+                            "error": 1000,
+                            "message": msg
+                        })),
+                    )
+                        .into_response();
+                }
+
+                let buffer_len = rule
+                    .options
+                    .as_ref()
+                    .and_then(|o| o.get("bufferLength"))
+                    .and_then(|v| v.as_u64())
+                    .map(|n| n as usize)
+                    .unwrap_or(1024);
+
+                spawn_graph_rule_task(
+                    &state.rule_manager,
+                    &state.stream_bus,
+                    rule_id.clone(),
+                    graph.clone(),
+                    state.comms_hub.clone(),
+                    buffer_len,
+                );
+                bootstrap_graph_sources(&state, &rule_id, graph);
+
+                return (
+                    StatusCode::CREATED,
+                    format!("Rule {} was created successfully.", rule_id),
+                )
+                    .into_response();
+            }
+
             match compile_graph_to_sql_and_actions(graph) {
                 Ok((sql, actions)) => {
                     rule.sql = sql;
@@ -182,7 +244,9 @@ pub async fn get_rule(State(state): State<AppState>, Path(name): Path<String>) -
         return resp;
     }
     if let Some(rule) = state.rule_manager.get_rule(&name) {
-        Json(rule).into_response()
+        let mut val = serde_json::to_value(&rule).unwrap_or(Value::Null);
+        crate::secrets::mask_secrets(&mut val);
+        Json(val).into_response()
     } else {
         (
             StatusCode::NOT_FOUND,
@@ -1285,6 +1349,37 @@ pub fn expr_to_string(expr: &Expr) -> String {
 
 pub fn activate_rule(state: &AppState, rule_id: &str) {
     if let Some(rule) = state.rule_manager.get_rule(rule_id) {
+        if rule.sql.trim().is_empty() {
+            if let Some(ref graph) = rule.graph {
+                let is_native_dag =
+                    graph.nodes.values().any(|n| {
+                        matches!(n.node_type.as_str(), "switch" | "rate_limit" | "watchdog")
+                    }) || graph
+                        .topo
+                        .edges
+                        .values()
+                        .any(|e| matches!(e, EdgeTargets::Multi(_)));
+                if is_native_dag {
+                    let buffer_len = rule
+                        .options
+                        .as_ref()
+                        .and_then(|o| o.get("bufferLength"))
+                        .and_then(|v| v.as_u64())
+                        .map(|n| n as usize)
+                        .unwrap_or(1024);
+                    spawn_graph_rule_task(
+                        &state.rule_manager,
+                        &state.stream_bus,
+                        rule_id.to_string(),
+                        graph.clone(),
+                        state.comms_hub.clone(),
+                        buffer_len,
+                    );
+                    bootstrap_graph_sources(state, rule_id, graph);
+                    return;
+                }
+            }
+        }
         let mut parser = Parser::new(&rule.sql);
         if let Ok(select_stmt) = parser.parse_select() {
             spawn_rule_task(
@@ -1445,9 +1540,69 @@ pub async fn update_rule(
             .into_response();
     }
     rule.id = name.clone();
-    // Graph rules carry no SQL: compile the DAG first (mirrors creation).
+    if let Some(existing_rule) = state.rule_manager.get_rule(&name) {
+        let mut inc_val = serde_json::to_value(&rule).unwrap_or(Value::Null);
+        let ex_val = serde_json::to_value(&existing_rule).unwrap_or(Value::Null);
+        crate::secrets::preserve_masked_secrets(&mut inc_val, &ex_val);
+        crate::secrets::interpolate_secrets(&mut inc_val, state.kv.as_deref());
+        if let Ok(deser) = serde_json::from_value::<RuleDefinition>(inc_val) {
+            rule = deser;
+        }
+    }
+    // Graph rules carry no SQL: compile the DAG first or handle native DAG.
     if rule.sql.trim().is_empty() {
         if let Some(ref graph) = rule.graph {
+            let is_native_dag = graph
+                .nodes
+                .values()
+                .any(|n| matches!(n.node_type.as_str(), "switch" | "rate_limit" | "watchdog"))
+                || graph
+                    .topo
+                    .edges
+                    .values()
+                    .any(|e| matches!(e, EdgeTargets::Multi(_)));
+
+            if is_native_dag {
+                let was_running = match state.rule_manager.update_rule(rule.clone()).await {
+                    Ok(running) => running,
+                    Err(e) => {
+                        return (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            Json(json!({
+                                "error": 1000,
+                                "message": e.to_string()
+                            })),
+                        )
+                            .into_response();
+                    }
+                };
+                cancel_rule_source(&state, &name);
+                state.trace_manager.stop_trace(&name);
+                if was_running {
+                    let buffer_len = rule
+                        .options
+                        .as_ref()
+                        .and_then(|o| o.get("bufferLength"))
+                        .and_then(|v| v.as_u64())
+                        .map(|n| n as usize)
+                        .unwrap_or(1024);
+                    spawn_graph_rule_task(
+                        &state.rule_manager,
+                        &state.stream_bus,
+                        name.clone(),
+                        graph.clone(),
+                        state.comms_hub.clone(),
+                        buffer_len,
+                    );
+                    bootstrap_graph_sources(&state, &name, graph);
+                }
+                return (
+                    StatusCode::OK,
+                    format!("Rule {} was updated successfully.", name),
+                )
+                    .into_response();
+            }
+
             match compile_graph_to_sql_and_actions(graph) {
                 Ok((sql, actions)) => {
                     rule.sql = sql;

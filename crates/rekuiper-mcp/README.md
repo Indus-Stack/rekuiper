@@ -41,12 +41,21 @@ An enterprise-grade, native Rust **Model Context Protocol (MCP)** server providi
   - Full management of compiled `.wasm` modules (`register_wasm_plugin`, `list_wasm_plugins`, `delete_wasm_plugin`) with automatic UDF registration.
   - Static scanning and validation of dynamic secret syntax (`{{vault://...}}`, `{{env://...}}`) via `validate_secrets`.
 
+- **Fleet Management & Edge Control Plane**:
+  - Full management of distributed edge fleet nodes (`list_fleet_devices`, `get_fleet_rollouts`, `trigger_fleet_rollout`, `list_fleet_snapshots`).
+  - Transparent HTTP reverse proxying (`proxy_fleet_device_api`) to individual edge instances across firewall boundaries.
+
+- **Visual Stream DAG Studio & Real-Time Wire Tap**:
+  - Multi-port visual palette inspection (`get_studio_palette`) for rapid pipeline design.
+  - Offline DAG topology and multi-port edge connectivity validation (`validate_graph_rule`).
+  - Live non-intrusive stream inspection probes (`toggle_wire_tap`, `get_wire_tap_status`) sampling tuple flows over WebSocket `/comms`.
+
 - **Universal REST API Proxy (`execute_rekuiper_api`)**:
   - Allows executing arbitrary HTTP methods (`GET`, `POST`, `PUT`, `DELETE`, `PATCH`) against any present or future `rekuiper` REST endpoint, ensuring 100% API coverage.
 
-- **22 First-Class Resources & 10 Interactive Prompts**:
-  - Live queryable resources via `rekuiper://` URIs, including connector action schemas (`rabbitmq`, `parquet`, `edgex`) and Wasm plugins.
-  - Expert troubleshooting, query optimization, vector similarity search, CEP sequence matching, security audit, and RabbitMQ pipeline generation prompts.
+- **25 First-Class Resources & 12 Interactive Prompts**:
+  - Live queryable resources via `rekuiper://` URIs, including fleet devices, rollouts, studio palette, connector action schemas (`rabbitmq`, `parquet`, `edgex`), and Wasm plugins.
+  - Expert troubleshooting, query optimization, vector similarity search, CEP sequence matching, security audit, staged fleet rollouts, and visual DAG design prompts.
 
 ---
 
@@ -70,7 +79,7 @@ An enterprise-grade, native Rust **Model Context Protocol (MCP)** server providi
 
 ---
 
-## Tool Catalog (48 Tools)
+## Tool Catalog (57 Tools)
 
 ### 1. SQL Intelligence & Simulation
 | Tool | Description |
@@ -151,7 +160,7 @@ An enterprise-grade, native Rust **Model Context Protocol (MCP)** server providi
 | `get_engine_metrics` | Fetch engine uptime, memory/CPU consumption, and global throughput. |
 | `ping_engine` | Test daemon connectivity and response latency. |
 
-### 9. WebAssembly (WASM) & Dynamic Secrets Management
+### 10. WebAssembly (WASM) & Dynamic Secrets Management
 | Tool | Description |
 | :--- | :--- |
 | `register_wasm_plugin` | Register a compiled `.wasm` module into rekuiper's embedded runtime via `POST /plugins/wasm`. |
@@ -159,7 +168,24 @@ An enterprise-grade, native Rust **Model Context Protocol (MCP)** server providi
 | `delete_wasm_plugin` | Unload and delete a WebAssembly plugin from the engine via `DELETE /plugins/wasm/{name}`. |
 | `validate_secrets` | Offline syntax scanner and validator for dynamic secret templates (`{{vault://...}}`, `{{env://...}}`). |
 
-### 10. Universal API Proxy
+### 11. Fleet Management & Edge Control Plane
+| Tool | Description |
+| :--- | :--- |
+| `list_fleet_devices` | Enumerate all managed edge devices with connection states, firmware versions, active rules, and heartbeat timestamps. |
+| `get_fleet_rollouts` | Query active and historical phased rollout deployments across fleet device clusters. |
+| `trigger_fleet_rollout` | Initiate a phased canary rollout of rules or binary versions with configurable step percentages and canary targets. |
+| `list_fleet_snapshots` | List point-in-time state and rule configuration snapshots for disaster recovery and rollback. |
+| `proxy_fleet_device_api` | Transparent HTTP reverse proxy routing REST requests to specific edge device instances across firewall boundaries. |
+
+### 12. Visual Stream DAG Studio & Real-Time Wire Tap
+| Tool | Description |
+| :--- | :--- |
+| `get_studio_palette` | Catalog of Visual Stream Studio components, multi-port definitions, and property configuration schemas. |
+| `validate_graph_rule` | Offline structural validator for Visual DAG rules: checks node types, required properties, and multi-port edge connectivity without server dependency. |
+| `toggle_wire_tap` | Enable or disable non-intrusive real-time stream inspection probe on a rule's internal node or execution port with rate limiting. |
+| `get_wire_tap_status` | Query active wire tap inspection probes, sample counters, and buffer overflow states. |
+
+### 13. Universal API Proxy
 | Tool | Description |
 | :--- | :--- |
 | `execute_rekuiper_api` | Unconstrained REST proxy: execute any HTTP method (`GET`, `POST`, `PUT`, `DELETE`, `PATCH`) on any endpoint with arbitrary payloads. |
@@ -171,6 +197,9 @@ An enterprise-grade, native Rust **Model Context Protocol (MCP)** server providi
 | URI | Description |
 | :--- | :--- |
 | `rekuiper://rules` | Active rules catalog with SQL queries and action sinks. |
+| `rekuiper://fleet/devices` | Live fleet inventory of edge devices, connection statuses, versions, and active rules. |
+| `rekuiper://fleet/rollouts` | Progressive canary rollouts, stage progression, and deployment history. |
+| `rekuiper://studio/palette` | Visual Stream Studio component catalog, port descriptors, and property schemas. |
 | `rekuiper://streams` | Registered stream sources, schemas, and transport options. |
 | `rekuiper://tables` | Dimension lookup tables for enrichment joins. |
 | `rekuiper://connections` | Shared connection resource definitions. |
@@ -209,6 +238,8 @@ An enterprise-grade, native Rust **Model Context Protocol (MCP)** server providi
 | `create_wasm_plugin_rule` | Guides registration and stream query generation for compiled WebAssembly UDF modules. |
 | `audit_security_posture` | Audits daemon runtime security configuration, network bindings, and authentication. |
 | `generate_cep_rule` | Constructs a Complex Event Processing (CEP) sequence matching rule with `sequence_match` or `sequence_count`. |
+| `staged_fleet_rollout` | Guides progressive phased canary rollout of rules/binaries across fleet devices with health check verification. |
+| `design_visual_dag_pipeline` | Architects a multi-port Visual Stream DAG rule structure with sources, transforms, routers, and sinks, validating topology and wire taps. |
 
 ---
 

@@ -1,3 +1,4 @@
+use crate::comms::CommsHub;
 use axum::{
     extract::State,
     http::{header, StatusCode},
@@ -386,6 +387,9 @@ pub struct AppState {
     pub declarative_watch: bool,
     pub active_rule_hashes: Arc<RwLock<HashMap<String, u64>>>,
     pub declarative_reload_failures: Arc<std::sync::atomic::AtomicU64>,
+    pub comms_hub: CommsHub,
+    pub last_watchdog_rollback: Arc<RwLock<Option<String>>>,
+    pub fleet: Arc<crate::fleet::FleetManager>,
 }
 
 pub fn default_import_status() -> Value {
@@ -497,6 +501,9 @@ impl AppState {
             declarative_watch: false,
             active_rule_hashes: Arc::new(RwLock::new(HashMap::new())),
             declarative_reload_failures: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            comms_hub: CommsHub::default(),
+            last_watchdog_rollback: Arc::new(RwLock::new(None)),
+            fleet: Arc::new(crate::fleet::FleetManager::new()),
         }
     }
 }
@@ -649,38 +656,95 @@ pub async fn auth_guard(
     request: axum::http::Request<axum::body::Body>,
     next: axum::middleware::Next,
 ) -> Response {
-    if !state.config.read().basic.authentication {
+    let (auth_enabled, fleet_token, ui_password) = {
+        let cfg = state.config.read();
+        (
+            cfg.basic.authentication,
+            cfg.basic.fleet_token.clone(),
+            cfg.basic.ui_password.clone(),
+        )
+    };
+
+    if !auth_enabled && fleet_token.is_none() && ui_password.is_none() {
         return next.run(request).await;
     }
+
     let path = request.uri().path();
-    if path == "/" || path == "/ping" {
+    if path == "/"
+        || path == "/ping"
+        || path == "/api/ui/auth-status"
+        || path == "/api/ui/login"
+        || path == "/ui"
+        || path == "/ui/"
+    {
         return next.run(request).await;
     }
-    let Some(header_val) = request
+
+    let query_token = request.uri().query().and_then(|q| {
+        q.split('&').find_map(|pair| {
+            let mut parts = pair.split('=');
+            if parts.next()? == "token" {
+                parts.next()
+            } else {
+                None
+            }
+        })
+    });
+
+    let header_val = request
         .headers()
         .get(header::AUTHORIZATION)
-        .and_then(|v| v.to_str().ok())
-    else {
-        return (StatusCode::UNAUTHORIZED, "Missing authorization header\n").into_response();
+        .and_then(|v| v.to_str().ok());
+
+    let token_candidate = if let Some(h) = header_val {
+        if let Some(bearer) = h
+            .strip_prefix("Bearer ")
+            .or_else(|| h.strip_prefix("bearer "))
+        {
+            Some(bearer.trim())
+        } else {
+            Some(h.trim())
+        }
+    } else {
+        query_token
     };
-    if header_val.starts_with("Bearer ") || header_val.starts_with("bearer ") {
+
+    let Some(token) = token_candidate else {
         return (
             StatusCode::UNAUTHORIZED,
-            "Bearer token is not supported, please use raw JWT token\n",
-        )
-            .into_response();
-    }
-    let Some(key_der) = load_auth_public_key() else {
-        return (
-            StatusCode::UNAUTHORIZED,
-            "Authentication misconfigured: public key not found\n",
+            "Missing authorization header or token\n",
         )
             .into_response();
     };
-    match verify_jwt_raw(header_val.trim(), &key_der) {
-        Ok(()) => next.run(request).await,
-        Err(msg) => (StatusCode::UNAUTHORIZED, msg).into_response(),
+
+    // If a UI custom password is configured, check if it matches
+    if let Some(ref pw) = ui_password {
+        if token == pw {
+            return next.run(request).await;
+        }
     }
+
+    // If a fleet bearer/provisioning token is configured, check if it matches
+    if let Some(ref ft) = fleet_token {
+        if token == ft {
+            return next.run(request).await;
+        }
+    }
+
+    // If JWT authentication is enabled, check the raw JWT
+    if auth_enabled {
+        if let Some(key_der) = load_auth_public_key() {
+            if verify_jwt_raw(token, &key_der).is_ok() {
+                return next.run(request).await;
+            }
+        }
+    }
+
+    (
+        StatusCode::UNAUTHORIZED,
+        "Unauthorized: invalid authentication token\n",
+    )
+        .into_response()
 }
 
 /// Verify a raw RS256 JWT against a PKCS#1 DER public key: exactly three

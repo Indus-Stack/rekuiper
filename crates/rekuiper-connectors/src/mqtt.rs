@@ -6,7 +6,7 @@ use crate::{
 use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
 use indexmap::IndexMap;
-use rekuiper_core::model::StreamRecord;
+use rekuiper_core::model::{RecordMeta, StreamRecord};
 use rekuiper_core::{RuleCounters, StreamSender};
 use rumqttc::{AsyncClient, Event, MqttOptions, Packet, QoS};
 use serde::{Deserialize, Serialize};
@@ -791,12 +791,20 @@ pub fn decode_payload_into_with_mask(
         PayloadFormat::EdgeX => EdgeXCodec::decode(payload, meta.clone(), out)?,
     }
     if let Some(meta) = meta {
+        let topic_str = meta.get("topic").and_then(|v| v.as_str());
+        let rec_meta = Arc::new(RecordMeta {
+            topic: topic_str.map(Arc::from),
+            source: Some(Arc::from("mqtt")),
+            custom: None,
+        });
         let end = out.len();
         if end > first {
             for record in &mut out[first..end - 1] {
                 record.data.insert("__meta__".to_string(), meta.clone());
+                record.meta = Some(rec_meta.clone());
             }
             out[end - 1].data.insert("__meta__".to_string(), meta);
+            out[end - 1].meta = Some(rec_meta);
         }
     }
     Ok(())
@@ -835,6 +843,7 @@ fn push_decoded_with_cache_and_mask(
     meta_flag: Option<&std::sync::atomic::AtomicBool>,
     meta_cache: &mut Option<(String, u8, Value)>,
 ) {
+    let topic_arc: Arc<str> = Arc::from(publish.topic.as_str());
     let attach = config.attach_meta
         || meta_flag.is_some_and(|f| f.load(std::sync::atomic::Ordering::Relaxed));
     let meta = if attach {
@@ -860,12 +869,23 @@ fn push_decoded_with_cache_and_mask(
         None
     };
 
+    let start_idx = batch.len();
     if let Err(e) =
         decode_payload_into_with_mask(&config.format, field_mask, &publish.payload, meta, batch)
     {
         tracing::warn!("Skipping invalid MQTT payload: {}", e);
         if let Some(counters) = counters {
             counters.inc_exceptions(1);
+        }
+    } else {
+        for record in &mut batch[start_idx..] {
+            if record.meta.is_none() {
+                record.meta = Some(Arc::new(RecordMeta {
+                    topic: Some(topic_arc.clone()),
+                    source: Some(Arc::from("mqtt")),
+                    custom: None,
+                }));
+            }
         }
     }
 }
@@ -988,6 +1008,7 @@ pub struct MqttSource {
     rule_counters: Option<Arc<RuleCounters>>,
     attach_meta_flag: Option<Arc<std::sync::atomic::AtomicBool>>,
     field_mask_flag: Option<Arc<parking_lot::RwLock<Option<crate::codec::JsonFieldMask>>>>,
+    status_callback: Option<crate::ConnectorStatusCallback>,
 }
 
 impl MqttSource {
@@ -998,7 +1019,13 @@ impl MqttSource {
             rule_counters: None,
             attach_meta_flag: None,
             field_mask_flag: None,
+            status_callback: None,
         }
+    }
+
+    pub fn with_status_callback(mut self, cb: Option<crate::ConnectorStatusCallback>) -> Self {
+        self.status_callback = cb;
+        self
     }
 
     pub fn with_rule_counters(mut self, counters: Option<Arc<RuleCounters>>) -> Self {
@@ -1047,10 +1074,16 @@ impl MqttSource {
             let (client, mut eventloop) = AsyncClient::new(opts, 64);
             if let Err(e) = subscribe_topics(&client, &self.config).await {
                 tracing::warn!("{}", e);
+                if let Some(ref cb) = self.status_callback {
+                    cb(&self.config.topic, "mqtt", "error", Some(&e.to_string()));
+                }
                 if let Some(counters) = self.rule_counters.as_deref() {
                     counters.inc_exceptions(1);
                 }
                 return;
+            }
+            if let Some(ref cb) = self.status_callback {
+                cb(&self.config.topic, "mqtt", "connected", None);
             }
             let mut meta_cache: Option<(String, u8, Value)> = None;
             loop {
@@ -1099,6 +1132,9 @@ impl MqttSource {
                             // re-subscribe or the source goes silently deaf
                             // after a broker restart.
                             Ok(Event::Incoming(Packet::ConnAck(_))) => {
+                                if let Some(ref cb) = self.status_callback {
+                                    cb(&self.config.topic, "mqtt", "connected", None);
+                                }
                                 if let Err(e) = subscribe_topics(&client, &self.config).await {
                                     tracing::warn!("MQTT resubscribe: {}", e);
                                     if let Some(counters) = self.rule_counters.as_deref() { counters.inc_exceptions(1); }
@@ -1107,6 +1143,9 @@ impl MqttSource {
                             Ok(_) => {}
                             Err(e) => {
                                 tracing::warn!("MQTT connection error: {}", e);
+                                if let Some(ref cb) = self.status_callback {
+                                    cb(&self.config.topic, "mqtt", "disconnected", Some(&e.to_string()));
+                                }
                                 if let Some(counters) = self.rule_counters.as_deref() { counters.inc_exceptions(1); }
                                 tokio::time::sleep(std::time::Duration::from_secs(1)).await;
                             }

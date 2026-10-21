@@ -45,7 +45,10 @@ fn dag(
                 .map(|(k, v)| {
                     (
                         k.to_string(),
-                        v.into_iter().map(|t| t.to_string()).collect(),
+                        v.into_iter()
+                            .map(|t| t.to_string())
+                            .collect::<Vec<_>>()
+                            .into(),
                     )
                 })
                 .collect::<HashMap<_, _>>(),
@@ -195,14 +198,8 @@ async fn test_stream_bus_broadcast() {
     for i in 0..n {
         let mut data = HashMap::new();
         data.insert("seq".to_string(), json!(i));
-        bus.publish(
-            "events",
-            StreamRecord {
-                timestamp: i as i64,
-                data: data.into(),
-            },
-        )
-        .expect("publish");
+        bus.publish("events", StreamRecord::with_timestamp(data, i as i64))
+            .expect("publish");
     }
 
     // Both listeners observe every event in order.

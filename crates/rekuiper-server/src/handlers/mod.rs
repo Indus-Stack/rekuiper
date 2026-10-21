@@ -1,3 +1,4 @@
+pub mod comms;
 pub mod connections;
 pub mod data;
 pub mod metadata;
@@ -7,6 +8,7 @@ pub mod rules;
 pub mod ruletest;
 pub mod streams;
 
+pub use comms::*;
 pub use connections::*;
 pub use data::*;
 pub use metadata::*;

@@ -57,7 +57,7 @@ features:
   <div class="metric-card">
     <div class="metric-value">100%</div>
     <div class="metric-label">Wire Parity</div>
-    <div class="metric-desc">Drop-in REST API, CLI, and SQL compatibility with LF Edge eKuiper.</div>
+    <div class="metric-desc">Drop-in REST API, CLI, and SQL compatibility with upstream eKuiper.</div>
   </div>
   <div class="metric-card">
     <div class="metric-value">20+</div>
@@ -270,4 +270,6 @@ Details: [Sources](./guide/sources/overview.md) · [Sinks](./guide/sinks/overvie
 | Move from eKuiper | [Migration guide](./operation/migration.md) |
 | Automate with the REST API or CLI | [REST API](./api/restapi/overview.md) · [CLI](./api/cli/overview.md) |
 | Inspect pipelines with zero companion containers | [Embedded UI & rekuiper top](./operation/observability_ui_top.md) |
+| Manage distributed gateways with staged canary rollouts | [Fleet Management & Control Plane](./operation/fleet_management.md) |
+| Design multi-port streaming DAGs with live wire-tap | [Visual Stream DAG Studio](./guide/rules/visual_studio.md) |
 | Use an AI coding assistant with rekuiper | [Model Context Protocol](./mcp/overview.md) |

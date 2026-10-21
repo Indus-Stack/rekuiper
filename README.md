@@ -165,8 +165,8 @@ Details: [Sources](docs/en_US/guide/sources/overview.md) · [Sinks](docs/en_US/g
 - **Declarative GitOps & Dead-Letter Queues (DLQ).** Run in read-only GitOps mode (`--declarative`) with automatic file watching, and isolate poison-pill records across 5 pipeline stages (`GET/DELETE /rules/:id/errors`).
 - **Extensions.** Write SQL functions as sandboxed WebAssembly modules.
 - **Secrets.** Read credentials from HashiCorp Vault or environment variables.
-- **Operations.** Prometheus metrics, a self-contained Web UI (`GET /ui`), an interactive terminal dashboard (`rekuiper top`), a Helm chart, and a `rekuiper` / `kuiper` CLI.
-- **AI tooling.** A Model Context Protocol (MCP) server (`rekuiper-mcp`) exposing **48 tools** (including `explain_pipeline_profile`), 15 live resources, and prompt workflows. See [MCP](docs/en_US/mcp/overview.md).
+- **Operations & Fleet Management.** Prometheus metrics, a self-contained Web UI (`GET /ui`), an interactive terminal dashboard (`rekuiper top`), a Helm chart, a `rekuiper` / `kuiper` CLI, a centralized Fleet Control Plane with staged canary rollouts, and the Visual Stream DAG Studio with real-time wire-tap telemetry.
+- **AI tooling.** A Model Context Protocol (MCP) server (`rekuiper-mcp`) exposing **57 tools** (including `explain_pipeline_profile`, fleet rollouts, and visual DAG inspection), 25 live resources, and 12 prompt workflows. See [MCP](docs/en_US/mcp/overview.md).
 
 ---
 

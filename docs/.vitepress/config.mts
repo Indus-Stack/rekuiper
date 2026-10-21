@@ -34,7 +34,7 @@ export default withMermaid(
   defineConfig({
   title: 'rekuiper',
   titleTemplate: ':title — Rust Edge SQL Stream Processing Engine',
-  description: 'Pure-Rust, drop-in compatible rewrite of LF Edge eKuiper. Process 1,000,000–2,200,000+ IoT, MQTT, Modbus, and OPC-UA events/sec on a single core in <50 MB RAM with native GitOps, Wasm, and MCP.',
+  description: 'Pure-Rust, drop-in compatible rewrite of upstream eKuiper. Process 1,000,000–2,200,000+ IoT, MQTT, Modbus, and OPC-UA events/sec on a single core in <50 MB RAM with native GitOps, Wasm, and MCP.',
   srcDir: './en_US',
   outDir: './.vitepress/dist',
   cleanUrls: false,
@@ -85,6 +85,9 @@ export default withMermaid(
           { text: 'Native Connectors', link: '/guide/connector' },
           { text: 'Declarative GitOps Mode', link: '/operation/declarative_gitops' },
           { text: 'Built-in Web UI & Observability', link: '/operation/observability_ui_top' },
+          { text: 'Fleet Management & Control Plane', link: '/operation/fleet_management' },
+          { text: 'Visual Pipeline Studio', link: '/guide/rules/visual_studio' },
+          { text: 'Rule Designer & Schema Builder', link: '/guide/rules/designer_and_schema_builder' },
           { text: 'REST API & CLI Reference', link: '/api/restapi/overview' },
           { text: 'Interactive OpenAPI / Swagger UI', link: '/api/swagger' }
         ]
@@ -109,6 +112,7 @@ export default withMermaid(
           { text: 'ESPHome Fleet Telemetry', link: '/usecases/esphome' }
         ]
       },
+      { text: 'FAQ & Help', link: '/faq' },
       { text: 'IndraMQTT Platform', link: 'https://indramqtt.com' }
     ],
     sidebar: transformSidebar((directory as any).en || []),

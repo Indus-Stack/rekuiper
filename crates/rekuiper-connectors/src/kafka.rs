@@ -2,7 +2,7 @@ use crate::META_KEY;
 use anyhow::{Context, Result};
 use indexmap::IndexMap;
 use parking_lot::RwLock;
-use rekuiper_core::model::StreamRecord;
+use rekuiper_core::model::{RecordMeta, StreamRecord};
 use rekuiper_core::StreamSender;
 use rskafka::client::partition::PartitionClient;
 use serde::{Deserialize, Serialize};
@@ -204,6 +204,7 @@ fn value_to_key_bytes(v: &Value) -> Vec<u8> {
 pub struct KafkaSource {
     pub config: KafkaConfig,
     pub tx: StreamSender,
+    pub status_callback: Option<crate::ConnectorStatusCallback>,
 }
 
 impl KafkaSource {
@@ -237,9 +238,17 @@ impl KafkaSource {
                 .partition_client(topic, self.config.partition, UnknownTopicHandling::Error)
                 .await
             {
-                Ok(partition_client) => partition_client,
+                Ok(partition_client) => {
+                    if let Some(ref cb) = self.status_callback {
+                        cb(topic, "kafka", "connected", None);
+                    }
+                    partition_client
+                }
                 Err(e) => {
                     tracing::warn!("Kafka source partition client failed: {}", e);
+                    if let Some(ref cb) = self.status_callback {
+                        cb(topic, "kafka", "error", Some(&e.to_string()));
+                    }
                     return;
                 }
             };
@@ -257,7 +266,7 @@ impl KafkaSource {
                                 for rec in records {
                                     offset = rec.offset + 1;
                                     let payload = rec.record.value.as_deref().unwrap_or_default();
-                                    match decode_kafka_payload(payload) {
+                                    match decode_kafka_payload(payload, Some(topic)) {
                                         Ok(decoded) => {
                                             for record in decoded {
                                                 // All subscribers dropped: shut down cleanly.
@@ -274,6 +283,9 @@ impl KafkaSource {
                             }
                             Err(e) => {
                                 tracing::warn!("Kafka source fetch failed: {}", e);
+                                if let Some(ref cb) = self.status_callback {
+                                    cb(topic, "kafka", "error", Some(&e.to_string()));
+                                }
                                 tokio::time::sleep(std::time::Duration::from_secs(1)).await;
                             }
                         }
@@ -297,20 +309,27 @@ impl KafkaSource {
 
 /// Decode one Kafka record payload: a JSON object yields a single record, a
 /// JSON array yields one record per object element.
-fn decode_kafka_payload(payload: &[u8]) -> Result<Vec<StreamRecord>> {
+fn decode_kafka_payload(payload: &[u8], topic: Option<&str>) -> Result<Vec<StreamRecord>> {
     let value: Value =
         serde_json::from_slice(payload).context("Kafka payload is not valid JSON")?;
+    let rec_meta = Arc::new(RecordMeta {
+        topic: topic.map(Arc::from),
+        source: Some(Arc::from("kafka")),
+        custom: None,
+    });
     match value {
-        Value::Object(map) => Ok(vec![StreamRecord::new(
-            map.into_iter().collect::<IndexMap<_, _>>(),
-        )]),
+        Value::Object(map) => {
+            let mut rec = StreamRecord::new(map.into_iter().collect::<IndexMap<_, _>>());
+            rec.meta = Some(rec_meta);
+            Ok(vec![rec])
+        }
         Value::Array(items) => {
             let mut records = Vec::new();
             for item in items {
                 if let Value::Object(map) = item {
-                    records.push(StreamRecord::new(
-                        map.into_iter().collect::<IndexMap<_, _>>(),
-                    ));
+                    let mut rec = StreamRecord::new(map.into_iter().collect::<IndexMap<_, _>>());
+                    rec.meta = Some(rec_meta.clone());
+                    records.push(rec);
                 } else {
                     tracing::warn!("Skipping non-object element in Kafka message");
                 }
@@ -373,24 +392,28 @@ mod tests {
     fn test_decode_kafka_payload() {
         // Single object
         let obj_payload = br#"{"sensor": "temp", "val": 25.5}"#;
-        let records = decode_kafka_payload(obj_payload).expect("decode object");
+        let records = decode_kafka_payload(obj_payload, Some("test_topic")).expect("decode object");
         assert_eq!(records.len(), 1);
         assert_eq!(
             records[0].data.get("sensor"),
             Some(&serde_json::json!("temp"))
         );
+        assert_eq!(
+            records[0].meta.as_ref().and_then(|m| m.topic.as_deref()),
+            Some("test_topic")
+        );
 
         // Array of objects
         let arr_payload = br#"[{"id": 1}, {"id": 2}]"#;
-        let records = decode_kafka_payload(arr_payload).expect("decode array");
+        let records = decode_kafka_payload(arr_payload, Some("test_topic")).expect("decode array");
         assert_eq!(records.len(), 2);
         assert_eq!(records[0].data.get("id"), Some(&serde_json::json!(1)));
         assert_eq!(records[1].data.get("id"), Some(&serde_json::json!(2)));
 
         // Invalid JSON
-        assert!(decode_kafka_payload(b"not json").is_err());
+        assert!(decode_kafka_payload(b"not json", None).is_err());
 
         // Invalid top-level scalar
-        assert!(decode_kafka_payload(b"123").is_err());
+        assert!(decode_kafka_payload(b"123", None).is_err());
     }
 }

@@ -149,10 +149,49 @@ impl<'de> Deserialize<'de> for SharedMap {
     }
 }
 
+/// Immutable, Arc-shared metadata header carried across SQL/Graph hops.
+/// Preserves connector metadata (e.g. topic, source) without cloning map allocations.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct RecordMeta {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub topic: Option<Arc<str>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<Arc<str>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custom: Option<Arc<IndexMap<String, Value>>>,
+}
+
+impl RecordMeta {
+    #[inline]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    #[inline]
+    pub fn with_topic(mut self, topic: impl Into<Arc<str>>) -> Self {
+        self.topic = Some(topic.into());
+        self
+    }
+
+    #[inline]
+    pub fn with_source(mut self, source: impl Into<Arc<str>>) -> Self {
+        self.source = Some(source.into());
+        self
+    }
+
+    #[inline]
+    pub fn with_custom(mut self, custom: IndexMap<String, Value>) -> Self {
+        self.custom = Some(Arc::new(custom));
+        self
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StreamRecord {
     pub timestamp: i64,
     pub data: SharedMap,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub meta: Option<Arc<RecordMeta>>,
 }
 
 impl StreamRecord {
@@ -160,6 +199,7 @@ impl StreamRecord {
         Self {
             timestamp: chrono::Utc::now().timestamp_millis(),
             data: data.into(),
+            meta: None,
         }
     }
 
@@ -167,6 +207,7 @@ impl StreamRecord {
         Self {
             timestamp: chrono::Utc::now().timestamp_millis(),
             data: SharedMap::from_hashmap(data),
+            meta: None,
         }
     }
 
@@ -174,6 +215,7 @@ impl StreamRecord {
         Self {
             timestamp: chrono::Utc::now().timestamp_millis(),
             data,
+            meta: None,
         }
     }
 
@@ -182,6 +224,7 @@ impl StreamRecord {
         Self {
             timestamp,
             data: data.into(),
+            meta: None,
         }
     }
 
@@ -190,7 +233,32 @@ impl StreamRecord {
         Self {
             timestamp,
             data: SharedMap::default(),
+            meta: None,
         }
+    }
+
+    #[inline]
+    pub fn with_meta(mut self, meta: impl Into<Arc<RecordMeta>>) -> Self {
+        self.meta = Some(meta.into());
+        self
+    }
+
+    #[inline]
+    pub fn with_timestamp_and_meta(
+        data: impl Into<SharedMap>,
+        timestamp: i64,
+        meta: Option<Arc<RecordMeta>>,
+    ) -> Self {
+        Self {
+            timestamp,
+            data: data.into(),
+            meta,
+        }
+    }
+
+    #[inline]
+    pub fn set_meta(&mut self, meta: impl Into<Arc<RecordMeta>>) {
+        self.meta = Some(meta.into());
     }
 }
 
@@ -297,12 +365,72 @@ pub struct GraphNode {
     pub props: HashMap<String, Value>,
 }
 
+/// Multi-port output routing in Graph Rules.
+/// Deserializes either legacy single-port targets (`["node_b", "node_c"]`)
+/// or port-indexed output targets (`[["port0_target"], ["port1_target"]]`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum EdgeTargets {
+    Single(Vec<String>),
+    Multi(Vec<Vec<String>>),
+}
+
+impl Default for EdgeTargets {
+    fn default() -> Self {
+        EdgeTargets::Single(Vec::new())
+    }
+}
+
+impl EdgeTargets {
+    pub fn all_targets(&self) -> Vec<&str> {
+        match self {
+            EdgeTargets::Single(targets) => targets.iter().map(|s| s.as_str()).collect(),
+            EdgeTargets::Multi(ports) => ports
+                .iter()
+                .flat_map(|port| port.iter().map(|s| s.as_str()))
+                .collect(),
+        }
+    }
+
+    pub fn targets_for_port(&self, port: usize) -> &[String] {
+        match self {
+            EdgeTargets::Single(targets) => {
+                if port == 0 {
+                    targets.as_slice()
+                } else {
+                    &[]
+                }
+            }
+            EdgeTargets::Multi(ports) => ports.get(port).map(|v| v.as_slice()).unwrap_or(&[]),
+        }
+    }
+
+    pub fn port_count(&self) -> usize {
+        match self {
+            EdgeTargets::Single(_) => 1,
+            EdgeTargets::Multi(ports) => ports.len(),
+        }
+    }
+}
+
+impl From<Vec<String>> for EdgeTargets {
+    fn from(v: Vec<String>) -> Self {
+        EdgeTargets::Single(v)
+    }
+}
+
+impl From<Vec<Vec<String>>> for EdgeTargets {
+    fn from(v: Vec<Vec<String>>) -> Self {
+        EdgeTargets::Multi(v)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 pub struct GraphTopo {
     #[serde(default)]
     pub sources: Vec<String>,
     #[serde(default)]
-    pub edges: HashMap<String, Vec<String>>,
+    pub edges: HashMap<String, EdgeTargets>,
 }
 
 /// Compile a visual rule DAG into an equivalent SQL string plus sink actions.
@@ -346,7 +474,7 @@ pub fn compile_graph_to_sql_and_actions(
         use std::collections::HashSet;
         fn visit<'a>(
             node: &'a str,
-            edges: &'a HashMap<String, Vec<String>>,
+            edges: &'a HashMap<String, EdgeTargets>,
             visiting: &mut HashSet<&'a str>,
             done: &mut HashSet<&'a str>,
         ) -> Result<(), String> {
@@ -358,7 +486,7 @@ pub fn compile_graph_to_sql_and_actions(
                 return Ok(());
             }
             if let Some(next) = edges.get(node) {
-                for target in next {
+                for target in next.all_targets() {
                     visit(target, edges, visiting, done)?;
                 }
             }
@@ -368,9 +496,9 @@ pub fn compile_graph_to_sql_and_actions(
         }
         let mut visiting = HashSet::new();
         let mut done = HashSet::new();
-        let mut endpoints: Vec<&String> = graph.topo.edges.keys().collect();
+        let mut endpoints: Vec<&str> = graph.topo.edges.keys().map(|s| s.as_str()).collect();
         for targets in graph.topo.edges.values() {
-            endpoints.extend(targets);
+            endpoints.extend(targets.all_targets());
         }
         endpoints.sort();
         endpoints.dedup();
@@ -571,9 +699,9 @@ mod tests {
             topo: GraphTopo {
                 sources: vec!["src".to_string()],
                 edges: [
-                    ("src".to_string(), vec!["f".to_string()]),
-                    ("f".to_string(), vec!["p".to_string()]),
-                    ("p".to_string(), vec!["out".to_string()]),
+                    ("src".to_string(), EdgeTargets::from(vec!["f".to_string()])),
+                    ("f".to_string(), EdgeTargets::from(vec!["p".to_string()])),
+                    ("p".to_string(), EdgeTargets::from(vec!["out".to_string()])),
                 ]
                 .into_iter()
                 .collect(),
@@ -583,6 +711,53 @@ mod tests {
         assert_eq!(sql, "SELECT temp FROM demo WHERE (temp > 25)");
         assert_eq!(actions.len(), 1);
         assert!(actions[0].contains_key("log"));
+    }
+
+    #[test]
+    fn test_record_meta_zero_copy() {
+        let meta = Arc::new(
+            RecordMeta::new()
+                .with_topic("devices/sensor_01/telemetry")
+                .with_source("mqtt"),
+        );
+        let rec = StreamRecord::new(HashMap::new()).with_meta(meta.clone());
+        assert_eq!(
+            rec.meta.as_ref().unwrap().topic.as_deref(),
+            Some("devices/sensor_01/telemetry")
+        );
+        assert_eq!(rec.meta.as_ref().unwrap().source.as_deref(), Some("mqtt"));
+
+        // Zero-copy forward across simulated hop
+        let hop2 = StreamRecord::with_timestamp_and_meta(
+            rec.data.clone(),
+            rec.timestamp,
+            rec.meta.clone(),
+        );
+        assert!(Arc::ptr_eq(
+            rec.meta.as_ref().unwrap(),
+            hop2.meta.as_ref().unwrap()
+        ));
+    }
+
+    #[test]
+    fn test_edge_targets_multi_port() {
+        let json_single = r#"["node_b", "node_c"]"#;
+        let parsed_single: EdgeTargets = serde_json::from_str(json_single).unwrap();
+        assert_eq!(parsed_single.all_targets(), vec!["node_b", "node_c"]);
+        assert_eq!(parsed_single.targets_for_port(0), &["node_b", "node_c"]);
+        assert_eq!(parsed_single.targets_for_port(1), &[] as &[String]);
+
+        let json_multi = r#"[["port0_node"], ["port1_node_a", "port1_node_b"]]"#;
+        let parsed_multi: EdgeTargets = serde_json::from_str(json_multi).unwrap();
+        assert_eq!(
+            parsed_multi.all_targets(),
+            vec!["port0_node", "port1_node_a", "port1_node_b"]
+        );
+        assert_eq!(parsed_multi.targets_for_port(0), &["port0_node"]);
+        assert_eq!(
+            parsed_multi.targets_for_port(1),
+            &["port1_node_a", "port1_node_b"]
+        );
     }
 }
 

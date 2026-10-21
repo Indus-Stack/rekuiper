@@ -11,6 +11,8 @@ pub fn create_router(state: AppState) -> Router {
     Router::new()
         .route("/ui", get(ui_handler))
         .route("/ui/", get(ui_handler))
+        .route("/api/ui/auth-status", get(ui_auth_status))
+        .route("/api/ui/login", post(ui_login))
         .route("/v1/metrics", post(push_otlp_data))
         .route("/v1/logs", post(push_otlp_data))
         .route("/v1/traces", post(push_otlp_data))
@@ -18,6 +20,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/otlp/v1/logs", post(push_otlp_data))
         .route("/otlp/v1/traces", post(push_otlp_data))
         .route("/ping", get(ping_handler))
+        .route("/version", get(root_handler))
         .route("/", get(root_handler).post(root_handler))
         .route("/streams", get(list_streams).post(create_stream))
         .route(
@@ -66,6 +69,10 @@ pub fn create_router(state: AppState) -> Router {
                 .patch(patch_rule_tags)
                 .delete(delete_rule_tags),
         )
+        .route("/rules/:id/tap/:node_id/enable", post(enable_rule_tap))
+        .route("/rules/:id/tap/:node_id/disable", post(disable_rule_tap))
+        .route("/rules/:id/tap/:node_id/status", get(get_rule_tap_status))
+        .route("/comms", get(comms_websocket_handler))
         .route("/v2/rules/:name/status", get(get_rule_status))
         .route("/ruletest", post(create_ruletest))
         .route("/ruletest/:name/start", post(start_ruletest))
@@ -110,6 +117,8 @@ pub fn create_router(state: AppState) -> Router {
         .route("/metadata/sinks/:name", get(get_sink_metadata))
         .route("/metadata/functions", get(list_function_metadata))
         .route("/metadata/operators", get(list_operator_metadata))
+        .route("/metadata/palette", get(get_palette_metadata))
+        .route("/api/v1/palette", get(get_palette_metadata))
         .route("/metadata/connections", get(list_metadata_connections))
         .route("/metadata/resource", get(list_metadata_resources))
         .route("/metadata/resources", get(list_metadata_resources))
@@ -252,6 +261,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/metrics/dump/check", get(metrics_dump_check))
         .route("/metrics", get(prometheus_metrics_handler))
         .route("/declarative/reload", post(declarative_reload_handler))
+        .merge(crate::fleet::create_fleet_router(state.clone()))
         .fallback(create_router_fallback)
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
@@ -284,6 +294,11 @@ pub async fn declarative_mutation_guard(
 
         // Allow: POST /declarative/reload
         if path == "/declarative/reload" || path == "/declarative/reload/" {
+            return next.run(req).await;
+        }
+
+        // Allow: Fleet Management Control Plane APIs & Proxy
+        if path.starts_with("/api/v1/fleet/") || path == "/fleet/ws" {
             return next.run(req).await;
         }
 
@@ -400,9 +415,202 @@ pub async fn declarative_reload_handler(
     }
 }
 
-pub async fn ui_handler() -> impl axum::response::IntoResponse {
+pub fn ip_matches_entry(client_ip: &std::net::IpAddr, entry: &str) -> bool {
+    let entry = entry.trim();
+    if entry.is_empty() {
+        return false;
+    }
+    // Check CIDR (e.g. 192.168.1.0/24 or 10.0.0.0/8)
+    if let Some((subnet_str, mask_str)) = entry.split_once('/') {
+        if let (Ok(subnet), Ok(prefix_len)) = (
+            subnet_str.parse::<std::net::IpAddr>(),
+            mask_str.parse::<u8>(),
+        ) {
+            match (client_ip, subnet) {
+                (std::net::IpAddr::V4(c), std::net::IpAddr::V4(s)) if prefix_len <= 32 => {
+                    let mask = if prefix_len == 0 {
+                        0
+                    } else {
+                        (!0u32) << (32 - prefix_len)
+                    };
+                    return (u32::from(*c) & mask) == (u32::from(s) & mask);
+                }
+                (std::net::IpAddr::V6(c), std::net::IpAddr::V6(s)) if prefix_len <= 128 => {
+                    let mask = if prefix_len == 0 {
+                        0
+                    } else {
+                        (!0u128) << (128 - prefix_len)
+                    };
+                    return (u128::from(*c) & mask) == (u128::from(s) & mask);
+                }
+                _ => {}
+            }
+        }
+    }
+    // Exact IP match (e.g. "127.0.0.1", "::1", "192.168.1.100")
+    if let Ok(allowed_ip) = entry.parse::<std::net::IpAddr>() {
+        return client_ip == &allowed_ip;
+    }
+    false
+}
+
+pub fn extract_client_ip(headers: &axum::http::HeaderMap) -> Option<std::net::IpAddr> {
+    if let Some(x_forwarded) = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()) {
+        if let Some(first_ip) = x_forwarded.split(',').next() {
+            if let Ok(ip) = first_ip.trim().parse::<std::net::IpAddr>() {
+                return Some(ip);
+            }
+        }
+    }
+    if let Some(x_real_ip) = headers.get("x-real-ip").and_then(|v| v.to_str().ok()) {
+        if let Ok(ip) = x_real_ip.trim().parse::<std::net::IpAddr>() {
+            return Some(ip);
+        }
+    }
+    // Loopback fallback for local connections
+    Some(std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1)))
+}
+
+pub async fn ui_handler(
+    axum::extract::State(state): axum::extract::State<AppState>,
+    headers: axum::http::HeaderMap,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let cfg = state.config.read();
+
+    // 1. Check if Web UI is enabled (default is false for edge security)
+    if !cfg.basic.enable_ui {
+        return (
+            axum::http::StatusCode::FORBIDDEN,
+            [(axum::http::header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+            "Web UI is disabled by default for security. Start rekuiper with --enable-ui or set 'basic.enableUi: true' in etc/kuiper.yaml to enable the web console.\n",
+        )
+            .into_response();
+    }
+
+    // 2. Check IP allowlist (if configured)
+    if !cfg.basic.ui_ip_allowlist.is_empty() {
+        let client_ip = extract_client_ip(&headers)
+            .unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1)));
+        let mut allowed = false;
+        for entry in &cfg.basic.ui_ip_allowlist {
+            if ip_matches_entry(&client_ip, entry) {
+                allowed = true;
+                break;
+            }
+        }
+        if !allowed {
+            return (
+                axum::http::StatusCode::FORBIDDEN,
+                [(axum::http::header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+                format!(
+                    "Access denied: client IP {} is not permitted to access the web UI by ui_ip_allowlist\n",
+                    client_ip
+                ),
+            )
+                .into_response();
+        }
+    }
+
+    drop(cfg);
+
+    for candidate in &[
+        "etc/ui.html",
+        "/home/paanday/fleet/control/etc/ui.html",
+        "/home/paanday/fleet/ui.html",
+        "/tmp/fleet/control/etc/ui.html",
+    ] {
+        if let Ok(content) = std::fs::read_to_string(candidate) {
+            return (
+                [(axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8")],
+                content,
+            )
+                .into_response();
+        }
+    }
     (
         [(axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8")],
         include_str!("ui.html"),
     )
+        .into_response()
+}
+
+pub async fn ui_auth_status(
+    axum::extract::State(state): axum::extract::State<AppState>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let cfg = state.config.read();
+    let auth_required = cfg.basic.authentication
+        || cfg.basic.fleet_token.is_some()
+        || cfg.basic.ui_password.is_some();
+    (
+        axum::http::StatusCode::OK,
+        axum::Json(serde_json::json!({
+            "auth_required": auth_required,
+            "has_jwt": cfg.basic.authentication,
+            "has_fleet_token": cfg.basic.fleet_token.is_some(),
+            "has_ui_password": cfg.basic.ui_password.is_some(),
+            "enable_ui": cfg.basic.enable_ui,
+            "version": state.version,
+        })),
+    )
+        .into_response()
+}
+
+#[derive(serde::Deserialize)]
+pub struct UiLoginPayload {
+    pub token: String,
+}
+
+pub async fn ui_login(
+    axum::extract::State(state): axum::extract::State<AppState>,
+    axum::Json(payload): axum::Json<UiLoginPayload>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let cfg = state.config.read();
+    let token = payload.token.trim();
+
+    // 1. Check custom UI password
+    if let Some(ref pw) = cfg.basic.ui_password {
+        if token == pw {
+            return (
+                axum::http::StatusCode::OK,
+                axum::Json(serde_json::json!({ "status": "ok", "token": token })),
+            )
+                .into_response();
+        }
+    }
+
+    // 2. Check fleet token
+    if let Some(ref ft) = cfg.basic.fleet_token {
+        if token == ft {
+            return (
+                axum::http::StatusCode::OK,
+                axum::Json(serde_json::json!({ "status": "ok", "token": token })),
+            )
+                .into_response();
+        }
+    }
+
+    // 3. Check JWT token
+    if cfg.basic.authentication {
+        if let Some(key_der) = load_auth_public_key() {
+            if verify_jwt_raw(token, &key_der).is_ok() {
+                return (
+                    axum::http::StatusCode::OK,
+                    axum::Json(serde_json::json!({ "status": "ok", "token": token })),
+                )
+                    .into_response();
+            }
+        }
+    }
+
+    (
+        axum::http::StatusCode::UNAUTHORIZED,
+        axum::Json(serde_json::json!({
+            "error": "invalid_credentials",
+            "message": "Invalid console password or authentication token"
+        })),
+    )
+        .into_response()
 }

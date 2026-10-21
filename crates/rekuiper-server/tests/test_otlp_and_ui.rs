@@ -94,6 +94,7 @@ async fn spawn_test_server() -> (String, tokio::task::JoinHandle<()>, AppState) 
 
     let mut config = KuiperConfig::default();
     config.basic.enable_private_net = true;
+    config.basic.enable_ui = true;
 
     let state = AppState::new(
         "test_otlp_and_ui".to_string(),
@@ -131,6 +132,171 @@ async fn test_embedded_ui_status_endpoint() {
     assert!(html.contains("rekuiper"));
     assert!(html.contains("Pipelines &amp; Rules") || html.contains("Pipelines & Rules"));
     assert!(html.contains("Reload Manifest"));
+}
+
+#[tokio::test]
+async fn test_ui_disabled_by_default() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let local_addr = listener.local_addr().unwrap();
+
+    let stream_bus = StreamBus::new();
+    let stream_manager = StreamManager::new();
+    let rule_manager = RuleManager::new(stream_bus.clone());
+
+    // By default, enable_ui is false
+    let config = KuiperConfig::default();
+    assert!(!config.basic.enable_ui);
+
+    let state = AppState::new(
+        "test_ui_disabled".to_string(),
+        config,
+        stream_manager,
+        TableManager::new(),
+        rule_manager,
+        stream_bus,
+    );
+
+    let app = create_router(state);
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(format!("http://{}/ui", local_addr))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), reqwest::StatusCode::FORBIDDEN);
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("Web UI is disabled by default for security"));
+}
+
+#[tokio::test]
+async fn test_ui_ip_allowlist_enforcement() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let local_addr = listener.local_addr().unwrap();
+
+    let stream_bus = StreamBus::new();
+    let stream_manager = StreamManager::new();
+    let rule_manager = RuleManager::new(stream_bus.clone());
+
+    let mut config = KuiperConfig::default();
+    config.basic.enable_ui = true;
+    // Allowlist only internal 10.0.0.0/8 and 192.168.1.100
+    config.basic.ui_ip_allowlist = vec!["10.0.0.0/8".to_string(), "192.168.1.100".to_string()];
+
+    let state = AppState::new(
+        "test_ui_ip_allowlist".to_string(),
+        config,
+        stream_manager,
+        TableManager::new(),
+        rule_manager,
+        stream_bus,
+    );
+
+    let app = create_router(state);
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let client = reqwest::Client::new();
+
+    // 1. Request with disallowed IP in X-Forwarded-For -> 403 Forbidden
+    let blocked_resp = client
+        .get(format!("http://{}/ui", local_addr))
+        .header("X-Forwarded-For", "203.0.113.50")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(blocked_resp.status(), reqwest::StatusCode::FORBIDDEN);
+    let body = blocked_resp.text().await.unwrap();
+    assert!(body.contains("Access denied: client IP"));
+
+    // 2. Request with allowed IP (10.5.20.1) in X-Forwarded-For -> 200 OK
+    let allowed_resp = client
+        .get(format!("http://{}/ui", local_addr))
+        .header("X-Forwarded-For", "10.5.20.1")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(allowed_resp.status(), reqwest::StatusCode::OK);
+}
+
+#[tokio::test]
+async fn test_ui_password_authentication() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let local_addr = listener.local_addr().unwrap();
+
+    let stream_bus = StreamBus::new();
+    let stream_manager = StreamManager::new();
+    let rule_manager = RuleManager::new(stream_bus.clone());
+
+    let mut config = KuiperConfig::default();
+    config.basic.enable_ui = true;
+    config.basic.ui_password = Some("SuperSecretEdgePassword123".to_string());
+
+    let state = AppState::new(
+        "test_ui_auth".to_string(),
+        config,
+        stream_manager,
+        TableManager::new(),
+        rule_manager,
+        stream_bus,
+    );
+
+    let app = create_router(state);
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let client = reqwest::Client::new();
+
+    // 1. Check auth-status endpoint
+    let status_resp = client
+        .get(format!("http://{}/api/ui/auth-status", local_addr))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(status_resp.status(), reqwest::StatusCode::OK);
+    let status_json: serde_json::Value = status_resp.json().await.unwrap();
+    assert_eq!(status_json["auth_required"], true);
+    assert_eq!(status_json["has_ui_password"], true);
+
+    // 2. Attempt login with wrong password -> 401 Unauthorized
+    let bad_login = client
+        .post(format!("http://{}/api/ui/login", local_addr))
+        .json(&serde_json::json!({ "token": "wrongpassword" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(bad_login.status(), reqwest::StatusCode::UNAUTHORIZED);
+
+    // 3. Attempt login with correct password -> 200 OK
+    let good_login = client
+        .post(format!("http://{}/api/ui/login", local_addr))
+        .json(&serde_json::json!({ "token": "SuperSecretEdgePassword123" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(good_login.status(), reqwest::StatusCode::OK);
+
+    // 4. Test accessing protected REST endpoint with and without token
+    let unauth_streams = client
+        .get(format!("http://{}/streams", local_addr))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(unauth_streams.status(), reqwest::StatusCode::UNAUTHORIZED);
+
+    let auth_streams = client
+        .get(format!("http://{}/streams", local_addr))
+        .header("Authorization", "Bearer SuperSecretEdgePassword123")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(auth_streams.status(), reqwest::StatusCode::OK);
 }
 
 #[tokio::test]

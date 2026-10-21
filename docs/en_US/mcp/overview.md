@@ -77,7 +77,7 @@ When the rekuiper daemon runs inside WSL2 or Docker:
 
 ## Tool Capabilities
 
-`rekuiper-mcp` exposes 48 tools across seven operational categories:
+`rekuiper-mcp` exposes 57 tools across nine operational categories:
 
 ### 1. SQL Intelligence and Offline Simulation
 
@@ -160,7 +160,7 @@ The assistant invokes `test_sql_expression` and evaluates the output in memory w
 | `delete_wasm_plugin` | Unloads and deletes a WebAssembly module via `DELETE /plugins/wasm/{name}`. |
 | `validate_secrets` | Offline syntax validator for dynamic secret templates (<span v-pre>`{{vault://...}}`</span>, <span v-pre>`{{env://...}}`</span>). |
 
-### 7. Health and Universal REST Proxy
+### 7. Global Configuration, Migrations, and Metrics
 
 | Tool | Purpose |
 | :--- | :--- |
@@ -172,6 +172,25 @@ The assistant invokes `test_sql_expression` and evaluates the output in memory w
 | `import_data` | Restores catalog configurations from a JSON backup. |
 | `execute_rekuiper_api` | Executes arbitrary HTTP requests (`GET`, `POST`, `PUT`, `DELETE`, `PATCH`) against rekuiper REST endpoints. |
 
+### 8. Fleet Management and Control Plane
+
+| Tool | Purpose |
+| :--- | :--- |
+| `list_fleet_devices` | Lists registered edge gateways, connection states, firmware tags, and heartbeat metrics. |
+| `get_fleet_rollouts` | Queries active and historical phased canary rollout deployments. |
+| `trigger_fleet_rollout` | Starts a phased canary rollout with configurable step sizes and group targets. |
+| `list_fleet_snapshots` | Lists declarative state snapshots for fleet disaster recovery and rollbacks. |
+| `proxy_fleet_device_api` | Routes HTTP requests to a target edge gateway through outbound Yamux tunnels. |
+
+### 9. Visual Stream DAG Studio and Real-Time Wire Tap
+
+| Tool | Purpose |
+| :--- | :--- |
+| `get_studio_palette` | Retrieves component definitions, multi-port descriptors, and property configuration schemas. |
+| `validate_graph_rule` | Validates Visual DAG JSON topology, node properties, and port connections offline. |
+| `toggle_wire_tap` | Enables or disables a rate-limited real-time inspection probe on any DAG node. |
+| `get_wire_tap_status` | Reports active wire-tap probe statuses, dropped sample counters, and buffer states. |
+
 ## Live Resources
 
 `rekuiper-mcp` exposes engine state and schemas as readable MCP resources using `rekuiper://` URIs:
@@ -179,6 +198,9 @@ The assistant invokes `test_sql_expression` and evaluates the output in memory w
 | Resource URI | Content Description |
 | :--- | :--- |
 | `rekuiper://rules` | Active rules catalog with SQL queries and configured sinks. |
+| `rekuiper://fleet/devices` | Real-time edge gateway catalog, versions, and heartbeat telemetry. |
+| `rekuiper://fleet/rollouts` | Staged canary rollout pipelines, active phases, and deployment status. |
+| `rekuiper://studio/palette` | Visual DAG Studio palette components, port contracts, and property schemas. |
 | `rekuiper://streams` | Registered stream sources, schemas, and serialization formats. |
 | `rekuiper://tables` | Registered lookup and dimension tables. |
 | `rekuiper://connections` | Active connection pool definitions. |
@@ -193,6 +215,13 @@ The assistant invokes `test_sql_expression` and evaluates the output in memory w
 | `rekuiper://schemas/rabbitmq` | Configuration template for RabbitMQ AMQP 0-9-1 source and sink actions. |
 | `rekuiper://schemas/parquet` | Configuration template for Apache Parquet columnar sink actions. |
 | `rekuiper://schemas/edgex` | Configuration template for EdgeX Foundry dual-port listening (59880 / 59881). |
+| `rekuiper://schemas/influx` | Configuration template for InfluxDB v1 and v2 timeseries sink actions. |
+| `rekuiper://schemas/tdengine` | Configuration template for TDengine 3.x timeseries sink actions. |
+| `rekuiper://schemas/iotdb` | Configuration template for Apache IoTDB REST timeseries sink actions. |
+| `rekuiper://schemas/image` | Configuration template for Image sink actions with retention pruning. |
+| `rekuiper://schemas/random` | Configuration template for Random / Simulator telemetry source streams. |
+| `rekuiper://schemas/zmq` | Configuration template for ZeroMQ PUB/SUB socket sink and source actions. |
+| `rekuiper://schemas/video` | Configuration template for Video source streams extracting frames via FFmpeg. |
 
 ## Specialized Prompts
 
@@ -206,6 +235,10 @@ The assistant invokes `test_sql_expression` and evaluates the output in memory w
 - `generate_vector_search_rule`: Constructs an edge vector similarity search and anomaly detection rule using `cosine_similarity`.
 - `configure_rabbitmq_pipeline`: Constructs an enterprise pipeline routing stream records to RabbitMQ AMQP 0-9-1.
 - `create_wasm_plugin_rule`: Guides registration and stream query generation for compiled WebAssembly UDF modules.
+- `audit_security_posture`: Audits daemon runtime security settings, network port bindings, and authentication.
+- `generate_cep_rule`: Constructs a Complex Event Processing (CEP) sequence matching rule with `sequence_match` or `sequence_count`.
+- `staged_fleet_rollout`: Guides staged canary rollouts across edge gateway clusters with automated verification.
+- `design_visual_dag_pipeline`: Generates and validates multi-port Visual Stream DAG rules with wire-tap probes.
 
 ## Build from Source
 

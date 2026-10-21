@@ -1,18 +1,18 @@
 ---
-title: rekuiper vs. LF Edge eKuiper
-description: Benchmark and architectural comparison between pure-Rust rekuiper and legacy Go LF Edge eKuiper. Compare throughput, memory stability, and migration.
+title: rekuiper vs. upstream eKuiper
+description: Benchmark and architectural comparison between pure-Rust rekuiper and legacy Go upstream eKuiper. Compare throughput, memory stability, and migration.
 keywords: eKuiper alternative, eKuiper Rust rewrite, eKuiper memory usage, rekuiper vs eKuiper, edge stream processing
 ---
 
-# rekuiper vs. LF Edge eKuiper: Benchmark & Architecture
+# rekuiper vs. upstream eKuiper: Benchmark & Architecture
 
-`rekuiper` is a clean-slate rewrite of LF Edge eKuiper in pure Rust. It provides 100% wire-level drop-in compatibility for existing SQL rules, REST APIs, and CLI tooling while delivering 50x–100x higher engine throughput (8–10x over network MQTT) and deterministic memory utilization.
+`rekuiper` is a clean-slate rewrite of upstream eKuiper in pure Rust. It provides 100% wire-level drop-in compatibility for existing SQL rules, REST APIs, and CLI tooling while delivering 50x–100x higher engine throughput (8–10x over network MQTT) and deterministic memory utilization.
 
 ---
 
 ## Executive Comparison
 
-| Dimension | `rekuiper` (Rust 1.0.0-rc4) | LF Edge eKuiper (Go) | Architectural Difference |
+| Dimension | `rekuiper` (Rust 1.0.0-rc4) | upstream eKuiper (Go) | Architectural Difference |
 | :--- | :--- | :--- | :--- |
 | **Language & Runtime** | Pure Rust (`tokio` actor runtime) | Go (goroutines + GC runtime) | Zero garbage-collection pauses in `rekuiper` |
 | **Single-Core Throughput** | **1,000,000+ events/s** (150k–200k msg/s network MQTT) | ~20,000 msg/s | **50x to 100x engine throughput** (8x–10x over network) |
@@ -91,7 +91,7 @@ Under sustained input load, `rekuiper` forms a flat memory plateau ($\Delta M \l
 
 ## 4. 100% Wire Parity: Zero-SQL-Change Migration
 
-`rekuiper` is a drop-in replacement for LF Edge eKuiper. You do not need to rewrite your SQL rules or update your client applications.
+`rekuiper` is a drop-in replacement for upstream eKuiper. You do not need to rewrite your SQL rules or update your client applications.
 
 ### Compatibility Checklist
 

@@ -972,8 +972,13 @@ impl<'a> Parser<'a> {
         Ok(Self::parse_window_u64(expr)? as usize)
     }
 
-    fn parse_expr(&mut self) -> Result<Expr> {
+    pub fn parse_expr(&mut self) -> Result<Expr> {
         self.parse_or()
+    }
+
+    pub fn parse_expression(input: &str) -> Result<Expr> {
+        let mut p = Parser::new(input);
+        p.parse_expr()
     }
 
     fn parse_or(&mut self) -> Result<Expr> {
@@ -2063,4 +2068,8 @@ pub fn is_valid_stream_type(ty: &str) -> bool {
             }
         }
     }
+}
+
+pub fn parse_expression(input: &str) -> Result<Expr> {
+    Parser::parse_expression(input)
 }

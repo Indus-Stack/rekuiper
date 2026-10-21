@@ -3,6 +3,9 @@ use async_trait::async_trait;
 use rekuiper_core::model::StreamRecord;
 pub use rekuiper_core::RuleCounters;
 
+pub type ConnectorStatusCallback =
+    std::sync::Arc<dyn Fn(&str, &str, &str, Option<&str>) + Send + Sync>;
+
 pub const META_KEY: &str = "__meta__";
 
 pub mod codec;

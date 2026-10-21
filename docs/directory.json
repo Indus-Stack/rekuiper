@@ -10,6 +10,10 @@
           "path": "concepts/rekuiper"
         },
         {
+          "title": "Frequently Asked Questions (FAQ)",
+          "path": "faq"
+        },
+        {
           "title": "eKuiper Compatibility & Enhancements",
           "path": "concepts/ekuiper_compatibility"
         },
@@ -180,6 +184,14 @@
           "path": "guide/rules/graph_rule"
         },
         {
+          "title": "Visual Pipeline Studio",
+          "path": "guide/rules/visual_studio"
+        },
+        {
+          "title": "Rule Designer & Schema Builder",
+          "path": "guide/rules/designer_and_schema_builder"
+        },
+        {
           "title": "Rule Pipeline",
           "path": "guide/rules/rule_pipeline"
         },
@@ -200,6 +212,10 @@
           "path": "guide/serialization/serialization",
           "collapsed": true,
           "children": [
+            {
+              "title": "Schema Registry & Multi-Protocol Hub",
+              "path": "guide/schemas/schema_registry"
+            },
             {
               "title": "Protobuf Codec Tutorial",
               "path": "guide/serialization/protobuf_tutorial"
@@ -407,6 +423,10 @@
         {
           "title": "Connection Management",
           "path": "guide/connections/overview"
+        },
+        {
+          "title": "Property Forms & Connection Hub",
+          "path": "guide/connections/property_forms_and_connection_hub"
         }
       ]
     },
@@ -523,6 +543,14 @@
         {
           "title": "Built-in Web UI & Live Top",
           "path": "operation/observability_ui_top"
+        },
+        {
+          "title": "Web Console Operations & Security Guide",
+          "path": "guide/ui/web_console_user_guide"
+        },
+        {
+          "title": "Fleet Management & Control Plane",
+          "path": "operation/fleet_management"
         },
         {
           "title": "Monitor with Prometheus",
@@ -688,6 +716,10 @@
         {
           "title": "External Services (gRPC / REST)",
           "path": "extension/external/external_func"
+        },
+        {
+          "title": "Plugins, UDFs & Services Center",
+          "path": "guide/plugins/plugins_and_services_hub"
         }
       ]
     },
