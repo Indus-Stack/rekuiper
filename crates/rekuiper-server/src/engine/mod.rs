@@ -752,12 +752,13 @@ pub(crate) fn register_rule_stream_source(
         .entry(rule_id.to_string())
         .or_default()
         .insert(stream_name.to_string());
+    let (rule_cancel_tx, _rule_cancel_rx) = tokio::sync::watch::channel(false);
     state
         .source_cancels
         .write()
         .entry(rule_id.to_string())
         .or_default()
-        .push(cancel_tx);
+        .push(rule_cancel_tx);
 }
 
 /// Start source producers for one stream (MQTT/file/HTTP-pull/WebSocket/
