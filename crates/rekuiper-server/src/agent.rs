@@ -328,14 +328,39 @@ where
 
     if is_client {
         // Stream 0: Heartbeat & Control Plane
-        let mut ctrl_stream = futures::future::poll_fn(|cx| conn.poll_new_outbound(cx))
+        let ctrl_stream = futures::future::poll_fn(|cx| conn.poll_new_outbound(cx))
             .await
             .map_err(|e| anyhow::anyhow!("Failed to open Yamux Stream 0: {}", e))?;
 
-        let state_clone = state.clone();
-        let meta_clone = meta.clone();
-        let mut cancel_clone = cancel_rx.clone();
+        let (mut read_half, mut write_half) = futures::AsyncReadExt::split(ctrl_stream);
+        let (frame_tx, mut frame_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(64);
 
+        // Writer task: writes frames sequentially to write_half without multiplex contention
+        let mut cancel_writer = cancel_rx.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    Some(frame) = frame_rx.recv() => {
+                        if let Err(e) = send_frame(&mut write_half, &frame).await {
+                            tracing::warn!("Stream 0 frame send failed: {}", e);
+                            break;
+                        }
+                    }
+                    _ = cancel_writer.changed() => {
+                        if *cancel_writer.borrow() {
+                            break;
+                        }
+                    }
+                    else => break,
+                }
+            }
+        });
+
+        // Heartbeat task: ticks periodically, sending heartbeats without blocking or cancelling reader
+        let frame_tx_hb = frame_tx.clone();
+        let state_hb = state.clone();
+        let meta_hb = meta.clone();
+        let mut cancel_hb = cancel_rx.clone();
         tokio::spawn(async move {
             let mut ticker = tokio::time::interval(heartbeat_interval);
             ticker.tick().await;
@@ -343,14 +368,14 @@ where
             loop {
                 tokio::select! {
                     _ = ticker.tick() => {
-                        let total_rules = state_clone.rule_manager.list_rules().len();
-                        let running_rules = state_clone.rule_manager.list_rules().into_iter()
-                            .filter(|r| state_clone.rule_manager.get_rule_status(&r.id).map(|s| s.status == "running").unwrap_or(false))
+                        let total_rules = state_hb.rule_manager.list_rules().len();
+                        let running_rules = state_hb.rule_manager.list_rules().into_iter()
+                            .filter(|r| state_hb.rule_manager.get_rule_status(&r.id).map(|s| s.status == "running").unwrap_or(false))
                             .count();
-                        let active_hash = state_clone.active_rule_hashes.read().values().copied().sum::<u64>();
-                        let rollback = state_clone.last_watchdog_rollback.read().clone();
-                        let dlq_total = crate::declarative::get_total_dlq_errors(&state_clone);
-                        let has_crashes = crate::declarative::check_rule_panics(&state_clone).is_some();
+                        let active_hash = state_hb.active_rule_hashes.read().values().copied().sum::<u64>();
+                        let rollback = state_hb.last_watchdog_rollback.read().clone();
+                        let dlq_total = crate::declarative::get_total_dlq_errors(&state_hb);
+                        let has_crashes = crate::declarative::check_rule_panics(&state_hb).is_some();
 
                         let status = if rollback.is_some() || has_crashes {
                             "degraded".to_string()
@@ -359,12 +384,12 @@ where
                         };
 
                         let hb = AgentHeartbeat {
-                            agent_id: meta_clone.device_id.clone(),
-                            name: Some(meta_clone.name.clone()),
-                            plant: Some(meta_clone.plant.clone()),
-                            region: Some(meta_clone.region.clone()),
-                            device_type: Some(meta_clone.device_type.clone()),
-                            version: Some(meta_clone.version.clone()),
+                            agent_id: meta_hb.device_id.clone(),
+                            name: Some(meta_hb.name.clone()),
+                            plant: Some(meta_hb.plant.clone()),
+                            region: Some(meta_hb.region.clone()),
+                            device_type: Some(meta_hb.device_type.clone()),
+                            version: Some(meta_hb.version.clone()),
                             status: Some(status),
                             cpu_usage: 4.2,
                             memory_bytes: 32 * 1024 * 1024,
@@ -377,12 +402,27 @@ where
                             last_rollback_reason: rollback,
                         };
                         let payload = serde_json::to_vec(&hb).unwrap_or_default();
-                        if let Err(e) = send_frame(&mut ctrl_stream, &payload).await {
-                            tracing::warn!("Stream 0 heartbeat send failed: {}", e);
+                        if frame_tx_hb.send(payload).await.is_err() {
                             break;
                         }
                     }
-                    cmd_res = read_frame(&mut ctrl_stream) => {
+                    _ = cancel_hb.changed() => {
+                        if *cancel_hb.borrow() {
+                            break;
+                        }
+                    }
+                }
+            }
+        });
+
+        // Reader task: dedicated to reading incoming control commands without ticker interruption
+        let frame_tx_cmd = frame_tx;
+        let state_cmd = state.clone();
+        let mut cancel_cmd = cancel_rx.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    cmd_res = read_frame(&mut read_half) => {
                         match cmd_res {
                             Ok(cmd_bytes) => {
                                 if let Ok(cmd) = serde_json::from_slice::<AgentControlCommand>(&cmd_bytes) {
@@ -390,29 +430,29 @@ where
                                         AgentControlCommand::ApplySnapshot { manifest } => {
                                             match serde_json::from_value::<rekuiper_core::model::DeclarativeManifest>(manifest) {
                                                 Ok(m) => {
-                                                    let res = crate::declarative::reconcile_manifest_with_watchdog(&state_clone, &m, Duration::from_millis(600), 5).await;
+                                                    let res = crate::declarative::reconcile_manifest_with_watchdog(&state_cmd, &m, Duration::from_millis(600), 5).await;
                                                     let resp = match res {
                                                         Ok(rep) => serde_json::json!({"status": "ok", "report": rep}),
                                                         Err(err) => serde_json::json!({"status": "error", "message": err}),
                                                     };
-                                                    let _ = send_frame(&mut ctrl_stream, &serde_json::to_vec(&resp).unwrap_or_default()).await;
+                                                    let _ = frame_tx_cmd.send(serde_json::to_vec(&resp).unwrap_or_default()).await;
                                                 }
                                                 Err(e) => {
                                                     let resp = serde_json::json!({"status": "error", "message": format!("Invalid declarative manifest: {}", e)});
-                                                    let _ = send_frame(&mut ctrl_stream, &serde_json::to_vec(&resp).unwrap_or_default()).await;
+                                                    let _ = frame_tx_cmd.send(serde_json::to_vec(&resp).unwrap_or_default()).await;
                                                 }
                                             }
                                         }
                                         AgentControlCommand::Rollback => {
-                                            let res = rollback_to_known_good(&state_clone).await;
+                                            let res = rollback_to_known_good(&state_cmd).await;
                                             let resp = match res {
                                                 Ok(rep) => serde_json::json!({"status": "ok", "report": rep}),
                                                 Err(err) => serde_json::json!({"status": "error", "message": err}),
                                             };
-                                            let _ = send_frame(&mut ctrl_stream, &serde_json::to_vec(&resp).unwrap_or_default()).await;
+                                            let _ = frame_tx_cmd.send(serde_json::to_vec(&resp).unwrap_or_default()).await;
                                         }
                                         AgentControlCommand::Ping => {
-                                            let _ = send_frame(&mut ctrl_stream, b"{\"status\":\"pong\"}").await;
+                                            let _ = frame_tx_cmd.send(b"{\"status\":\"pong\"}".to_vec()).await;
                                         }
                                     }
                                 }
@@ -420,8 +460,8 @@ where
                             Err(_) => break,
                         }
                     }
-                    _ = cancel_clone.changed() => {
-                        if *cancel_clone.borrow() {
+                    _ = cancel_cmd.changed() => {
+                        if *cancel_cmd.borrow() {
                             break;
                         }
                     }

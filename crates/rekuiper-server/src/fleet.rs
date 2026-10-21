@@ -773,10 +773,11 @@ impl FleetManager {
             .await
             .map_err(|_| anyhow::anyhow!("Device command channel dropped"))?;
 
-        let res = reply_rx
-            .await
-            .map_err(|_| anyhow::anyhow!("Device command timed out or cancelled"))?
-            .map_err(|e| anyhow::anyhow!("{}", e))?;
+        let res = match tokio::time::timeout(Duration::from_secs(10), reply_rx).await {
+            Ok(Ok(inner)) => inner.map_err(|e| anyhow::anyhow!("{}", e))?,
+            Ok(Err(_)) => return Err(anyhow::anyhow!("Device command channel closed")),
+            Err(_) => return Err(anyhow::anyhow!("Device command timed out after 10s")),
+        };
         Ok(res)
     }
 }
@@ -983,42 +984,42 @@ pub async fn handle_fleet_ws_client(socket: AxumWebSocket, state: AppState) {
 
     // Stream 0 session loop: manages incoming telemetry frames and pending command dispatches
     let fleet_clone_session = state.fleet.clone();
-    let write_task = tokio::spawn(async move {
-        let mut pending_reply: Option<tokio::sync::oneshot::Sender<Result<Value, String>>> = None;
+    type PendingReplySlot =
+        Arc<tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<Result<Value, String>>>>>;
+    let pending_reply: PendingReplySlot = Arc::new(tokio::sync::Mutex::new(None));
 
-        loop {
-            tokio::select! {
-                cmd_req = ctrl_cmd_rx.recv() => {
-                    match cmd_req {
-                        Some((cmd, reply)) => {
-                            let payload = serde_json::to_vec(&cmd).unwrap_or_default();
-                            if let Err(e) = send_frame(&mut write_half, &payload).await {
-                                let _ = reply.send(Err(format!("Failed to write command to Stream 0: {}", e)));
-                                break;
-                            }
-                            pending_reply = Some(reply);
-                        }
-                        None => break,
+    let pending_reply_reader = pending_reply.clone();
+    let reader_task = tokio::spawn(async move {
+        while let Ok(bytes) = read_frame(&mut read_half).await {
+            if let Ok(val) = serde_json::from_slice::<Value>(&bytes) {
+                if val.get("agent_id").is_none() && val.get("status").is_some() {
+                    let mut guard = pending_reply_reader.lock().await;
+                    if let Some(reply) = guard.take() {
+                        let _ = reply.send(Ok(val));
+                        continue;
                     }
                 }
-                frame_res = read_frame(&mut read_half) => {
-                    match frame_res {
-                        Ok(bytes) => {
-                            if let Ok(val) = serde_json::from_slice::<Value>(&bytes) {
-                                if val.get("status").is_some() && pending_reply.is_some() {
-                                    if let Some(reply) = pending_reply.take() {
-                                        let _ = reply.send(Ok(val));
-                                    }
-                                    continue;
-                                }
-                            }
-                            if let Ok(hb) = serde_json::from_slice::<AgentHeartbeat>(&bytes) {
-                                fleet_clone_session.register_or_update_heartbeat(hb);
-                            }
-                        }
-                        Err(_) => break,
-                    }
+            }
+            if let Ok(hb) = serde_json::from_slice::<AgentHeartbeat>(&bytes) {
+                fleet_clone_session.register_or_update_heartbeat(hb);
+            }
+        }
+    });
+
+    let pending_reply_writer = pending_reply.clone();
+    let write_task = tokio::spawn(async move {
+        while let Some((cmd, reply)) = ctrl_cmd_rx.recv().await {
+            {
+                let mut guard = pending_reply_writer.lock().await;
+                *guard = Some(reply);
+            }
+            let payload = serde_json::to_vec(&cmd).unwrap_or_default();
+            if let Err(e) = send_frame(&mut write_half, &payload).await {
+                let mut guard = pending_reply_writer.lock().await;
+                if let Some(r) = guard.take() {
+                    let _ = r.send(Err(format!("Failed to write command to Stream 0: {}", e)));
                 }
+                break;
             }
         }
     });
@@ -1029,6 +1030,7 @@ pub async fn handle_fleet_ws_client(socket: AxumWebSocket, state: AppState) {
 
     // Wait until driver or write task exits
     let _ = driver_handle.await;
+    reader_task.abort();
     write_task.abort();
 
     // Cleanup on disconnect
