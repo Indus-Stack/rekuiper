@@ -7,6 +7,7 @@ description = "Command-line interface (kuiper) for the rekuiper stream processin
 authors.workspace = true
 repository.workspace = true
 homepage.workspace = true
+documentation.workspace = true
 keywords.workspace = true
 categories.workspace = true
 

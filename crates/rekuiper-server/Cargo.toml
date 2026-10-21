@@ -7,6 +7,7 @@ description = "REST API, OpenAPI routes, Prometheus metrics, and streaming hub f
 authors.workspace = true
 repository.workspace = true
 homepage.workspace = true
+documentation.workspace = true
 keywords.workspace = true
 categories.workspace = true
 

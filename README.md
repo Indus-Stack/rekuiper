@@ -1,23 +1,23 @@
-# rekuiper
+# rekuiper — Rust MQTT Rule Engine & Streaming SQL Processor
 
 **Process device data where it is produced.**
 
-rekuiper is a small SQL engine that sits between your devices and your cloud. It filters, aggregates, and routes live data on the gateway itself, so you send upstream only what matters.
+rekuiper is a single-binary **MQTT rule engine** and **streaming SQL processor** written in **Rust**. It sits between your devices and your cloud—filtering, aggregating, and routing live telemetry over MQTT, Kafka, HTTP, Modbus, and OPC-UA on the gateway itself, so you send upstream only what matters.
 
 [![Release](https://img.shields.io/badge/release-v1.0.0--rc4-blue.svg)](https://github.com/Indus-Stack/rekuiper/releases)
 [![Rust CI](https://github.com/Indus-Stack/rekuiper/actions/workflows/ci.yml/badge.svg)](https://github.com/Indus-Stack/rekuiper/actions/workflows/ci.yml)
 [![License: MIT or Apache-2.0](https://img.shields.io/badge/license-MIT%20%2F%20Apache--2.0-yellow.svg)](LICENSE)
 [![Docker Pulls](https://img.shields.io/docker/pulls/indusstack/rekuiper?color=blue&logo=docker)](https://hub.docker.com/r/indusstack/rekuiper)
 
-[Documentation](https://rekuiper.indramqtt.com) · [Run the demo](#try-it-in-60-seconds) · [Is it a fit?](#is-it-a-fit) · [Coming from eKuiper?](#coming-from-ekuiper)
+[Documentation](https://rekuiper.indramqtt.com) · [Run the demo](#try-it-in-60-seconds) · [Benchmarks](#measured-on-one-cpu-core) · [Is it a fit?](#is-it-a-fit) · [Coming from eKuiper?](#coming-from-ekuiper)
 
 ---
 
-## Where it fits
+## Where the rule engine fits
 
 ![Where rekuiper fits: devices and feeds on the left, rekuiper on the gateway in the middle, destinations on the right](docs/en_US/public/diagrams/where-it-fits.svg)
 
-You write a rule in SQL. rekuiper runs it on every message as the message arrives. You add, change, and remove rules through a REST API while the engine runs.
+You write a rule in SQL. The Rust rule engine runs it on every MQTT message or sensor reading as it arrives. You add, change, and remove rules through a REST API or declarative GitOps files while the engine runs.
 
 What changes when you put it in the path:
 
@@ -61,7 +61,7 @@ curl -X POST http://localhost:9081/streams \
   -d '{"sql": "CREATE STREAM demo () WITH (TYPE=\"simulator\", CONF_KEY=\"demo\")"}'
 ```
 
-**4. Add a rule that turns every five seconds of readings into one row.**
+**4. Add a SQL rule that turns every five seconds of readings into one row.**
 
 ```bash
 curl -X POST http://localhost:9081/rules \
@@ -83,13 +83,13 @@ docker logs -f rekuiper
 [RULE five_second_summary] Matched record: {"readings": Number(49), "avg_temp": Number(23.03)}
 ```
 
-About fifty readings go in. One row comes out. To send that row to MQTT, Kafka, or a database, replace `log` with another action.
+About fifty readings go in. One row comes out. To route that row to an MQTT broker, Kafka topic, or time-series database, replace `log` with another sink action.
 
 Next: [Getting Started Guide](docs/en_US/getting_started/getting_started.md)
 
 ---
 
-## Common patterns
+## Common MQTT & edge rule patterns
 
 Each pattern is one or two SQL rules.
 
@@ -116,9 +116,9 @@ GROUP BY deviceId, TUMBLINGWINDOW(ss, 60)
 | Use rekuiper when | Look elsewhere when |
 | :--- | :--- |
 | Your data arrives via MQTT, HTTP, WebSocket, Kafka, AMQP, OTLP, Modbus TCP/RTU, or OPC-UA. | You need legacy proprietary fieldbus drivers (such as BACnet or Profibus). Put a protocol gateway in front and publish to MQTT. |
-| You want the logic in SQL, and you want to change it at runtime. | You need a visual flow builder for people who do not write SQL. |
+| You want the rule logic in SQL, and you want to change it at runtime. | You need a visual flow builder for people who do not write SQL. |
 | The machine has one or two CPU cores and limited memory. | You need a distributed cluster that scales across many nodes. rekuiper runs on one node. |
-| You need time windows, joins, and rules that keep state. | You only need to collect metrics and forward them without processing. |
+| You need time windows, stream joins, and rules that keep state in a native Rust binary. | You only need to collect metrics and forward them without processing. |
 
 ---
 
@@ -131,9 +131,9 @@ All tests run in a container limited to one CPU core and 1 GiB of RAM.
 | End-to-end streaming SQL throughput | 1,085,885 events per second (460 ms for 500k records) | 1.0.0-rc4 |
 | Zero-parse in-process SQL pipeline | 2,207,367 events per second (226 ms for 500k records) | 1.0.0-rc4 |
 | Parallel rules on one stream | 1,000 rules, 500,000 evaluations per second | 0.505 |
-| MQTT throughput, single rule | 150,000 to 200,000 messages per second | 0.500 |
+| MQTT rule throughput, single rule | 150,000 to 200,000 messages per second | 0.500 |
 | Heap memory under load | 4.4 to 10.2 MiB | 0.500 |
-| Footprint | One static binary, about 30 MB | 1.0.0-rc4 |
+| Footprint | One static Rust binary, about 30 MB | 1.0.0-rc4 |
 
 Full method, hardware limits, and comparisons with eKuiper, Telegraf, and Redpanda Connect: [Benchmark Overview](docs/en_US/benchmarks/overview.md).
 
@@ -155,15 +155,15 @@ Details: [Sources](docs/en_US/guide/sources/overview.md) · [Sinks](docs/en_US/g
 
 ---
 
-## What else is in the box
+## Architecture & Engine Capabilities
 
-- **Stream SQL.** Tumbling, hopping, sliding, count, and session windows. Stream-to-stream, stream-to-table, and temporal `ASOF JOIN` / `LEFT ASOF JOIN`. A rich library of **221 built-in functions** (including DFA CEP `sequence_match`/`sequence_count`, CompactDdSketch percentiles, Welford variance, and vector math). See the [SQL Reference](docs/en_US/sqls/overview.md).
-- **High-Throughput Zero-Clone Engine.** Zero-clone borrowed WHERE comparisons, register-level arithmetic evaluation (`try_eval_numeric_fast`), and reference-counted `SharedMap` CoW across rules.
+- **Stream SQL.** Tumbling, hopping, sliding, count, and session windows. Stream-to-stream, stream-to-table, and temporal `ASOF JOIN` / `LEFT ASOF JOIN`. A library of **221 built-in functions** (including DFA CEP `sequence_match`/`sequence_count`, CompactDdSketch percentiles, Welford variance, and vector math). See the [SQL Reference](docs/en_US/sqls/overview.md).
+- **High-Throughput Zero-Clone Engine.** Zero-clone borrowed WHERE comparisons, register-level arithmetic evaluation (`try_eval_numeric_fast`), and reference-counted `SharedMap` copy-on-write across rules.
 - **Rete-Lite StreamBus Routing.** Single-subscriber lock-free channel fast-paths and multi-rule indexable predicate routing.
 - **Parquet Columnar Buffering.** Automatic batch buffering with Arrow RecordBatch output and internal metadata isolation.
 - **Bounded memory.** Queues between sources, rules, and sinks have fixed sizes. A slow destination slows the source; it does not fill the memory.
 - **Declarative GitOps & Dead-Letter Queues (DLQ).** Run in read-only GitOps mode (`--declarative`) with automatic file watching, and isolate poison-pill records across 5 pipeline stages (`GET/DELETE /rules/:id/errors`).
-- **Extensions.** Write SQL functions as sandboxed WebAssembly modules.
+- **Extensions.** Write custom SQL functions as sandboxed WebAssembly modules.
 - **Secrets.** Read credentials from HashiCorp Vault or environment variables.
 - **Operations & Fleet Management.** Prometheus metrics, a self-contained Web UI (`GET /ui`), an interactive terminal dashboard (`rekuiper top`), a Helm chart, a `rekuiper` / `kuiper` CLI, a centralized Fleet Control Plane with staged canary rollouts, and the Visual Stream DAG Studio with real-time wire-tap telemetry.
 - **AI tooling.** A Model Context Protocol (MCP) server (`rekuiper-mcp`) exposing **57 tools** (including `explain_pipeline_profile`, fleet rollouts, and visual DAG inspection), 25 live resources, and 12 prompt workflows. See [MCP](docs/en_US/mcp/overview.md).

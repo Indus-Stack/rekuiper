@@ -4,11 +4,14 @@ layout: home
 hero:
   name: rekuiper
   text: Process Industrial & IoT Device Data Where It Is Produced.
-  tagline: rekuiper is a single-binary Rust SQL stream processing engine. It runs on edge gateways between devices and cloud networks. It filters, downsamples, joins, and routes live MQTT, Modbus, OPC-UA, and HTTP telemetry at 1,000,000–2,200,000+ events per second per core. Act in sub-milliseconds and transmit only relevant data.
+  tagline: rekuiper is a single-binary MQTT rule engine and streaming SQL processor written in Rust. It runs on edge gateways between devices and cloud networks—filtering, aggregating, and routing live MQTT, Kafka, Modbus, and OPC-UA telemetry at 1,000,000–2,200,000+ events per second per core.
   actions:
     - theme: brand
       text: Run the 60-Second Demo
       link: /#try-it-in-60-seconds
+    - theme: alt
+      text: Star on GitHub
+      link: https://github.com/Indus-Stack/rekuiper
     - theme: alt
       text: Migrate from eKuiper
       link: /operation/migration

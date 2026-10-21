@@ -680,6 +680,36 @@ pub async fn auth_guard(
         return next.run(request).await;
     }
 
+    // If upstream JWT authentication is enabled, enforce strict upstream wire-compatibility:
+    if auth_enabled {
+        let Some(header_val) = request
+            .headers()
+            .get(header::AUTHORIZATION)
+            .and_then(|v| v.to_str().ok())
+        else {
+            return (StatusCode::UNAUTHORIZED, "Missing authorization header\n").into_response();
+        };
+        if header_val.starts_with("Bearer ") || header_val.starts_with("bearer ") {
+            return (
+                StatusCode::UNAUTHORIZED,
+                "Bearer token is not supported, please use raw JWT token\n",
+            )
+                .into_response();
+        }
+        let Some(key_der) = load_auth_public_key() else {
+            return (
+                StatusCode::UNAUTHORIZED,
+                "Authentication misconfigured: public key not found\n",
+            )
+                .into_response();
+        };
+        return match verify_jwt_raw(header_val.trim(), &key_der) {
+            Ok(()) => next.run(request).await,
+            Err(msg) => (StatusCode::UNAUTHORIZED, msg).into_response(),
+        };
+    }
+
+    // Otherwise, check UI password and fleet token authentication:
     let query_token = request.uri().query().and_then(|q| {
         q.split('&').find_map(|pair| {
             let mut parts = pair.split('=');
@@ -710,11 +740,7 @@ pub async fn auth_guard(
     };
 
     let Some(token) = token_candidate else {
-        return (
-            StatusCode::UNAUTHORIZED,
-            "Missing authorization header or token\n",
-        )
-            .into_response();
+        return (StatusCode::UNAUTHORIZED, "Missing authorization header\n").into_response();
     };
 
     // If a UI custom password is configured, check if it matches
@@ -728,15 +754,6 @@ pub async fn auth_guard(
     if let Some(ref ft) = fleet_token {
         if token == ft {
             return next.run(request).await;
-        }
-    }
-
-    // If JWT authentication is enabled, check the raw JWT
-    if auth_enabled {
-        if let Some(key_der) = load_auth_public_key() {
-            if verify_jwt_raw(token, &key_der).is_ok() {
-                return next.run(request).await;
-            }
         }
     }
 

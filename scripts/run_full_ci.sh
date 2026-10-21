@@ -15,7 +15,8 @@ cd "$DST"
 echo "=== [2/5] Running cargo fmt check ==="
 cargo fmt --all -- --check || (echo "Formatting files..." && cargo fmt --all && rsync -av --include="*/" --include="*.rs" --exclude="*" "$DST/crates/" "$SRC/crates/")
 
-echo "=== [3/5] Checking Core Crates Zero-Ignore Isolation ==="
+echo "=== [3/5] Checking Core Crates Zero-Ignore Isolation & RustSec Advisories ==="
+cargo deny check advisories
 if cargo tree -p rekuiper-core -p rekuiper-sql -i rustls@0.21.12 2>/dev/null; then
   echo "ERROR: rustls 0.21.12 found in core crates"
   exit 1
@@ -28,7 +29,7 @@ if cargo tree -p rekuiper-core -p rekuiper-sql -i rustls-webpki@0.102.8 2>/dev/n
   echo "ERROR: rustls-webpki 0.102.8 found in core crates"
   exit 1
 fi
-echo "Isolation check PASSED."
+echo "Advisories and Isolation checks PASSED."
 
 echo "=== [4/5] Running Clippy Warnings Check ==="
 cargo clippy --workspace --all-targets --target-dir /home/paanday/target -- -D warnings
@@ -45,7 +46,7 @@ echo ">>> Testing rekuiper-server lib & core integration suites <<<"
 cargo test -p rekuiper-server --lib --target-dir /home/paanday/target
 rm -rf /home/paanday/target
 
-cargo test -p rekuiper-server --test test_otlp_and_ui --test test_declarative_mode --test test_rule_lifecycle --test test_dlq_poison_pill --target-dir /home/paanday/target
+cargo test -p rekuiper-server --test test_otlp_and_ui --test test_declarative_mode --test test_rule_lifecycle --test test_dlq_poison_pill --test fvt_compat --target-dir /home/paanday/target -- test_jwt_authentication_vectors
 rm -rf /home/paanday/target
 
 echo ">>> Testing kuiperd <<<"

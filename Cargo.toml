@@ -16,12 +16,13 @@ version = "1.0.0-rc4"
 edition = "2021"
 authors = ["I-Dacs Labs <measure@i-dacs.com>", "rekuiper contributors"]
 license = "MIT OR Apache-2.0"
+description = "Single-binary Rust MQTT rule engine and streaming SQL processor for edge gateways."
 repository = "https://github.com/Indus-Stack/rekuiper"
-homepage = "https://i-dacs.com"
-documentation = "https://github.com/Indus-Stack/rekuiper#documentation"
+homepage = "https://rekuiper.indramqtt.com"
+documentation = "https://rekuiper.indramqtt.com"
 readme = "README.md"
-keywords = ["iot", "stream-processing", "edge-computing", "sql", "mqtt"]
-categories = ["embedded", "network-programming", "science"]
+keywords = ["mqtt", "rule-engine", "sql", "stream-processing", "iot"]
+categories = ["network-programming", "database", "embedded", "asynchronous"]
 
 
 [workspace.dependencies]
