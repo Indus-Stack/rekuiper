@@ -3,12 +3,22 @@ use clap::Parser;
 use rekuiper_conf::PathConfig;
 
 #[derive(Parser, Debug)]
-#[command(name = "rekuiperd")]
-#[command(about = "rekuiper Daemon - High-performance edge stream processing engine in Rust (kuiperd drop-in)", long_about = None)]
+#[command(name = "rule-engine")]
+#[command(
+    about = "rule-engine Daemon - High-performance edge stream processing engine and MQTT rule engine in Rust (rekuiper / eKuiper drop-in)",
+    long_about = None
+)]
 pub struct Args {
+    #[command(subcommand)]
+    pub command: Option<Commands>,
+
     /// Path of etc dir
     #[arg(long, default_value = "etc")]
     pub etc: String,
+
+    /// Scaffold default configuration files into the target etc directory and exit
+    #[arg(long)]
+    pub init: bool,
 
     /// Path of data dir
     #[arg(long, default_value = "data")]
@@ -76,10 +86,75 @@ pub struct Args {
     pub ui_password: Option<String>,
 }
 
+#[derive(clap::Subcommand, Debug)]
+pub enum Commands {
+    /// Scaffold and write default configuration files (kuiper.yaml and connector configurations)
+    Init {
+        /// Target directory where configuration files will be written (default: "etc")
+        #[arg(short, long, default_value = "etc")]
+        dir: String,
+
+        /// Overwrite existing configuration files
+        #[arg(short, long, default_value_t = false)]
+        force: bool,
+    },
+}
+
+const DEFAULT_KUIPER_YAML: &str = include_str!("../../../etc/kuiper.yaml");
+const DEFAULT_MQTT_SOURCE_YAML: &str = include_str!("../../../etc/mqtt_source.yaml");
+const DEFAULT_CLIENT_YAML: &str = include_str!("../../../etc/client.yaml");
+
+/// Scaffolds configuration directory and default YAML files for quickstart.
+pub fn scaffold_config(target_dir: &str, force: bool) -> Result<()> {
+    let base = std::path::Path::new(target_dir);
+    std::fs::create_dir_all(base)?;
+
+    let files = [
+        ("kuiper.yaml", DEFAULT_KUIPER_YAML),
+        ("mqtt_source.yaml", DEFAULT_MQTT_SOURCE_YAML),
+        ("client.yaml", DEFAULT_CLIENT_YAML),
+    ];
+
+    println!("Scaffolding configuration in '{}/':", target_dir);
+    for (filename, content) in files {
+        let file_path = base.join(filename);
+        if file_path.exists() && !force {
+            println!(
+                "  [SKIP] {} already exists (use --force to overwrite)",
+                file_path.display()
+            );
+        } else {
+            std::fs::write(&file_path, content)?;
+            println!("  [CREATED] {}", file_path.display());
+        }
+    }
+
+    if target_dir == "etc" {
+        let _ = std::fs::create_dir_all("data");
+        let _ = std::fs::create_dir_all("log");
+        println!("  [CREATED] ./data/");
+        println!("  [CREATED] ./log/");
+    }
+
+    println!("\nConfiguration complete! You can now start the daemon:");
+    println!("  rule-engine");
+    println!("  # or: kuiperd\n");
+
+    Ok(())
+}
+
 pub async fn run_daemon() -> Result<()> {
+    let args = Args::parse();
+
+    if let Some(Commands::Init { dir, force }) = args.command {
+        return scaffold_config(&dir, force);
+    }
+    if args.init {
+        return scaffold_config(&args.etc, false);
+    }
+
     tracing_subscriber::fmt::init();
 
-    let args = Args::parse();
     let paths = PathConfig::new(Some(&args.etc), Some(&args.data), Some(&args.log));
     let config = paths.load_config()?;
 

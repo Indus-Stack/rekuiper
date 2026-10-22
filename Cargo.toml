@@ -8,6 +8,8 @@ members = [
     "crates/rekuiper-cli",
     "crates/kuiperd",
     "crates/rekuiper-mcp",
+    "crates/rule-engine",
+    "crates/ruleengine",
 ]
 resolver = "2"
 
@@ -65,11 +67,13 @@ boa_engine = "0.20"
 yamux = "0.13"
 
 # Internal crate dependencies
-rekuiper-core = { path = "crates/rekuiper-core" }
-rekuiper-sql = { path = "crates/rekuiper-sql" }
-rekuiper-conf = { path = "crates/rekuiper-conf" }
-rekuiper-connectors = { path = "crates/rekuiper-connectors" }
-rekuiper-server = { path = "crates/rekuiper-server" }
+rekuiper-core = { path = "crates/rekuiper-core", version = "1.0.0-rc4" }
+rekuiper-sql = { path = "crates/rekuiper-sql", version = "1.0.0-rc4" }
+rekuiper-conf = { path = "crates/rekuiper-conf", version = "1.0.0-rc4" }
+rekuiper-connectors = { path = "crates/rekuiper-connectors", version = "1.0.0-rc4" }
+rekuiper-server = { path = "crates/rekuiper-server", version = "1.0.0-rc4" }
+kuiperd = { path = "crates/kuiperd", version = "1.0.0-rc4" }
+rule-engine = { path = "crates/rule-engine", version = "1.0.0-rc4" }
 
 [profile.release]
 opt-level = 3

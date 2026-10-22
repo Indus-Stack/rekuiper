@@ -1,0 +1,22 @@
+[package]
+name = "ruleengine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "High-performance edge stream processing engine and MQTT rule engine daemon (alias for rule-engine / rekuiper)"
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+keywords.workspace = true
+categories.workspace = true
+readme = "README.md"
+
+[[bin]]
+name = "ruleengine"
+path = "src/main.rs"
+
+[dependencies]
+kuiperd = { workspace = true }
+tokio = { workspace = true }
+anyhow = { workspace = true }
