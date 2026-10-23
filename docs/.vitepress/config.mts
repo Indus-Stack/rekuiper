@@ -20,10 +20,10 @@ function transformSidebar(items: DirectoryItem[]): any[] {
           ? item.path
           : `/${item.path}`;
     }
-    if (item.collapsed !== undefined) {
-      entry.collapsed = item.collapsed;
-    }
     if (item.children && item.children.length > 0) {
+      // Keep all menu and sub-menu groups collapsed by default when not in use.
+      // VitePress automatically expands the active group matching the current route.
+      entry.collapsed = true;
       entry.items = transformSidebar(item.children);
     }
     return entry;

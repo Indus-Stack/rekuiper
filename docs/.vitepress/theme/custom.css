@@ -132,5 +132,40 @@ html:not(.dark) .vp-doc div[class*='language-'] span {
   white-space: nowrap !important;
 }
 
+/* Sidebar Accordion & Modern Navigation Enhancements */
+.VPSidebar {
+  scrollbar-width: thin;
+  scrollbar-color: var(--vp-c-border) transparent;
+}
+
+.VPSidebarItem.level-0 > .item {
+  padding-top: 6px;
+  padding-bottom: 6px;
+}
+
+.VPSidebarItem.level-0 .text {
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.VPSidebarItem.collapsible .caret {
+  transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1), background-color 0.2s ease;
+  border-radius: 4px;
+}
+
+.VPSidebarItem.collapsible .caret:hover {
+  background-color: var(--vp-c-brand-soft);
+  color: var(--vp-c-brand-1);
+}
+
+.VPSidebarItem.is-active > .item .text {
+  color: var(--vp-c-brand-1) !important;
+  font-weight: 600 !important;
+}
+
+.VPSidebarItem.level-0.has-active > .item .text {
+  color: var(--vp-c-brand-1);
+}
+
 
 

@@ -1,0 +1,88 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 440" width="100%" height="auto" role="img" aria-labelledby="t d" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+  <title id="t">Rekuiper Fleet Control Plane Multiplexing Architecture</title>
+  <desc id="d">Outbound Edge WebSocket and Yamux Multiplexed Streams connecting edge Kuiperd agent to Rekuiper Server Control Plane.</desc>
+
+  <defs>
+    <linearGradient id="cpGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#2563eb" />
+      <stop offset="100%" stop-color="#1d4ed8" />
+    </linearGradient>
+    <linearGradient id="edgeGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0f172a" />
+      <stop offset="100%" stop-color="#1e293b" />
+    </linearGradient>
+    <filter id="shadow" x="-5%" y="-5%" width="110%" height="110%">
+      <feDropShadow dx="0" dy="4" stdDeviation="4" flood-color="#0f172a" flood-opacity="0.08" />
+    </filter>
+  </defs>
+
+  <!-- Title & Background -->
+  <rect x="0" y="0" width="880" height="440" fill="#f8fafc" stroke="#e2e8f0" stroke-width="1" rx="12" />
+  <text x="440" y="36" text-anchor="middle" font-size="16" font-weight="700" fill="#0f172a" letter-spacing="-0.01em">Rekuiper Fleet Control Plane Multiplexing Architecture</text>
+  <text x="440" y="56" text-anchor="middle" font-size="12" fill="#64748b">Outbound Edge WebSocket &amp; Yamux Multiplexed Streams</text>
+
+  <!-- Control Plane Box -->
+  <g filter="url(#shadow)">
+    <rect x="40" y="90" width="280" height="310" rx="10" fill="#ffffff" stroke="#2563eb" stroke-width="2" />
+    <rect x="40" y="90" width="280" height="42" rx="10" fill="url(#cpGrad)" />
+    <text x="180" y="117" text-anchor="middle" font-size="14" font-weight="700" fill="#ffffff">Rekuiper Server (Control Plane)</text>
+    
+    <!-- Internal components -->
+    <rect x="60" y="148" width="240" height="44" rx="6" fill="#eff6ff" stroke="#bfdbfe" stroke-width="1" />
+    <text x="180" y="174" text-anchor="middle" font-size="12" font-weight="600" fill="#1e40af">Fleet Manager (AppState / kv.rs)</text>
+    
+    <rect x="60" y="202" width="240" height="44" rx="6" fill="#eff6ff" stroke="#bfdbfe" stroke-width="1" />
+    <text x="180" y="228" text-anchor="middle" font-size="12" font-weight="600" fill="#1e40af">Staged Rollout &amp; Canary Engine</text>
+
+    <rect x="60" y="256" width="240" height="44" rx="6" fill="#eff6ff" stroke="#bfdbfe" stroke-width="1" />
+    <text x="180" y="282" text-anchor="middle" font-size="12" font-weight="600" fill="#1e40af">Remote HTTP Proxy Router</text>
+
+    <rect x="60" y="310" width="240" height="70" rx="6" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1" />
+    <text x="180" y="332" text-anchor="middle" font-size="11" font-weight="600" fill="#334155">Server Yamux Acceptor</text>
+    <text x="180" y="352" text-anchor="middle" font-size="11" fill="#64748b">GET /fleet/ws (WebSocket)</text>
+    <text x="180" y="368" text-anchor="middle" font-size="10" fill="#059669">Session Manager &amp; Driver</text>
+  </g>
+
+  <!-- Network Channel (Yamux Multiplexing) -->
+  <g>
+    <!-- Multiplexed pipe -->
+    <rect x="340" y="195" width="200" height="100" rx="8" fill="#f1f5f9" stroke="#cbd5e1" stroke-dasharray="4,4" />
+    <text x="440" y="218" text-anchor="middle" font-size="12" font-weight="700" fill="#0f172a">TLS WebSocket Channel</text>
+    <text x="440" y="234" text-anchor="middle" font-size="10" fill="#64748b">Yamux Multiplexing</text>
+
+    <!-- Stream 0 Line -->
+    <path d="M 320 252 L 560 252" stroke="#2563eb" stroke-width="2.5" />
+    <polygon points="560,252 552,248 552,256" fill="#2563eb" />
+    <polygon points="320,252 328,248 328,256" fill="#2563eb" />
+    <text x="440" y="248" text-anchor="middle" font-size="10" font-weight="600" fill="#2563eb">Stream 0: Heartbeats &amp; Snapshot Commands</text>
+
+    <!-- Stream 1..N Line -->
+    <path d="M 320 276 L 560 276" stroke="#059669" stroke-width="2" stroke-dasharray="3,3" />
+    <polygon points="560,276 552,272 552,280" fill="#059669" />
+    <polygon points="320,276 328,272 328,280" fill="#059669" />
+    <text x="440" y="290" text-anchor="middle" font-size="10" font-weight="600" fill="#059669">Streams 1..N: On-demand HTTP Proxy Tunnel</text>
+  </g>
+
+  <!-- Edge Gateways Box -->
+  <g filter="url(#shadow)">
+    <rect x="560" y="90" width="280" height="310" rx="10" fill="#ffffff" stroke="#0f172a" stroke-width="2" />
+    <rect x="560" y="90" width="280" height="42" rx="10" fill="url(#edgeGrad)" />
+    <text x="700" y="117" text-anchor="middle" font-size="14" font-weight="700" fill="#ffffff">Edge Kuiperd Agent</text>
+
+    <!-- Edge Internal Components -->
+    <rect x="580" y="148" width="240" height="44" rx="6" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1" />
+    <text x="700" y="174" text-anchor="middle" font-size="12" font-weight="600" fill="#0f172a">Outbound Agent Reconnect Loop</text>
+
+    <rect x="580" y="202" width="240" height="44" rx="6" fill="#ecfdf5" stroke="#a7f3d0" stroke-width="1" />
+    <text x="700" y="222" text-anchor="middle" font-size="11" font-weight="600" fill="#065f46">Declarative Snapshot Engine</text>
+    <text x="700" y="238" text-anchor="middle" font-size="10" fill="#047857">Watchdog &amp; Auto-Rollback</text>
+
+    <rect x="580" y="256" width="240" height="44" rx="6" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1" />
+    <text x="700" y="282" text-anchor="middle" font-size="12" font-weight="600" fill="#0f172a">Local Axum HTTP Router</text>
+
+    <rect x="580" y="310" width="240" height="70" rx="6" fill="#eff6ff" stroke="#bfdbfe" stroke-width="1" />
+    <text x="700" y="332" text-anchor="middle" font-size="11" font-weight="600" fill="#1e40af">Telemetry Reporter</text>
+    <text x="700" y="352" text-anchor="middle" font-size="10" fill="#64748b">10s Heartbeats: CPU / Mem / Rules / DLQ</text>
+    <text x="700" y="368" text-anchor="middle" font-size="10" fill="#2563eb">Active Snapshot Hash Verification</text>
+  </g>
+</svg>

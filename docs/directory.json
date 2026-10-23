@@ -144,7 +144,7 @@
     },
     {
       "title": "Compare",
-      "collapsed": false,
+      "collapsed": true,
       "children": [
         {
           "title": "rekuiper vs. LF Edge eKuiper",
