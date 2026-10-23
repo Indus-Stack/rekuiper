@@ -104,18 +104,12 @@ export default withMermaid(
       {
         text: 'Docs',
         items: [
-          { text: 'Quick Start', link: '/getting_started/getting_started' },
-          { text: 'Installation & Deployment', link: '/installation' },
-          { text: 'MQTT Rule Engine Architecture', link: '/mqtt-rule-engine' },
-          { text: 'Core Concepts & SQL', link: '/concepts/rekuiper' },
-          { text: 'Native Connectors', link: '/guide/connector' },
-          { text: 'Declarative GitOps Mode', link: '/operation/declarative_gitops' },
-          { text: 'Built-in Web UI & Observability', link: '/operation/observability_ui_top' },
-          { text: 'Fleet Management & Control Plane', link: '/operation/fleet_management' },
-          { text: 'Visual Pipeline Studio', link: '/guide/rules/visual_studio' },
-          { text: 'Rule Designer & Schema Builder', link: '/guide/rules/designer_and_schema_builder' },
-          { text: 'REST API & CLI Reference', link: '/api/restapi/overview' },
-          { text: 'Interactive OpenAPI / Swagger UI', link: '/api/swagger' }
+          { text: '1. Getting Started & Architecture', link: '/concepts/rekuiper' },
+          { text: '2. Core Streaming & Rules', link: '/concepts/rules' },
+          { text: '3. Connectors & I/O Hub', link: '/guide/connector' },
+          { text: '4. SQL Language & Functions', link: '/sqls/overview' },
+          { text: '5. Visual Studio, Web UI & AI', link: '/guide/rules/visual_studio' },
+          { text: '6. Operations & API Reference', link: '/operation/overview' }
         ]
       },
       { text: 'AI & MCP', link: '/mcp/overview' },

@@ -2,11 +2,11 @@
   "cn": [],
   "en": [
     {
-      "title": "Introduction",
+      "title": "Getting Started & Architecture",
       "path": "./",
       "children": [
         {
-          "title": "Architecture",
+          "title": "Architecture Overview",
           "path": "concepts/rekuiper"
         },
         {
@@ -14,26 +14,124 @@
           "path": "mqtt-rule-engine"
         },
         {
+          "title": "Installation & Deployment",
+          "path": "installation"
+        },
+        {
+          "title": "Getting Started",
+          "path": "getting_started/getting_started"
+        },
+        {
+          "title": "5 Minutes Quick Start",
+          "path": "getting_started/quick_start_docker"
+        },
+        {
+          "title": "How to Debug Rules",
+          "path": "getting_started/debug_rules"
+        },
+        {
+          "title": "Reliability & Qualification Scope",
+          "path": "reliability/qualification_and_scope"
+        },
+        {
+          "title": "Differential Qualification & Chaos Testing",
+          "path": "guide/differential_testing"
+        },
+        {
+          "title": "Comparisons & Migration",
+          "children": [
+            {
+              "title": "rekuiper vs. LF Edge eKuiper",
+              "path": "compare/rekuiper-vs-ekuiper"
+            },
+            {
+              "title": "rekuiper vs. Node-RED & Vector",
+              "path": "compare/rekuiper-vs-nodered-vector"
+            },
+            {
+              "title": "eKuiper Compatibility & Enhancements",
+              "path": "concepts/ekuiper_compatibility"
+            },
+            {
+              "title": "Migration & Modernization Guide",
+              "path": "operation/migration"
+            }
+          ]
+        },
+        {
+          "title": "Performance Benchmarks",
+          "path": "benchmarks/overview",
+          "children": [
+            {
+              "title": "Benchmark Overview",
+              "path": "benchmarks/overview"
+            },
+            {
+              "title": "Single-Rule MQTT Throughput",
+              "path": "benchmarks/throughput"
+            },
+            {
+              "title": "Concurrent Parallel Rules",
+              "path": "benchmarks/parallel_rules"
+            }
+          ]
+        },
+        {
           "title": "Frequently Asked Questions (FAQ)",
           "path": "faq"
         },
         {
-          "title": "eKuiper Compatibility & Enhancements",
-          "path": "concepts/ekuiper_compatibility"
-        },
+          "title": "Contributing Guide",
+          "path": "CONTRIBUTING"
+        }
+      ]
+    },
+    {
+      "title": "Core Streaming & Rules",
+      "path": "concepts/rules",
+      "children": [
         {
-          "title": "Migration & Modernization Guide",
-          "path": "operation/migration"
-        },
-        {
-          "title": "Interactive OpenAPI / Swagger UI",
-          "path": "api/swagger"
-        },
-        {
-          "title": "Stream Processing",
-          "path": "concepts/streaming/overview",
-          "collapsed": true,
+          "title": "Rules & Topologies",
+          "path": "guide/rules/overview",
           "children": [
+            {
+              "title": "Rules Overview",
+              "path": "guide/rules/overview"
+            },
+            {
+              "title": "Rule Processing Model",
+              "path": "concepts/rules"
+            },
+            {
+              "title": "Rule Pipelines",
+              "path": "guide/rules/rule_pipeline"
+            },
+            {
+              "title": "Graph Rules (DAG)",
+              "path": "guide/rules/graph_rule"
+            },
+            {
+              "title": "State and Fault Tolerance",
+              "path": "guide/rules/state_and_fault_tolerance"
+            },
+            {
+              "title": "Incremental Calculation",
+              "path": "guide/rules/incremental"
+            },
+            {
+              "title": "Dead-Letter Queues (DLQ) & Isolation",
+              "path": "guide/rules/error_handling_dlq"
+            }
+          ]
+        },
+        {
+          "title": "Stream Processing Concepts",
+          "path": "concepts/streaming/overview",
+          "children": [
+            {
+              "title": "Stream Processing Overview",
+              "path": "concepts/streaming/overview"
+            },
             {
               "title": "Time Attribute",
               "path": "concepts/streaming/time"
@@ -49,130 +147,35 @@
           ]
         },
         {
-          "title": "Key Concepts",
-          "collapsed": true,
+          "title": "Streams (Unbounded Events)",
+          "path": "guide/streams/overview",
           "children": [
             {
-              "title": "Rules",
-              "path": "concepts/rules"
+              "title": "Stream Sources Concept",
+              "path": "concepts/sources/overview"
             },
             {
-              "title": "Sources",
-              "path": "concepts/sources/overview",
-              "children": [
-                {
-                  "title": "Stream",
-                  "path": "concepts/sources/stream"
-                },
-                {
-                  "title": "Table",
-                  "path": "concepts/sources/table"
-                }
-              ]
+              "title": "Streams Overview",
+              "path": "guide/streams/overview"
             },
             {
-              "title": "Sinks",
-              "path": "concepts/sinks"
-            },
-            {
-              "title": "SQL Queries",
-              "path": "concepts/sql"
-            },
-            {
-              "title": "Extensions",
-              "path": "concepts/extensions"
+              "title": "Stream Definitions",
+              "path": "concepts/sources/stream"
             }
           ]
         },
         {
-          "title": "Contributing Guide",
-          "path": "CONTRIBUTING"
-        }
-      ]
-    },
-    {
-      "title": "Getting Started",
-      "path": "getting_started/getting_started",
-      "children": [
-        {
-          "title": "5 Minutes Quick Start",
-          "path": "getting_started/quick_start_docker"
-        },
-        {
-          "title": "Migration & Modernization Guide",
-          "path": "operation/migration"
-        },
-        {
-          "title": "Run rekuiper with EdgeX Foundry",
-          "path": "edgex/edgex_rule_engine_tutorial"
-        },
-        {
-          "title": "How to Debug Rules",
-          "path": "getting_started/debug_rules"
-        },
-        {
-          "title": "Reliability & Qualification Scope",
-          "path": "reliability/qualification_and_scope"
-        },
-        {
-          "title": "Differential Qualification & Chaos Testing",
-          "path": "guide/differential_testing"
-        }
-      ]
-    },
-    {
-      "title": "Installation",
-      "path": "installation"
-    },
-    {
-      "title": "Benchmarks",
-      "path": "benchmarks/overview",
-      "children": [
-        {
-          "title": "Benchmark Overview",
-          "path": "benchmarks/overview"
-        },
-        {
-          "title": "Single-Rule MQTT Throughput",
-          "path": "benchmarks/throughput"
-        },
-        {
-          "title": "Concurrent Parallel Rules",
-          "path": "benchmarks/parallel_rules"
-        }
-      ]
-    },
-    {
-      "title": "Compare",
-      "collapsed": true,
-      "children": [
-        {
-          "title": "rekuiper vs. LF Edge eKuiper",
-          "path": "compare/rekuiper-vs-ekuiper"
-        },
-        {
-          "title": "rekuiper vs. Node-RED & Vector",
-          "path": "compare/rekuiper-vs-nodered-vector"
-        },
-        {
-          "title": "Migration & Modernization Guide",
-          "path": "operation/migration"
-        }
-      ]
-    },
-    {
-      "title": "Rules",
-      "path": "guide/rules/overview",
-      "children": [
-        {
-          "title": "Stream: unbounded series of events",
-          "path": "guide/streams/overview"
-        },
-        {
-          "title": "Table: snapshot of events",
+          "title": "Tables (Snapshot State)",
           "path": "guide/tables/overview",
-          "collapsed": true,
           "children": [
+            {
+              "title": "Table Sources Concept",
+              "path": "concepts/sources/table"
+            },
+            {
+              "title": "Tables Overview",
+              "path": "guide/tables/overview"
+            },
             {
               "title": "Scan Table",
               "path": "guide/tables/scan"
@@ -184,38 +187,13 @@
           ]
         },
         {
-          "title": "Graph Rule",
-          "path": "guide/rules/graph_rule"
-        },
-        {
-          "title": "Visual Pipeline Studio",
-          "path": "guide/rules/visual_studio"
-        },
-        {
-          "title": "Rule Designer & Schema Builder",
-          "path": "guide/rules/designer_and_schema_builder"
-        },
-        {
-          "title": "Rule Pipeline",
-          "path": "guide/rules/rule_pipeline"
-        },
-        {
-          "title": "State and Fault Tolerance",
-          "path": "guide/rules/state_and_fault_tolerance"
-        },
-        {
-          "title": "Incremental Calculation",
-          "path": "guide/rules/incremental"
-        },
-        {
-          "title": "Dead-Letter Queues (DLQ) & Poison-Pill Isolation",
-          "path": "guide/rules/error_handling_dlq"
-        },
-        {
-          "title": "Serialization",
+          "title": "Serialization & Schemas",
           "path": "guide/serialization/serialization",
-          "collapsed": true,
           "children": [
+            {
+              "title": "Serialization Formats",
+              "path": "guide/serialization/serialization"
+            },
             {
               "title": "Schema Registry & Multi-Protocol Hub",
               "path": "guide/schemas/schema_registry"
@@ -229,537 +207,289 @@
       ]
     },
     {
-      "title": "Connectors",
+      "title": "Connectors & I/O Hub",
       "path": "guide/connector",
       "children": [
         {
-          "title": "Source Connector",
+          "title": "Source Connectors (19)",
           "path": "guide/sources/overview",
           "children": [
+            {
+              "title": "Sources Overview",
+              "path": "guide/sources/overview"
+            },
             {
               "title": "Down sampling",
               "path": "guide/sources/down_sample"
             },
             {
-              "title": "Built-in & Native Sources",
-              "collapsed": true,
-              "children": [
-                {
-                  "title": "Modbus Source",
-                  "path": "guide/sources/builtin/modbus"
-                },
-                {
-                  "title": "OPC-UA Source",
-                  "path": "guide/sources/builtin/opcua"
-                },
-                {
-                  "title": "OpenTelemetry (OTLP) Source",
-                  "path": "guide/sources/builtin/otlp"
-                },
-                {
-                  "title": "MQTT Source",
-                  "path": "guide/sources/builtin/mqtt"
-                },
-                {
-                  "title": "Kafka Source",
-                  "path": "guide/sources/plugin/kafka"
-                },
-                {
-                  "title": "SQL Source",
-                  "path": "guide/sources/plugin/sql"
-                },
-                {
-                  "title": "HTTP Pull Source",
-                  "path": "guide/sources/builtin/http_pull"
-                },
-                {
-                  "title": "HTTP Push Source",
-                  "path": "guide/sources/builtin/http_push"
-                },
-                {
-                  "title": "File Source",
-                  "path": "guide/sources/builtin/file"
-                },
-                {
-                  "title": "Redis Source",
-                  "path": "guide/sources/builtin/redis"
-                },
-                {
-                  "title": "RedisSub Source",
-                  "path": "guide/sources/builtin/redisSub"
-                },
-                {
-                  "title": "Websocket Source",
-                  "path": "guide/sources/builtin/websocket"
-                },
-                {
-                  "title": "RabbitMQ Source",
-                  "path": "guide/sources/builtin/rabbitmq"
-                },
-                {
-                  "title": "EdgeX Source",
-                  "path": "guide/sources/builtin/edgex"
-                },
-                {
-                  "title": "Memory Source",
-                  "path": "guide/sources/builtin/memory"
-                },
-                {
-                  "title": "Simulator Source",
-                  "path": "guide/sources/builtin/simulator"
-                },
-                {
-                  "title": "ZeroMQ Source",
-                  "path": "guide/sources/plugin/zmq"
-                },
-                {
-                  "title": "Video Source",
-                  "path": "guide/sources/plugin/video"
-                }
-              ]
+              "title": "MQTT Source",
+              "path": "guide/sources/builtin/mqtt"
+            },
+            {
+              "title": "Modbus Source",
+              "path": "guide/sources/builtin/modbus"
+            },
+            {
+              "title": "OPC-UA Source",
+              "path": "guide/sources/builtin/opcua"
+            },
+            {
+              "title": "OpenTelemetry (OTLP) Source",
+              "path": "guide/sources/builtin/otlp"
+            },
+            {
+              "title": "Kafka Source",
+              "path": "guide/sources/plugin/kafka"
+            },
+            {
+              "title": "SQL Source",
+              "path": "guide/sources/plugin/sql"
+            },
+            {
+              "title": "HTTP Pull Source",
+              "path": "guide/sources/builtin/http_pull"
+            },
+            {
+              "title": "HTTP Push Source",
+              "path": "guide/sources/builtin/http_push"
+            },
+            {
+              "title": "File Source",
+              "path": "guide/sources/builtin/file"
+            },
+            {
+              "title": "Redis Source",
+              "path": "guide/sources/builtin/redis"
+            },
+            {
+              "title": "RedisSub Source",
+              "path": "guide/sources/builtin/redisSub"
+            },
+            {
+              "title": "Websocket Source",
+              "path": "guide/sources/builtin/websocket"
+            },
+            {
+              "title": "RabbitMQ Source",
+              "path": "guide/sources/builtin/rabbitmq"
+            },
+            {
+              "title": "EdgeX Source",
+              "path": "guide/sources/builtin/edgex"
+            },
+            {
+              "title": "Memory Source",
+              "path": "guide/sources/builtin/memory"
+            },
+            {
+              "title": "Simulator Source",
+              "path": "guide/sources/builtin/simulator"
+            },
+            {
+              "title": "Random Source",
+              "path": "guide/sources/plugin/random"
+            },
+            {
+              "title": "ZeroMQ Source",
+              "path": "guide/sources/plugin/zmq"
+            },
+            {
+              "title": "Video Source",
+              "path": "guide/sources/plugin/video"
             }
           ]
         },
         {
-          "title": "Sink Connectors",
+          "title": "Sink Connectors (22)",
           "path": "guide/sinks/overview",
           "children": [
+            {
+              "title": "Sink Concepts & Architecture",
+              "path": "concepts/sinks"
+            },
+            {
+              "title": "Sinks Overview",
+              "path": "guide/sinks/overview"
+            },
             {
               "title": "Data Template",
               "path": "guide/sinks/data_template"
             },
             {
-              "title": "Built-in & Native Sinks",
-              "collapsed": true,
-              "children": [
-                {
-                  "title": "Modbus Sink",
-                  "path": "guide/sinks/builtin/modbus"
-                },
-                {
-                  "title": "OPC-UA Sink",
-                  "path": "guide/sinks/builtin/opcua"
-                },
-                {
-                  "title": "OpenTelemetry (OTLP) Sink",
-                  "path": "guide/sinks/builtin/otlp"
-                },
-                {
-                  "title": "MQTT Sink",
-                  "path": "guide/sinks/builtin/mqtt"
-                },
-                {
-                  "title": "Kafka Sink",
-                  "path": "guide/sinks/plugin/kafka"
-                },
-                {
-                  "title": "SQL Sink",
-                  "path": "guide/sinks/plugin/sql"
-                },
-                {
-                  "title": "REST Sink",
-                  "path": "guide/sinks/builtin/rest"
-                },
-                {
-                  "title": "File Sink",
-                  "path": "guide/sinks/builtin/file"
-                },
-                {
-                  "title": "Redis Sink",
-                  "path": "guide/sinks/builtin/redis"
-                },
-                {
-                  "title": "RedisPub Sink",
-                  "path": "guide/sinks/builtin/redisPub"
-                },
-                {
-                  "title": "Websocket Sink",
-                  "path": "guide/sinks/builtin/websocket"
-                },
-                {
-                  "title": "RabbitMQ Sink",
-                  "path": "guide/sinks/builtin/rabbitmq"
-                },
-                {
-                  "title": "EdgeX Sink",
-                  "path": "guide/sinks/builtin/edgex"
-                },
-                {
-                  "title": "Memory Sink",
-                  "path": "guide/sinks/builtin/memory"
-                },
-                {
-                  "title": "Log Sink",
-                  "path": "guide/sinks/builtin/log"
-                },
-                {
-                  "title": "Nop Sink",
-                  "path": "guide/sinks/builtin/nop"
-                },
-                {
-                  "title": "Image Sink",
-                  "path": "guide/sinks/plugin/image"
-                },
-                {
-                  "title": "InfluxDB v1 Sink",
-                  "path": "guide/sinks/plugin/influx"
-                },
-                {
-                  "title": "InfluxDB v2 Sink",
-                  "path": "guide/sinks/plugin/influx2"
-                },
-                {
-                  "title": "TDengine 3.x Sink",
-                  "path": "guide/sinks/plugin/tdengine3"
-                },
-                {
-                  "title": "IoTDB Sink",
-                  "path": "guide/sinks/plugin/iotdb"
-                },
-                {
-                  "title": "ZeroMQ Sink",
-                  "path": "guide/sinks/plugin/zmq"
-                }
-              ]
+              "title": "MQTT Sink",
+              "path": "guide/sinks/builtin/mqtt"
+            },
+            {
+              "title": "Modbus Sink",
+              "path": "guide/sinks/builtin/modbus"
+            },
+            {
+              "title": "OPC-UA Sink",
+              "path": "guide/sinks/builtin/opcua"
+            },
+            {
+              "title": "OpenTelemetry (OTLP) Sink",
+              "path": "guide/sinks/builtin/otlp"
+            },
+            {
+              "title": "Kafka Sink",
+              "path": "guide/sinks/plugin/kafka"
+            },
+            {
+              "title": "SQL Sink",
+              "path": "guide/sinks/plugin/sql"
+            },
+            {
+              "title": "REST Sink",
+              "path": "guide/sinks/builtin/rest"
+            },
+            {
+              "title": "File Sink",
+              "path": "guide/sinks/builtin/file"
+            },
+            {
+              "title": "Redis Sink",
+              "path": "guide/sinks/builtin/redis"
+            },
+            {
+              "title": "RedisPub Sink",
+              "path": "guide/sinks/builtin/redisPub"
+            },
+            {
+              "title": "Websocket Sink",
+              "path": "guide/sinks/builtin/websocket"
+            },
+            {
+              "title": "RabbitMQ Sink",
+              "path": "guide/sinks/builtin/rabbitmq"
+            },
+            {
+              "title": "EdgeX Sink",
+              "path": "guide/sinks/builtin/edgex"
+            },
+            {
+              "title": "Memory Sink",
+              "path": "guide/sinks/builtin/memory"
+            },
+            {
+              "title": "Log Sink",
+              "path": "guide/sinks/builtin/log"
+            },
+            {
+              "title": "Nop Sink",
+              "path": "guide/sinks/builtin/nop"
+            },
+            {
+              "title": "Image Sink",
+              "path": "guide/sinks/plugin/image"
+            },
+            {
+              "title": "InfluxDB v1 Sink",
+              "path": "guide/sinks/plugin/influx"
+            },
+            {
+              "title": "InfluxDB v2 Sink",
+              "path": "guide/sinks/plugin/influx2"
+            },
+            {
+              "title": "TDengine 3.x Sink",
+              "path": "guide/sinks/plugin/tdengine3"
+            },
+            {
+              "title": "IoTDB Sink",
+              "path": "guide/sinks/plugin/iotdb"
+            },
+            {
+              "title": "ZeroMQ Sink",
+              "path": "guide/sinks/plugin/zmq"
             }
           ]
         },
         {
           "title": "Connection Management",
-          "path": "guide/connections/overview"
-        },
-        {
-          "title": "Property Forms & Connection Hub",
-          "path": "guide/connections/property_forms_and_connection_hub"
-        }
-      ]
-    },
-    {
-      "title": "Cookbook",
-      "path": "example/overview",
-      "children": [
-        {
-          "title": "Data Preparation",
-          "path": "example/howto"
-        },
-        {
-          "title": "Merge Multiple Devices' Data in a Single Stream",
-          "path": "example/data_merge/merge_single_stream"
-        },
-        {
-          "title": "Merge Data in Multiple Streams",
-          "path": "example/data_merge/merge_multi_stream"
-        },
-        {
-          "title": "Capture Data Change",
-          "path": "example/change_data_capture"
-        }
-      ]
-    },
-    {
-      "title": "Integrations",
-      "path": "integrations/overview",
-      "children": [
-        {
-          "title": "Edge Cloud Collaboration",
-          "path": "integrations/edge_cloud/overview"
-        },
-        {
-          "title": "Working with EdgeX Foundry",
-          "collapsed": true,
+          "path": "guide/connections/overview",
           "children": [
             {
-              "title": "EdgeX Foundry Rule Engine Tutorial",
-              "path": "edgex/edgex_rule_engine_tutorial"
+              "title": "Property Forms & Connection Hub",
+              "path": "guide/connections/property_forms_and_connection_hub"
             },
             {
-              "title": "Meta Function for EdgeX Stream",
-              "path": "edgex/edgex_meta"
-            },
-            {
-              "title": "Command EdgeX Device",
-              "path": "edgex/edgex_rule_engine_command"
-            },
-            {
-              "title": "EdgeX Source Configurations",
-              "path": "edgex/edgex_source_tutorial"
-            }
-          ]
-        },
-        {
-          "title": "Analytic Engine for KubeEdge",
-          "path": "integrations/kubeedge/overview"
-        },
-        {
-          "title": "Deploy by OpenYurt",
-          "path": "integrations/deploy/openyurt_tutorial"
-        }
-      ]
-    },
-    {
-      "title": "Use Cases",
-      "path": "usecases/overview",
-      "children": [
-        {
-          "title": "Industrial IoT (IIoT)",
-          "path": "usecases/iiot"
-        },
-        {
-          "title": "Connected Vehicles & EV Charging",
-          "path": "usecases/iov"
-        },
-        {
-          "title": "ESPHome Fleet Telemetry",
-          "path": "usecases/esphome"
-        },
-        {
-          "title": "Public Data Analysis",
-          "path": "usecases/public_data_analysis"
-        }
-      ]
-    },
-    {
-      "title": "Solutions",
-      "collapsed": false,
-      "children": [
-        {
-          "title": "Reduce Cloud IoT Ingestion Costs by 95%",
-          "path": "solutions/reduce-cloud-iot-costs"
-        },
-        {
-          "title": "Industrial AI Agents with MCP",
-          "path": "solutions/mcp-industrial-ai-agents"
-        }
-      ]
-    },
-    {
-      "title": "Operations & Fleet Administration",
-      "path": "operation/overview",
-      "children": [
-        {
-          "title": "Migration & Modernization Guide",
-          "path": "operation/migration"
-        },
-        {
-          "title": "Declarative GitOps Mode",
-          "path": "operation/declarative_gitops"
-        },
-        {
-          "title": "Built-in Web UI & Live Top",
-          "path": "operation/observability_ui_top"
-        },
-        {
-          "title": "Web Console Operations & Security Guide",
-          "path": "guide/ui/web_console_user_guide"
-        },
-        {
-          "title": "Fleet Management & Control Plane",
-          "path": "operation/fleet_management"
-        },
-        {
-          "title": "Monitor with Prometheus",
-          "path": "operation/usage/monitor_with_prometheus"
-        },
-        {
-          "title": "Tracing Data & OpenTelemetry",
-          "path": "operation/usage/trace_data"
-        },
-        {
-          "title": "Configuration Guide",
-          "path": "configuration/configuration",
-          "collapsed": true,
-          "children": [
-            {
-              "title": "Global Configurations",
-              "path": "configuration/global_configurations"
+              "title": "MQTT TLS Configuration",
+              "path": "guide/connectors/mqtt_tls"
             },
             {
               "title": "Dynamic Secrets",
               "path": "configuration/secrets"
             }
           ]
+        },
+        {
+          "title": "Edge Cloud & Platform Integrations",
+          "path": "integrations/overview",
+          "children": [
+            {
+              "title": "Integrations Overview",
+              "path": "integrations/overview"
+            },
+            {
+              "title": "Edge Cloud Overview",
+              "path": "integrations/edge_cloud/overview"
+            },
+            {
+              "title": "Working with EdgeX Foundry",
+              "children": [
+                {
+                  "title": "EdgeX Foundry Rule Engine Tutorial",
+                  "path": "edgex/edgex_rule_engine_tutorial"
+                },
+                {
+                  "title": "Meta Function for EdgeX Stream",
+                  "path": "edgex/edgex_meta"
+                },
+                {
+                  "title": "Command EdgeX Device",
+                  "path": "edgex/edgex_rule_engine_command"
+                },
+                {
+                  "title": "EdgeX Source Configurations",
+                  "path": "edgex/edgex_source_tutorial"
+                }
+              ]
+            },
+            {
+              "title": "Analytic Engine for KubeEdge",
+              "path": "integrations/kubeedge/overview"
+            },
+            {
+              "title": "Deploy by OpenYurt",
+              "path": "integrations/deploy/openyurt_tutorial"
+            }
+          ]
         }
       ]
     },
     {
-      "title": "API Reference",
-      "path": "api/restapi/overview",
-      "collapsed": true,
-      "children": [
-        {
-          "title": "Authentication",
-          "path": "api/restapi/authentication"
-        },
-        {
-          "title": "Streams",
-          "path": "api/restapi/streams"
-        },
-        {
-          "title": "Tables",
-          "path": "api/restapi/tables"
-        },
-        {
-          "title": "Rules",
-          "path": "api/restapi/rules"
-        },
-        {
-          "title": "Plugins",
-          "path": "api/restapi/plugins"
-        },
-        {
-          "title": "Source ConfigKey",
-          "path": "api/restapi/configKey"
-        },
-        {
-          "title": "Connections",
-          "path": "api/restapi/connection"
-        },
-        {
-          "title": "Script Functions",
-          "path": "api/restapi/udf"
-        },
-        {
-          "title": "External Services",
-          "path": "api/restapi/services"
-        },
-        {
-          "title": "Schemas",
-          "path": "api/restapi/schemas"
-        },
-        {
-          "title": "Upload files",
-          "path": "api/restapi/uploads"
-        },
-        {
-          "title": "Ruleset",
-          "path": "api/restapi/ruleset"
-        },
-        {
-          "title": "Data Export/Import",
-          "path": "api/restapi/data"
-        },
-        {
-          "title": "Dynamic Reload Configs",
-          "path": "api/restapi/configs"
-        },
-        {
-          "title": "Rule Test",
-          "path": "api/restapi/ruletest"
-        },
-        {
-          "title": "Trace Data",
-          "path": "api/restapi/trace"
-        }
-      ]
-    },
-    {
-      "title": "Command Line Tool",
-      "path": "api/cli/overview",
-      "collapsed": true,
-      "children": [
-        {
-          "title": "Streams",
-          "path": "api/cli/streams"
-        },
-        {
-          "title": "Rules",
-          "path": "api/cli/rules"
-        },
-        {
-          "title": "Tables",
-          "path": "api/cli/tables"
-        },
-        {
-          "title": "Plugins",
-          "path": "api/cli/plugins"
-        },
-        {
-          "title": "External Services",
-          "path": "api/cli/services"
-        },
-        {
-          "title": "Schemas",
-          "path": "api/cli/schemas"
-        },
-        {
-          "title": "Ruleset",
-          "path": "api/cli/ruleset"
-        },
-        {
-          "title": "Data Export/Import",
-          "path": "api/cli/data"
-        }
-      ]
-    },
-    {
-      "title": "AI & MCP Integration (rekuiper-mcp)",
-      "path": "mcp/overview",
-      "children": [
-        {
-          "title": "Model Context Protocol Overview",
-          "path": "mcp/overview"
-        },
-        {
-          "title": "Industrial AI Agents Guide",
-          "path": "solutions/mcp-industrial-ai-agents"
-        }
-      ]
-    },
-    {
-      "title": "Extension Architecture",
-      "path": "extension/overview",
-      "children": [
-        {
-          "title": "WebAssembly (Wasm) Functions",
-          "path": "extension/wasm/overview"
-        },
-        {
-          "title": "Native Rust UDFs & Plugins",
-          "path": "extension/native/overview"
-        },
-        {
-          "title": "External Services (gRPC / REST)",
-          "path": "extension/external/external_func"
-        },
-        {
-          "title": "Plugins, UDFs & Services Center",
-          "path": "guide/plugins/plugins_and_services_hub"
-        }
-      ]
-    },
-    {
-      "title": "SQL Reference",
+      "title": "SQL Language & Functions",
       "path": "sqls/overview",
       "children": [
         {
-          "title": "Statements",
-          "collapsed": true,
+          "title": "SQL Engine & Concepts",
           "children": [
             {
-              "title": "Streams",
-              "path": "sqls/streams"
+              "title": "SQL Architecture & Queries",
+              "path": "concepts/sql"
             },
             {
-              "title": "Tables",
-              "path": "sqls/tables"
+              "title": "SQL Syntax Overview",
+              "path": "sqls/overview"
             },
             {
-              "title": "Query",
-              "path": "sqls/query_language_elements"
-            }
-          ]
-        },
-        {
-          "title": "Syntax",
-          "path": "sqls/overview",
-          "collapsed": true,
-          "children": [
-            {
-              "title": "Lexical elements",
+              "title": "Lexical Elements",
               "path": "sqls/lexical_elements"
             },
             {
-              "title": "Data types",
+              "title": "Data Types",
               "path": "sqls/data_types"
             },
             {
@@ -769,10 +499,30 @@
           ]
         },
         {
-          "title": "Functions",
-          "path": "sqls/functions/overview",
-          "collapsed": true,
+          "title": "Statements & DDL",
           "children": [
+            {
+              "title": "Streams Statement",
+              "path": "sqls/streams"
+            },
+            {
+              "title": "Tables Statement",
+              "path": "sqls/tables"
+            },
+            {
+              "title": "Query Language Elements",
+              "path": "sqls/query_language_elements"
+            }
+          ]
+        },
+        {
+          "title": "Built-in Functions (16)",
+          "path": "sqls/functions/overview",
+          "children": [
+            {
+              "title": "Functions Overview",
+              "path": "sqls/functions/overview"
+            },
             {
               "title": "Aggregate Functions",
               "path": "sqls/functions/aggregate_functions"
@@ -782,7 +532,7 @@
               "path": "sqls/functions/mathematical_functions"
             },
             {
-              "title": "Vector Functions",
+              "title": "Vector Functions (AI)",
               "path": "sqls/functions/vector_functions"
             },
             {
@@ -830,7 +580,7 @@
               "path": "sqls/functions/multi_column_functions"
             },
             {
-              "title": "Predefined function plugins",
+              "title": "Predefined Function Plugins",
               "path": "sqls/functions/custom_functions"
             },
             {
@@ -840,12 +590,319 @@
           ]
         },
         {
-          "title": "External Function",
-          "path": "extension/external/external_func"
+          "title": "Windowing Reference",
+          "path": "sqls/windows"
         },
         {
-          "title": "Windowing",
-          "path": "sqls/windows"
+          "title": "External Functions (gRPC/REST)",
+          "path": "extension/external/external_func"
+        }
+      ]
+    },
+    {
+      "title": "Studio, UI & AI / MCP",
+      "path": "guide/rules/visual_studio",
+      "children": [
+        {
+          "title": "Visual Stream DAG Studio",
+          "path": "guide/rules/visual_studio"
+        },
+        {
+          "title": "Rule Designer & Schema Builder",
+          "path": "guide/rules/designer_and_schema_builder"
+        },
+        {
+          "title": "Web Console & Observability",
+          "path": "operation/observability_ui_top",
+          "children": [
+            {
+              "title": "Built-in Web UI & Live Top",
+              "path": "operation/observability_ui_top"
+            },
+            {
+              "title": "Web Console Security & Access Guide",
+              "path": "guide/ui/web_console_user_guide"
+            }
+          ]
+        },
+        {
+          "title": "AI & MCP Integration (rekuiper-mcp)",
+          "path": "mcp/overview",
+          "children": [
+            {
+              "title": "Model Context Protocol Overview",
+              "path": "mcp/overview"
+            },
+            {
+              "title": "Industrial AI Agents Guide",
+              "path": "solutions/mcp-industrial-ai-agents"
+            }
+          ]
+        },
+        {
+          "title": "Extension Architecture",
+          "path": "extension/overview",
+          "children": [
+            {
+              "title": "Extension Concepts & Runtime",
+              "path": "concepts/extensions"
+            },
+            {
+              "title": "Extension Overview",
+              "path": "extension/overview"
+            },
+            {
+              "title": "WebAssembly (Wasm) Functions",
+              "path": "extension/wasm/overview"
+            },
+            {
+              "title": "Native Rust UDFs & Plugins",
+              "path": "extension/native/overview"
+            },
+            {
+              "title": "External Services (gRPC / REST)",
+              "path": "extension/external/external_func"
+            },
+            {
+              "title": "Plugins, UDFs & Services Center",
+              "path": "guide/plugins/plugins_and_services_hub"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Operations & Developer Reference",
+      "path": "operation/overview",
+      "children": [
+        {
+          "title": "Production Operations",
+          "children": [
+            {
+              "title": "Fleet Management & Control Plane",
+              "path": "operation/fleet_management"
+            },
+            {
+              "title": "Declarative GitOps Mode",
+              "path": "operation/declarative_gitops"
+            },
+            {
+              "title": "Monitor with Prometheus",
+              "path": "operation/usage/monitor_with_prometheus"
+            },
+            {
+              "title": "Tracing Data & OpenTelemetry",
+              "path": "operation/usage/trace_data"
+            },
+            {
+              "title": "System Error Codes Reference",
+              "path": "operation/usage/error_code"
+            },
+            {
+              "title": "Configuration Guide",
+              "path": "configuration/configuration",
+              "children": [
+                {
+                  "title": "Configuration Overview",
+                  "path": "configuration/configuration"
+                },
+                {
+                  "title": "Global Configurations",
+                  "path": "configuration/global_configurations"
+                },
+                {
+                  "title": "Dynamic Secrets",
+                  "path": "configuration/secrets"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "title": "Solutions Blueprints",
+          "path": "usecases/overview",
+          "children": [
+            {
+              "title": "Use Cases Overview",
+              "path": "usecases/overview"
+            },
+            {
+              "title": "Reduce Cloud IoT Ingestion Costs by 95%",
+              "path": "solutions/reduce-cloud-iot-costs"
+            },
+            {
+              "title": "Industrial IoT (IIoT)",
+              "path": "usecases/iiot"
+            },
+            {
+              "title": "Connected Vehicles & EV Charging",
+              "path": "usecases/iov"
+            },
+            {
+              "title": "ESPHome Fleet Telemetry",
+              "path": "usecases/esphome"
+            },
+            {
+              "title": "Public Data Analysis",
+              "path": "usecases/public_data_analysis"
+            }
+          ]
+        },
+        {
+          "title": "Streaming Cookbook",
+          "path": "example/overview",
+          "children": [
+            {
+              "title": "Cookbook Overview",
+              "path": "example/overview"
+            },
+            {
+              "title": "Data Preparation Recipes",
+              "path": "example/howto"
+            },
+            {
+              "title": "Data Merging Recipes",
+              "path": "example/data_merge/overview",
+              "children": [
+                {
+                  "title": "Data Merge Overview",
+                  "path": "example/data_merge/overview"
+                },
+                {
+                  "title": "Merge Multiple Devices in Single Stream",
+                  "path": "example/data_merge/merge_single_stream"
+                },
+                {
+                  "title": "Merge Data in Multiple Streams",
+                  "path": "example/data_merge/merge_multi_stream"
+                }
+              ]
+            },
+            {
+              "title": "Capture Data Change (CDC)",
+              "path": "example/change_data_capture"
+            }
+          ]
+        },
+        {
+          "title": "REST API Reference",
+          "path": "api/restapi/overview",
+          "children": [
+            {
+              "title": "REST API Overview",
+              "path": "api/restapi/overview"
+            },
+            {
+              "title": "Interactive OpenAPI / Swagger UI",
+              "path": "api/swagger"
+            },
+            {
+              "title": "Authentication",
+              "path": "api/restapi/authentication"
+            },
+            {
+              "title": "Streams API",
+              "path": "api/restapi/streams"
+            },
+            {
+              "title": "Tables API",
+              "path": "api/restapi/tables"
+            },
+            {
+              "title": "Rules API",
+              "path": "api/restapi/rules"
+            },
+            {
+              "title": "Plugins API",
+              "path": "api/restapi/plugins"
+            },
+            {
+              "title": "Source ConfigKey API",
+              "path": "api/restapi/configKey"
+            },
+            {
+              "title": "Connections API",
+              "path": "api/restapi/connection"
+            },
+            {
+              "title": "Script Functions (UDF) API",
+              "path": "api/restapi/udf"
+            },
+            {
+              "title": "External Services API",
+              "path": "api/restapi/services"
+            },
+            {
+              "title": "Schemas API",
+              "path": "api/restapi/schemas"
+            },
+            {
+              "title": "Upload Files API",
+              "path": "api/restapi/uploads"
+            },
+            {
+              "title": "Ruleset API",
+              "path": "api/restapi/ruleset"
+            },
+            {
+              "title": "Data Export/Import API",
+              "path": "api/restapi/data"
+            },
+            {
+              "title": "Dynamic Reload Configs API",
+              "path": "api/restapi/configs"
+            },
+            {
+              "title": "Rule Test API",
+              "path": "api/restapi/ruletest"
+            },
+            {
+              "title": "Trace Data API",
+              "path": "api/restapi/trace"
+            }
+          ]
+        },
+        {
+          "title": "Command Line Tool (CLI)",
+          "path": "api/cli/overview",
+          "children": [
+            {
+              "title": "CLI Overview",
+              "path": "api/cli/overview"
+            },
+            {
+              "title": "Streams CLI",
+              "path": "api/cli/streams"
+            },
+            {
+              "title": "Rules CLI",
+              "path": "api/cli/rules"
+            },
+            {
+              "title": "Tables CLI",
+              "path": "api/cli/tables"
+            },
+            {
+              "title": "Plugins CLI",
+              "path": "api/cli/plugins"
+            },
+            {
+              "title": "External Services CLI",
+              "path": "api/cli/services"
+            },
+            {
+              "title": "Schemas CLI",
+              "path": "api/cli/schemas"
+            },
+            {
+              "title": "Ruleset CLI",
+              "path": "api/cli/ruleset"
+            },
+            {
+              "title": "Data Export/Import CLI",
+              "path": "api/cli/data"
+            }
+          ]
         }
       ]
     }
