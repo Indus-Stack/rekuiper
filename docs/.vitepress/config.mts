@@ -32,8 +32,8 @@ function transformSidebar(items: DirectoryItem[]): any[] {
 
 export default withMermaid(
   defineConfig({
-  title: 'rekuiper — Rust MQTT Rule Engine & Streaming SQL Processor',
-  titleTemplate: ':title — rekuiper',
+  title: 'rekuiper',
+  titleTemplate: ':title — Rust MQTT Rule Engine & Streaming SQL Processor',
   description: 'Single-binary MQTT rule engine and streaming SQL processor written in Rust. Filter, aggregate, and route MQTT, Kafka, Modbus, and OPC-UA data on the edge.',
   srcDir: './en_US',
   outDir: './.vitepress/dist',
@@ -101,10 +101,11 @@ export default withMermaid(
   },
   themeConfig: {
     nav: [
-      { text: 'Quick Start', link: '/getting_started/getting_started' },
       {
-        text: 'Documentation',
+        text: 'Docs',
         items: [
+          { text: 'Quick Start', link: '/getting_started/getting_started' },
+          { text: 'Installation & Deployment', link: '/installation' },
           { text: 'MQTT Rule Engine Architecture', link: '/mqtt-rule-engine' },
           { text: 'Core Concepts & SQL', link: '/concepts/rekuiper' },
           { text: 'Native Connectors', link: '/guide/connector' },
@@ -129,7 +130,7 @@ export default withMermaid(
         ]
       },
       {
-        text: 'Solutions & Use Cases',
+        text: 'Solutions',
         items: [
           { text: 'Reduce Cloud IoT Costs (95%)', link: '/solutions/reduce-cloud-iot-costs' },
           { text: 'Industrial AI Agents with MCP', link: '/solutions/mcp-industrial-ai-agents' },
@@ -138,9 +139,13 @@ export default withMermaid(
           { text: 'ESPHome Fleet Telemetry', link: '/usecases/esphome' }
         ]
       },
-      { text: 'FAQ & Help', link: '/faq' },
-      { text: 'GitHub', link: 'https://github.com/Indus-Stack/rekuiper' },
-      { text: 'IndraMQTT Platform', link: 'https://indramqtt.com' }
+      {
+        text: 'More',
+        items: [
+          { text: 'Frequently Asked Questions (FAQ)', link: '/faq' },
+          { text: 'IndraMQTT Platform', link: 'https://indramqtt.com' }
+        ]
+      }
     ],
     sidebar: transformSidebar((directory as any).en || []),
     socialLinks: [

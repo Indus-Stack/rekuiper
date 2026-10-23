@@ -114,4 +114,23 @@ html:not(.dark) .vp-doc div[class*='language-'] span {
   color: var(--shiki-dark) !important;
 }
 
+/* Navbar & Title Layout Protection */
+.VPNavBarTitle {
+  flex-shrink: 0 !important;
+}
+
+.VPNavBarTitle .title {
+  font-weight: 700 !important;
+  white-space: nowrap !important;
+  max-width: 220px !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+}
+
+.VPNavBarMenu {
+  flex-shrink: 1 !important;
+  white-space: nowrap !important;
+}
+
+
 
