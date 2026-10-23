@@ -1,0 +1,36 @@
+[package]
+name = "rule-engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "High-performance edge stream processing engine and MQTT rule engine daemon (rekuiper / eKuiper drop-in)"
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+keywords.workspace = true
+categories.workspace = true
+readme = "README.md"
+
+[lib]
+name = "rule_engine"
+path = "src/lib.rs"
+
+[[bin]]
+name = "rule-engine"
+path = "src/main.rs"
+
+[[bin]]
+name = "kuiperd"
+path = "src/bin/kuiperd.rs"
+
+[[bin]]
+name = "rekuiperd"
+path = "src/bin/rekuiperd.rs"
+
+[dependencies]
+kuiperd = { workspace = true }
+rekuiper-sql = { workspace = true }
+rekuiper-core = { workspace = true }
+tokio = { workspace = true }
+anyhow = { workspace = true }

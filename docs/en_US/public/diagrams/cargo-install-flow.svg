@@ -1,0 +1,73 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 940 320" role="img" aria-labelledby="t d" font-family="-apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+  <title id="t">Cargo Installation and Configuration Scaffolding Flow</title>
+  <desc id="d">Flow showing cargo install of rule-engine, followed by rule-engine init to scaffold configuration, and starting the daemon.</desc>
+
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#4a5568"/>
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect x="0" y="0" width="940" height="320" rx="12" fill="#f7f8fa" stroke="#e2e8f0" stroke-width="1"/>
+
+  <!-- Step 1: Install -->
+  <g transform="translate(40, 45)">
+    <rect x="0" y="0" width="250" height="230" rx="10" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5"/>
+    <rect x="0" y="0" width="250" height="42" rx="10" fill="#1e293b"/>
+    <rect x="0" y="32" width="250" height="10" fill="#1e293b"/>
+    <text x="125" y="26" text-anchor="middle" font-size="13" font-weight="700" fill="#ffffff" letter-spacing="0.5">STEP 1: INSTALL CRATE</text>
+
+    <text x="20" y="70" font-size="12" font-weight="600" fill="#64748b">CARGO REGISTRY</text>
+    <rect x="16" y="80" width="218" height="34" rx="6" fill="#0f172a"/>
+    <text x="26" y="102" font-family="monospace" font-size="12" fill="#38bdf8">cargo install rule-engine</text>
+
+    <text x="20" y="140" font-size="12" font-weight="600" fill="#64748b">OR FAST BINARY (3 SEC)</text>
+    <rect x="16" y="150" width="218" height="34" rx="6" fill="#0f172a"/>
+    <text x="26" y="172" font-family="monospace" font-size="12" fill="#4ade80">cargo binstall rule-engine</text>
+
+    <text x="20" y="210" font-size="11" fill="#64748b">Installs to ~/.cargo/bin/</text>
+  </g>
+
+  <!-- Arrow 1 to 2 -->
+  <path d="M 295 160 L 345 160" stroke="#4a5568" stroke-width="2.5" marker-end="url(#arrow)" fill="none"/>
+
+  <!-- Step 2: Scaffold -->
+  <g transform="translate(350, 45)">
+    <rect x="0" y="0" width="250" height="230" rx="10" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5"/>
+    <rect x="0" y="0" width="250" height="42" rx="10" fill="#0284c7"/>
+    <rect x="0" y="32" width="250" height="10" fill="#0284c7"/>
+    <text x="125" y="26" text-anchor="middle" font-size="13" font-weight="700" fill="#ffffff" letter-spacing="0.5">STEP 2: SCAFFOLD CONFIG</text>
+
+    <text x="20" y="70" font-size="12" font-weight="600" fill="#64748b">COMMAND</text>
+    <rect x="16" y="80" width="218" height="34" rx="6" fill="#0f172a"/>
+    <text x="26" y="102" font-family="monospace" font-size="12" fill="#facc15">rule-engine init</text>
+
+    <text x="20" y="136" font-size="12" font-weight="600" fill="#64748b">FILES CREATED</text>
+    <text x="26" y="156" font-size="12" fill="#334155">&#x2022; etc/kuiper.yaml</text>
+    <text x="26" y="176" font-size="12" fill="#334155">&#x2022; etc/mqtt_source.yaml</text>
+    <text x="26" y="196" font-size="12" fill="#334155">&#x2022; etc/client.yaml</text>
+    <text x="26" y="216" font-size="12" fill="#334155">&#x2022; data/ and log/ dirs</text>
+  </g>
+
+  <!-- Arrow 2 to 3 -->
+  <path d="M 605 160 L 655 160" stroke="#4a5568" stroke-width="2.5" marker-end="url(#arrow)" fill="none"/>
+
+  <!-- Step 3: Run -->
+  <g transform="translate(660, 45)">
+    <rect x="0" y="0" width="240" height="230" rx="10" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5"/>
+    <rect x="0" y="0" width="240" height="42" rx="10" fill="#16a34a"/>
+    <rect x="0" y="32" width="240" height="10" fill="#16a34a"/>
+    <text x="120" y="26" text-anchor="middle" font-size="13" font-weight="700" fill="#ffffff" letter-spacing="0.5">STEP 3: RUN ENGINE</text>
+
+    <text x="20" y="70" font-size="12" font-weight="600" fill="#64748b">START DAEMON</text>
+    <rect x="16" y="80" width="208" height="34" rx="6" fill="#0f172a"/>
+    <text x="26" y="102" font-family="monospace" font-size="12" fill="#4ade80">rule-engine</text>
+
+    <text x="20" y="136" font-size="12" font-weight="600" fill="#64748b">ACTIVE SERVICES</text>
+    <text x="26" y="156" font-size="12" fill="#334155">&#x2022; REST API: :9081</text>
+    <text x="26" y="176" font-size="12" fill="#334155">&#x2022; Web UI: :9081/ui</text>
+    <text x="26" y="196" font-size="12" fill="#334155">&#x2022; CLI RPC: :20498</text>
+    <text x="26" y="216" font-size="12" fill="#334155">&#x2022; Stream Processing</text>
+  </g>
+</svg>

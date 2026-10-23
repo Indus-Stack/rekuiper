@@ -243,4 +243,82 @@ helm install rekuiper deploy/chart/rekuiper \
 
 For the complete values schema, review the [rekuiper Helm Chart Documentation](https://github.com/Indus-Stack/rekuiper/tree/main/deploy/chart/rekuiper).
 
+---
+
+## 8. Cargo (crates.io) Installation
+
+You can install rekuiper as a Rust crate using Cargo. The official package name on crates.io is **`rule-engine`**.
+
+![Cargo Installation and Scaffolding Flow](/diagrams/cargo-install-flow.svg)
+
+### 8.1 Install the Package
+
+Install from source using `cargo`:
+
+```shell
+cargo install rule-engine
+```
+
+Or install pre-compiled binaries directly using `cargo-binstall`:
+
+```shell
+cargo binstall rule-engine
+```
+
+This command installs three binary aliases in `~/.cargo/bin/`:
+- `rule-engine` (primary command)
+- `kuiperd` (100% drop-in command for LF Edge eKuiper)
+- `rekuiperd`
+
+### 8.2 Scaffold Configuration Files
+
+`cargo install` copies only executable files. It does not copy default configuration directories.
+
+Run the `init` command to create the default configuration files:
+
+```shell
+rule-engine init
+```
+
+Expected output:
+```text
+Scaffolding configuration in 'etc/':
+  [CREATED] etc/kuiper.yaml
+  [CREATED] etc/mqtt_source.yaml
+  [CREATED] etc/client.yaml
+  [CREATED] ./data/
+  [CREATED] ./log/
+
+Configuration complete! You can now start the daemon:
+  rule-engine
+```
+
+To write configuration to a custom directory:
+
+```shell
+rule-engine init --dir /opt/rekuiper/etc
+```
+
+To overwrite existing files, add the `--force` flag:
+
+```shell
+rule-engine init --force
+```
+
+### 8.3 Start the Engine
+
+Start the daemon:
+
+```shell
+rule-engine
+```
+
+Verify service status:
+
+```shell
+curl http://localhost:9081/ping
+# Response: pong
+```
+
+
 

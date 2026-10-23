@@ -53,4 +53,8 @@ echo ">>> Testing kuiperd <<<"
 cargo test -p kuiperd --target-dir /home/paanday/target
 rm -rf /home/paanday/target
 
+echo ">>> Testing rule-engine & ruleengine <<<"
+cargo test -p rule-engine -p ruleengine --target-dir /home/paanday/target
+rm -rf /home/paanday/target
+
 echo "=== ALL LOCAL CI CHECKS PASSED SUCCESSFULLY ==="
