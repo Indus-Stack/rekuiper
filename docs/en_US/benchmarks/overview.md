@@ -51,7 +51,7 @@ Different benchmark suites evaluate specific capabilities across versions:
 
 | Suite Name | Evaluated Version | Workload Type | Key Result | Link |
 | :--- | :---: | :--- | :--- | :--- |
-| **In-Process Engine Throughput** | **rekuiper 1.0.0-rc4** | Continuous stream execution of 500k events on 1 core | Measures **2,464,711 events/s** (zero-parse pipeline) and **1,141,417 events/s** (JSON pipeline) with active dead-letter queue support. | [View Benchmark](#version-1-0-0-rc4-in-process-engine-throughput-benchmark) |
+| **In-Process Engine Throughput** | **rekuiper 1.0.0-rc5** | Continuous stream execution of 500k events on 1 core | Measures **2,464,711 events/s** (zero-parse pipeline) and **1,141,417 events/s** (JSON pipeline) with active dead-letter queue support. | [View Benchmark](#version-1-0-0-rc5-in-process-engine-throughput-benchmark) |
 | **Concurrent Parallel Rules** | **rekuiper 0.505-beta** | Stream fan-out to $N$ parallel SQL rules | Sustains **1,000 parallel rules** (500,000 evals/s) on 1 core; eKuiper ceiling is 100 rules. | [View Benchmark](./parallel_rules.md) |
 | **Single-Rule MQTT Throughput** | **rekuiper 0.500-beta** | Ingestion of 5 industrial MQTT shapes | Sustains **150,000 to 200,000 msg/s** loss-free on 1 core; 6.3x to 10x higher than competitors. | [View Benchmark](./throughput.md) |
 | **120-Second Bounded Sustained** | **rekuiper 0.426-beta** | Long-duration MQTT ingest (12M events) | Sustains **100,000 msg/s for 120s** across all five workloads with 0.00% loss. | [View Benchmark](./throughput.md#version-0-426-bounded-sustained-ladder) |
@@ -61,16 +61,16 @@ Different benchmark suites evaluate specific capabilities across versions:
 
 ## 5. Release-Specific Benchmark History
 
-### Version 1.0.0-rc4: In-Process Engine Throughput Benchmark
+### Version 1.0.0-rc5: In-Process Engine Throughput Benchmark
 
-rekuiper version 1.0.0-rc4 evaluates in-process SQL streaming throughput on a single CPU core.
+rekuiper version 1.0.0-rc5 evaluates in-process SQL streaming throughput on a single CPU core.
 The test runs with active dead-letter queue routing and complete projection evaluation.
 
 #### Test Configuration
 
 | Parameter | Specification |
 | :--- | :--- |
-| **Software Version** | rekuiper v1.0.0-rc4 |
+| **Software Version** | rekuiper v1.0.0-rc5 |
 | **Test Suite** | `crates/rekuiper-server/tests/perf_throughput.rs` |
 | **Compiler Profile** | `--release` with `-C target-cpu=native` |
 | **Storage Subsystem** | Native Linux ext4 filesystem |
@@ -87,7 +87,7 @@ The engine delivers projected records to a bounded in-memory subscriber channel.
 
 #### Measured Performance Results
 
-rekuiper version 1.0.0-rc4 recorded the following performance metrics:
+rekuiper version 1.0.0-rc5 recorded the following performance metrics:
 
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 860 215" width="100%" height="auto" role="img" aria-label="Single-Core Streaming SQL Throughput Comparison" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">
   <rect x="0" y="0" width="860" height="215" rx="10" fill="#f8fafc" stroke="#e2e8f0" stroke-width="1" />
@@ -108,10 +108,10 @@ rekuiper version 1.0.0-rc4 recorded the following performance metrics:
 
 | Pipeline Architecture | Evaluated Version | Records Processed | Elapsed Time | Throughput | Memory Model | Drain Delay |
 | :--- | :---: | :---: | :---: | :---: | :--- | :---: |
-| **Zero-Parse In-Process Engine Pipeline** | **v1.0.0-rc4** | 500,000 | **202.86 ms** | **2,464,711 events/s** | Zero heap allocation, zero GC pauses | **0.0 ms** |
-| **End-to-End JSON Streaming Pipeline** | **v1.0.0-rc4** | 500,000 | **438.05 ms** | **1,141,417 events/s** | Dynamic JSON parse and serialize | **0.0 ms** |
+| **Zero-Parse In-Process Engine Pipeline** | **v1.0.0-rc5** | 500,000 | **202.86 ms** | **2,464,711 events/s** | Zero heap allocation, zero GC pauses | **0.0 ms** |
+| **End-to-End JSON Streaming Pipeline** | **v1.0.0-rc5** | 500,000 | **438.05 ms** | **1,141,417 events/s** | Dynamic JSON parse and serialize | **0.0 ms** |
 
-#### Key Enabling Optimizations in Version 1.0.0-rc4
+#### Key Enabling Optimizations in Version 1.0.0-rc5
 
 1. **Zero-Allocation Error Key Checks**:
    The engine iterates directly over key-value pairs to detect error keys. This eliminates hash calculations on valid records. Dead-letter queue routing for invalid records remains active.

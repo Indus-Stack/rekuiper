@@ -48,7 +48,7 @@ You can also embed the streaming SQL processor and rule engine directly inside y
 
 ```toml
 [dependencies]
-rule-engine = "1.0.0-rc4"
+rule-engine = "1.0.0-rc5"
 ```
 
 ```rust
@@ -66,7 +66,7 @@ fn main() -> anyhow::Result<()> {
 Or depend exclusively on the lightweight SQL parsing & execution engine:
 ```toml
 [dependencies]
-rekuiper-sql = "1.0.0-rc4"
+rekuiper-sql = "1.0.0-rc5"
 ```
 
 ---

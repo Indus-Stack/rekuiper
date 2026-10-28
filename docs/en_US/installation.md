@@ -30,7 +30,7 @@ docker run -d \
   -p 9081:9081 \
   -p 20498:20498 \
   -p 20499:20499 \
-  indusstack/rekuiper:1.0.0-rc4
+  indusstack/rekuiper:1.0.0-rc5
 ```
 
 ### Production Deployment with Persistent Storage
@@ -49,7 +49,7 @@ docker run -d \
   -v /var/log/rekuiper:/kuiper/log \
   -e KUIPER__BASIC__PROMETHEUS="true" \
   -e LOG_LEVEL="info" \
-  indusstack/rekuiper:1.0.0-rc4
+  indusstack/rekuiper:1.0.0-rc5
 ```
 
 Verify service availability:
@@ -72,7 +72,7 @@ version: '3.8'
 
 services:
   rekuiper:
-    image: indusstack/rekuiper:1.0.0-rc4
+    image: indusstack/rekuiper:1.0.0-rc5
     container_name: rekuiper
     restart: unless-stopped
     ports:
@@ -134,7 +134,7 @@ Prebuilt binaries are available on [GitHub Releases](https://github.com/Indus-St
 
 ```shell
 # Example for Linux x86_64 (replace with desired release tag)
-curl -LO https://github.com/Indus-Stack/rekuiper/releases/download/v1.0.0-rc4/rekuiperd-x86_64-unknown-linux-musl.tar.gz
+curl -LO https://github.com/Indus-Stack/rekuiper/releases/download/v1.0.0-rc5/rekuiperd-x86_64-unknown-linux-musl.tar.gz
 tar -xzf rekuiperd-x86_64-unknown-linux-musl.tar.gz
 cd rekuiper
 

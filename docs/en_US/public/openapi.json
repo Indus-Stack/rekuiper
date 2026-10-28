@@ -6,7 +6,7 @@
   "info": {
     "title": "rekuiper REST Management API",
     "description": "Authoritative OpenAPI contract for the management REST routes registered by rekuiper (100% wire-compatible with eKuiper v2.4.1). Optional components depend on build tags; JWT authentication, when enabled, expects a raw RS256 token in the Authorization header.",
-    "version": "1.0.0-rc4",
+    "version": "1.0.0-rc5",
     "contact": {
       "name": "I-Dacs Labs",
       "url": "https://i-dacs.com"

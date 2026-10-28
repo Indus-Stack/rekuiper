@@ -12,7 +12,7 @@ keywords: eKuiper alternative, eKuiper Rust rewrite, eKuiper memory usage, rekui
 
 ## Executive Comparison
 
-| Dimension | `rekuiper` (Rust 1.0.0-rc4) | upstream eKuiper (Go) | Architectural Difference |
+| Dimension | `rekuiper` (Rust 1.0.0-rc5) | upstream eKuiper (Go) | Architectural Difference |
 | :--- | :--- | :--- | :--- |
 | **Language & Runtime** | Pure Rust (`tokio` actor runtime) | Go (goroutines + GC runtime) | Zero garbage-collection pauses in `rekuiper` |
 | **Single-Core Throughput** | **1,000,000+ events/s** (150k–200k msg/s network MQTT) | ~20,000 msg/s | **50x to 100x engine throughput** (8x–10x over network) |
@@ -29,12 +29,12 @@ keywords: eKuiper alternative, eKuiper Rust rewrite, eKuiper memory usage, rekui
 
 All tests run on identical Linux hardware constrained to **1 physical CPU core** and **1 GiB RAM** using the reproducible benchmark harness ([Benchmark Overview](../benchmarks/overview.md)):
 
-### In-Process SQL Stream Processing Engine (1.0.0-rc4)
+### In-Process SQL Stream Processing Engine (1.0.0-rc5)
 
 | Pipeline Architecture | Evaluated Version | Records Processed | Elapsed Time | Single-Core Throughput | Loss Rate |
 | :--- | :---: | :---: | :---: | :---: | :---: |
-| **Zero-Parse In-Process Engine** | **`rekuiper` 1.0.0-rc4** | 500,000 | **226.51 ms** | **2,207,367 events/s** | **0.00%** |
-| **End-to-End JSON Stream Pipeline** | **`rekuiper` 1.0.0-rc4** | 500,000 | **460.45 ms** | **1,085,885 events/s** | **0.00%** |
+| **Zero-Parse In-Process Engine** | **`rekuiper` 1.0.0-rc5** | 500,000 | **202.86 ms** | **2,464,711 events/s** | **0.00%** |
+| **End-to-End JSON Stream Pipeline** | **`rekuiper` 1.0.0-rc5** | 500,000 | **438.05 ms** | **1,141,417 events/s** | **0.00%** |
 
 ### Network MQTT Ingestion Workload
 
@@ -45,7 +45,7 @@ Hardware Limit: --cpus=1 --memory=1g
 
 | Engine | Rate Ladder Attempted | Accepted / Processed | Single-Core Max Throughput | Loss Rate |
 | :--- | :--- | :--- | :--- | :--- |
-| **`rekuiper` 1.0.0-rc4** | 200,000 msg/s | 500,000 / 500,000 | **184,250 msg/s** | **0.00%** |
+| **`rekuiper` 1.0.0-rc5** | 200,000 msg/s | 500,000 / 500,000 | **184,250 msg/s** | **0.00%** |
 | **eKuiper 2.4.1 (Tuned)** | 50,000 msg/s | 500,000 / 482,100 | **21,400 msg/s** | **3.58%** |
 | **eKuiper 2.4.1 (Default)** | 25,000 msg/s | 500,000 / 391,200 | **14,800 msg/s** | **21.76%** |
 

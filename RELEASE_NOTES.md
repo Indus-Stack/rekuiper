@@ -1,3 +1,20 @@
+# Release Notes - rekuiper v1.0.0-rc5
+
+`rekuiper` v1.0.0-rc5 is a security, resilience, and performance release candidate that remediates newly disclosed RustSec advisories (`tokio` and `zstd`), hardens REST/OTLP/UI authentication and network boundaries, adds deterministic WASM fuel metering and instance pooling, persists Fleet Control Plane state across restarts, and reaches **2,464,711 events/s** in single-core zero-parse SQL benchmarks.
+
+Key highlights:
+- **RustSec Advisory Remediation & Supply-Chain Isolation**: Upgraded `tokio` to `1.54.1` (`RUSTSEC-2026-0386`), `zstd-sys` to `2.1.2+zstd.1.5.7` (`RUSTSEC-2026-0410`), and direct `zstd` in `rekuiper-sql` to `0.14.3` (`zstd-safe 8.2.0`, resolving `RUSTSEC-2026-0391`, `RUSTSEC-2026-0398`, and `RUSTSEC-2026-0403` with zero ignored advisories in downstream library crates `rekuiper-core` and `rekuiper-sql`).
+- **Verified Single-Core Throughput (2.46M+ EPS)**: The zero-parse in-process SQL pipeline processes **2,464,711 events per second** (`202.86 ms` for 500,000 records, +11.7% over `rc4`). The end-to-end JSON streaming SQL pipeline processes **1,141,417 events per second** (`438.05 ms` for 500,000 records, +5.1% over `rc4`).
+- **Security & Network Boundary Hardening**: Enforced `basic.authentication` RS256 JWT validation on `/ui`, `/v1/metrics`, `/v1/logs`, and `/v1/traces`; gated `/ui` and `/ui/ws` route mounting on `basic.enable_ui`; wired `ConnectInfo<SocketAddr>` for `ui_ip_allowlist` enforcement; and bound the standalone Prometheus server to `config.basic.prometheus_port`.
+- **WASM Fuel Metering & Lock-Free Instance Pooling**: Enforced deterministic instruction fuel budgets (`1,000,000` instructions per UDF invocation) in `wasmi` to prevent infinite guest loops from stalling worker threads, paired with an 8-slot lock-free `ArrayQueue<PooledInstance>` pool per module.
+- **Fleet Control Plane Concurrency & Durable KV Persistence**: Eliminated `parking_lot::RwLock` holds across `.await` points during fleet snapshot rollouts and rollbacks, and persisted devices, snapshots, rollouts, and audit logs to the KV store with automatic startup restoration.
+- **Runtime Efficiency & Documentation Overhaul**: Added a 500ms TTL cache for `sysinfo::System` refreshes on `GET /` and `GET /metrics`, replaced `Vec::remove(0)` shifts with $O(1)$ `VecDeque::pop_front()`, extracted `engine/sources.rs`, and added 14 light-theme SVG architectural diagrams across `docs/en_US/` (21.3% visual page coverage).
+
+- Docker image: `indusstack/rekuiper:1.0.0-rc5` (plus `latest`)
+- Helm chart: `deploy/chart/rekuiper` (`AppVersion: 1.0.0-rc5`)
+
+---
+
 # Release Notes - rekuiper v1.0.0-rc4
  
 `rekuiper` v1.0.0-rc4 provides verified high-throughput streaming SQL execution. This release eliminates hash overhead on valid data records, adds non-blocking rule status inspection, and resolves compiler warnings.

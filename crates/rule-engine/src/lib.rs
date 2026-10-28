@@ -8,7 +8,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! rule-engine = "1.0.0-rc4"
+//! rule-engine = "1.0.0-rc5"
 //! ```
 //!
 //! ### Using the Streaming SQL Engine

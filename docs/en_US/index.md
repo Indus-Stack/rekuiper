@@ -50,7 +50,7 @@ features:
   <div class="metric-card">
     <div class="metric-value">1,000,000+</div>
     <div class="metric-label">events/s per core</div>
-    <div class="metric-desc">Continuous SQL stream throughput in 1.0.0-rc4 (50x–100x faster than Go eKuiper).</div>
+    <div class="metric-desc">Continuous SQL stream throughput in 1.0.0-rc5 (50x–100x faster than Go eKuiper).</div>
   </div>
   <div class="metric-card">
     <div class="metric-value">&lt; 35 MB</div>
@@ -88,7 +88,7 @@ This demo requires Docker. A built-in simulator generates sensor readings.
 **1. Start the engine.**
 
 ```shell
-docker run -d --name rekuiper -p 9081:9081 indusstack/rekuiper:1.0.0-rc4
+docker run -d --name rekuiper -p 9081:9081 indusstack/rekuiper:1.0.0-rc5
 ```
 
 ::: tip Built-in Web Observability UI
@@ -229,15 +229,15 @@ All tests run on dedicated Linux hardware constrained to **one physical CPU core
 
 | Measure | Result | Tested on |
 | :--- | :--- | :---: |
-| **In-process stream throughput (Zero-parse)** | **2,464,711 events/s** (500k in 203 ms, 0 ms drain) | **1.0.0-rc4** |
-| **End-to-end JSON stream throughput** | **1,141,417 events/s** (500k in 438 ms, 0 ms drain) | **1.0.0-rc4** |
+| **In-process stream throughput (Zero-parse)** | **2,464,711 events/s** (500k in 203 ms, 0 ms drain) | **1.0.0-rc5** |
+| **End-to-end JSON stream throughput** | **1,141,417 events/s** (500k in 438 ms, 0 ms drain) | **1.0.0-rc5** |
 | MQTT network throughput (Single rule) | 150,000 to 200,000 messages/s (0.00% loss) | 0.500 |
 | Concurrent rules on one stream | 1,000 rules (500,000 evaluations/s) | 0.505 |
-| Heap memory under load | 4.4 to 10.2 MiB (Flat plateau, zero GC pauses) | 1.0.0-rc4 |
-| Static binary footprint | ~30 MB (Self-contained, zero external deps) | 1.0.0-rc4 |
+| Heap memory under load | 4.4 to 10.2 MiB (Flat plateau, zero GC pauses) | 1.0.0-rc5 |
+| Static binary footprint | ~30 MB (Self-contained, zero external deps) | 1.0.0-rc5 |
 
 ::: details Comparison with eKuiper 2.4.1 under the same limits
-| Capability | rekuiper (1.0.0-rc4) | eKuiper 2.4.1 | Performance Delta |
+| Capability | rekuiper (1.0.0-rc5) | eKuiper 2.4.1 | Performance Delta |
 | :--- | :--- | :--- | :--- |
 | **In-process stream throughput** | **1,000,000+ events/s** | N/A (Embedded runtime only) | Native Rust speed |
 | **Network MQTT throughput** | **150,000 to 200,000 msg/s** | ~20,000 msg/s | **8x to 10x throughput** |

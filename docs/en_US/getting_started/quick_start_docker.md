@@ -14,7 +14,7 @@ docker run -d \
   -p 9081:9081 \
   -p 20498:20498 \
   -p 20499:20499 \
-  indusstack/rekuiper:1.0.0-rc4
+  indusstack/rekuiper:1.0.0-rc5
 ```
 
 Verify that the engine operates and responds:

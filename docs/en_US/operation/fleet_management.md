@@ -80,7 +80,7 @@ The Control Plane records all registered edge gateways in memory and persists al
   },
   "endpoint": "ws://connected",
   "status": "online",
-  "version": "1.0.0-rc4",
+  "version": "1.0.0-rc5",
   "last_heartbeat": 1740000000,
   "cpu_usage": 14.2,
   "memory_mb": 46.0,
