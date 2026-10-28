@@ -115,7 +115,7 @@ Key highlights:
 - **Native Apache IoTDB Sink**: Implemented built-in `iotdb` sink connecting directly to Apache IoTDB REST service (`/rest/v1/insertRecord`). Supports dynamic tree model device path templates, explicit or projected measurement arrays, batch tablet aggregation, and MCP resource inspection.
 - **Native Image Sink**: Implemented built-in `image` sink writing binary camera frames (JPEG/PNG) to disk with automated age (`maxAge`) and count (`maxCount`) retention pruning.
 - **Random Source Compatibility Alias**: Added native backward-compatibility alias mapping `TYPE="random"` stream DDL directly to the high-performance Simulator source engine with `random/` and `simulator/` configuration resolution.
-- **Model Context Protocol (MCP) Parity**: Added `explain_rule` tool and updated `import_data` tool with partial merge mode and fail-fast validation in ASD-STE100. Added `audit_security_posture` prompt, `rekuiper://schemas/influx`, `rekuiper://schemas/tdengine`, `rekuiper://schemas/iotdb`, `rekuiper://schemas/image`, and `rekuiper://schemas/random` resources.
+- **Model Context Protocol (MCP) Parity**: Added `explain_rule` tool and updated `import_data` tool with partial merge mode and fail-fast validation. Added `audit_security_posture` prompt, `rekuiper://schemas/influx`, `rekuiper://schemas/tdengine`, `rekuiper://schemas/iotdb`, `rekuiper://schemas/image`, and `rekuiper://schemas/random` resources.
 
 - Docker image: `ankurkrp/rekuiper:0.508-beta` (plus `latest`)
 - Helm chart: `deploy/chart/ekuiper` (`AppVersion: 0.508-beta`)
@@ -139,14 +139,14 @@ Key highlights:
 
 # Release Notes - rekuiper v0.506-beta
 
-`rekuiper` v0.506-beta adds upstream SQL parity functions, stream ingestion buffer policy enforcement, file sink traversal hardening, and Model Context Protocol (MCP) server 2.0. This release also aligns all project documentation with the ASD-STE100 technical English standard.
+`rekuiper` v0.506-beta adds upstream SQL parity functions, stream ingestion buffer policy enforcement, file sink traversal hardening, and Model Context Protocol (MCP) server 2.0.
 
 Key highlights:
 - **Upstream SQL Parity Functions**: Adds `array_positions(array, value)`, `acc_distinct_collect(expr)` (and alias `distinct_acc(expr)`), and four-argument `lead(expr, offset, default, ignore_null)`.
 - **Stream Ingestion Buffer Policy**: Validates `BUFFER_FULL_POLICY` configuration during stream creation, permitting `block` and `dropOldest`.
 - **File Sink Traversal Hardening**: Enforces path traversal prevention blocking `..` parent references unless `allowExternalFileAccess` is true.
 - **Model Context Protocol (MCP) Server 2.0**: Adds four tools, four resources, three prompts, and offline simulation for vector similarity and array analytics.
-- **ASD-STE100 Technical Documentation**: Standardizes all English documentation pages to the ASD-STE100 specification with verified static VitePress compilation.
+- **Technical Documentation**: Standardizes all English documentation pages with verified static VitePress compilation.
 
 - MCP Documentation: [`crates/rekuiper-mcp/README.md`](crates/rekuiper-mcp/README.md)
 - Docker image: `ankurkrp/rekuiper:0.506-beta` (plus `latest`)

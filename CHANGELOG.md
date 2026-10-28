@@ -35,7 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - **Verified Benchmark Results (2.46M+ EPS)**: Re-verified single-core `--release` throughput (`perf_throughput.rs`): **2,464,711 events/s** (`202.86 ms` for 500,000 records, zero-parse in-process SQL pipeline) and **1,141,417 events/s** (`438.05 ms` for 500,000 records, end-to-end JSON pipeline).
 - **Non-Blocking Host Metrics Cache & O(1) Ring Buffers**: Added a 500ms TTL cache for `sysinfo::System` CPU and memory refreshes on `GET /` and `GET /metrics`. Replaced `Vec::remove(0)` shifts with $O(1)$ `VecDeque::pop_front()` across `TraceSpan`, `RuleErrorBuffer`, and `JoinStreamState`.
-- **Modular Source Connectors & Documentation Visuals**: Extracted 2,533 lines of source connector actors into `crates/rekuiper-server/src/engine/sources.rs`. Added 14 ASD-STE100 light-theme architectural SVG diagrams across `docs/en_US/`, bringing visual diagram coverage to 21.3% (39/183 pages) with zero broken links.
+- **Modular Source Connectors & Documentation Visuals**: Extracted 2,533 lines of source connector actors into `crates/rekuiper-server/src/engine/sources.rs`. Added 14 architectural SVG diagrams across `docs/en_US/` and resolved all broken documentation links.
 
 ## [1.0.0-rc4] - 2026-10-16
 
@@ -155,7 +155,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Model Context Protocol (MCP) Server 2.0**: Added 4 new tools (`register_wasm_plugin`, `list_wasm_plugins`, `delete_wasm_plugin`, `validate_secrets`), 4 new resources (`rekuiper://plugins/wasm`, `rekuiper://schemas/rabbitmq`, `rekuiper://schemas/parquet`, `rekuiper://schemas/edgex`), 3 new prompts, and embedded offline support for vector similarity, array, and stateful analytics.
 
 ### Changed
-- **Documentation Standards**: Rewrote and aligned all technical documentation in `docs/en_US/` to the ASD-STE100 Simplified Technical English standard with complete VitePress static build validation.
+- **Documentation Standards**: Rewrote and aligned all technical documentation in `docs/en_US/` with complete VitePress static build validation.
 
 ### Packaging
 - Updated official Docker images to `ankurkrp/rekuiper:0.506-beta`.
