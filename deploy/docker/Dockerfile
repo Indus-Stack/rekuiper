@@ -15,6 +15,7 @@ WORKDIR /usr/src/rekuiper
 
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
+COPY etc ./etc
 
 # Build release binaries in parallel
 RUN cargo build --release -j6

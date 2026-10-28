@@ -63,6 +63,9 @@ jobs:
       - name: Validate Docker Configuration
         run: docker compose -f deploy/docker/docker-compose.yml config
 
+      - name: Package and verify all publishable crates
+        run: cargo package --workspace --exclude rekuiper-mcp
+
       - name: Provision Isolated Mosquitto Broker (Plaintext & TLS)
         uses: ./.github/actions/setup-mosquitto
         with:
@@ -244,9 +247,15 @@ jobs:
             "ruleengine"
           )
 
+          VERSION=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "kuiperd") | .version')
           for crate in "${CRATES[@]}"; do
-            echo "=== Publishing crate: ${crate} ==="
-            cargo publish -p "${crate}" --token "${CARGO_REGISTRY_TOKEN}" || true
+            echo "=== Publishing crate: ${crate} v${VERSION} ==="
+            STATUS=$(curl -s -o /dev/null -w '%{http_code}' -A "rekuiper-release (https://github.com/Indus-Stack/rekuiper)" "https://crates.io/api/v1/crates/${crate}/${VERSION}")
+            if [ "$STATUS" = "200" ]; then
+              echo "${crate} v${VERSION} already exists on crates.io; skipping."
+              continue
+            fi
+            cargo publish -p "${crate}" --token "${CARGO_REGISTRY_TOKEN}"
             echo "Sleeping 15 seconds for crates.io index propagation..."
             sleep 15
           done
