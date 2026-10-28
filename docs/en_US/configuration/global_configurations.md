@@ -160,11 +160,38 @@ basic:
     keyfile: /var/https-server.key
 ```
 
-- `restIp`: The network IP address bound by the REST API server. Defaults to `127.0.0.1` (PR #4089 security hardening).
+- `restIp`: The network IP address bound by the REST API server (`9081`), the secondary EdgeX listener (`59720`), and the Prometheus metrics server (`20499`). Defaults to `127.0.0.1` (PR #4089 security hardening).
 - `restPort`: The HTTP port for the REST API server (default `9081`).
 - `httpServerIp`: The network IP address bound by the ruletest SSE streaming server. Defaults to `127.0.0.1`.
 - `httpServerPort`: The port for the ruletest SSE streaming server (default `10081`).
 - `restTls`: Paths to TLS certificates and private keys. When configured, the REST API listens on HTTPS.
+- `enableUi`: Enables the embedded Web Console at `GET /ui` (default `false`).
+- `uiPassword`: Optional password required to unlock the Web Console (`POST /ui/auth`) and authenticate console API calls (`Authorization: Bearer <password>`). Verified using constant-time comparison.
+- `uiIpAllowlist`: List of IP addresses or CIDR ranges permitted to access `/ui` and `/ui/auth`. Fails closed (`HTTP 403 Forbidden`) when a client IP does not match or cannot be verified; `X-Forwarded-For` and `X-Real-IP` headers are trusted only when the direct TCP peer is loopback (`127.0.0.1` or `::1`).
+- `fleetToken`: Shared secret token for Fleet Control Plane WebSocket agents (`/fleet/ws`) and Fleet REST API calls (`Authorization: Bearer <token>` or `X-Fleet-Token`), verified in constant time.
+
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 860 210" width="100%" height="auto" role="img" aria-label="rekuiper Network Listeners and Security Binding Architecture" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">
+  <rect x="0" y="0" width="860" height="210" rx="10" fill="#f8fafc" stroke="#e2e8f0" stroke-width="1" />
+  <text x="430" y="28" text-anchor="middle" font-size="14" font-weight="700" fill="#0f172a">Default Loopback Binding &amp; Listener Architecture (basic.restIp = 127.0.0.1)</text>
+  <rect x="30" y="50" width="240" height="135" rx="8" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5" />
+  <text x="150" y="75" text-anchor="middle" font-size="12" font-weight="700" fill="#1e40af">Primary REST &amp; Web UI</text>
+  <text x="150" y="96" text-anchor="middle" font-size="11" fill="#334155">Bind: restIp:restPort (127.0.0.1:9081)</text>
+  <text x="150" y="116" text-anchor="middle" font-size="10" fill="#64748b">Guards: RS256 JWT / uiPassword / fleetToken</text>
+  <text x="150" y="134" text-anchor="middle" font-size="10" fill="#059669">Fail-Closed CIDR uiIpAllowlist</text>
+  <text x="150" y="152" text-anchor="middle" font-size="10" fill="#64748b">Loopback-Trusted X-Forwarded-For</text>
+  <rect x="310" y="50" width="240" height="135" rx="8" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5" />
+  <text x="430" y="75" text-anchor="middle" font-size="12" font-weight="700" fill="#c2410c">Prometheus Metrics Server</text>
+  <text x="430" y="96" text-anchor="middle" font-size="11" fill="#334155">Bind: restIp:prometheusPort (127.0.0.1:20499)</text>
+  <text x="430" y="116" text-anchor="middle" font-size="10" fill="#64748b">Endpoint: GET /metrics</text>
+  <text x="430" y="134" text-anchor="middle" font-size="10" fill="#059669">500ms TTL Cached Host Telemetry</text>
+  <text x="430" y="152" text-anchor="middle" font-size="10" fill="#64748b">32 Multidimensional Metric Families</text>
+  <rect x="590" y="50" width="240" height="135" rx="8" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5" />
+  <text x="710" y="75" text-anchor="middle" font-size="12" font-weight="700" fill="#047857">EdgeX &amp; Ruletest Listeners</text>
+  <text x="710" y="96" text-anchor="middle" font-size="11" fill="#334155">EdgeX: restIp:59720 (127.0.0.1:59720)</text>
+  <text x="710" y="116" text-anchor="middle" font-size="11" fill="#334155">Ruletest SSE: httpServerIp:10081</text>
+  <text x="710" y="134" text-anchor="middle" font-size="10" fill="#059669">Zero Unintended 0.0.0.0 Exposure</text>
+  <text x="710" y="152" text-anchor="middle" font-size="10" fill="#64748b">Explicit Override via kuiper.yaml / Env</text>
+</svg>
 
 > [!NOTE]
 > For security hardening, rekuiper defaults all listeners (`ip`, `restIp`, `httpServerIp`) to loopback (`127.0.0.1`), preventing unintentional exposure over external networks when authentication is disabled. When deploying inside Docker containers or edge gateways requiring external access, explicitly configure `restIp: 0.0.0.0` and `httpServerIp: 0.0.0.0` in `kuiper.yaml`, or set environment variables `KUIPER__BASIC__RESTIP=0.0.0.0` and `KUIPER__BASIC__HTTPSERVERIP=0.0.0.0`.
@@ -195,7 +222,7 @@ basic:
   prometheusPort: 20499
 ```
 
-When enabled, rekuiper exports Prometheus metrics on `http://localhost:20499/metrics`. You can set `prometheusPort` to match `restPort` to serve metrics through the REST API port.
+When enabled, rekuiper exports Prometheus metrics on `http://<restIp>:20499/metrics` (default `http://127.0.0.1:20499/metrics`). You can set `prometheusPort` to match `restPort` to serve metrics through the REST API port.
 
 ## Plugin Hosts (Legacy Compatibility)
 

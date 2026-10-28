@@ -454,26 +454,31 @@ pub fn ip_matches_entry(client_ip: &std::net::IpAddr, entry: &str) -> bool {
     false
 }
 
-pub fn extract_client_ip(headers: &axum::http::HeaderMap) -> Option<std::net::IpAddr> {
-    if let Some(x_forwarded) = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()) {
-        if let Some(first_ip) = x_forwarded.split(',').next() {
-            if let Ok(ip) = first_ip.trim().parse::<std::net::IpAddr>() {
+pub fn extract_client_ip(
+    headers: &axum::http::HeaderMap,
+    peer_addr: Option<std::net::SocketAddr>,
+) -> Option<std::net::IpAddr> {
+    let trust_forwarded = peer_addr.map(|a| a.ip().is_loopback()).unwrap_or(true);
+    if trust_forwarded {
+        if let Some(x_forwarded) = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()) {
+            if let Some(first_ip) = x_forwarded.split(',').next() {
+                if let Ok(ip) = first_ip.trim().parse::<std::net::IpAddr>() {
+                    return Some(ip);
+                }
+            }
+        }
+        if let Some(x_real_ip) = headers.get("x-real-ip").and_then(|v| v.to_str().ok()) {
+            if let Ok(ip) = x_real_ip.trim().parse::<std::net::IpAddr>() {
                 return Some(ip);
             }
         }
     }
-    if let Some(x_real_ip) = headers.get("x-real-ip").and_then(|v| v.to_str().ok()) {
-        if let Ok(ip) = x_real_ip.trim().parse::<std::net::IpAddr>() {
-            return Some(ip);
-        }
-    }
-    // Loopback fallback for local connections
-    Some(std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1)))
+    peer_addr.map(|a| a.ip())
 }
 
 pub async fn ui_handler(
     axum::extract::State(state): axum::extract::State<AppState>,
-    headers: axum::http::HeaderMap,
+    req: axum::extract::Request,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
     let cfg = state.config.read();
@@ -490,8 +495,21 @@ pub async fn ui_handler(
 
     // 2. Check IP allowlist (if configured)
     if !cfg.basic.ui_ip_allowlist.is_empty() {
-        let client_ip = extract_client_ip(&headers)
-            .unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1)));
+        let peer_addr = req
+            .extensions()
+            .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
+            .map(|ci| ci.0);
+        let Some(client_ip) = extract_client_ip(req.headers(), peer_addr) else {
+            return (
+                axum::http::StatusCode::FORBIDDEN,
+                [(
+                    axum::http::header::CONTENT_TYPE,
+                    "text/plain; charset=utf-8",
+                )],
+                "Access denied: client IP could not be verified against ui_ip_allowlist\n",
+            )
+                .into_response();
+        };
         let mut allowed = false;
         for entry in &cfg.basic.ui_ip_allowlist {
             if ip_matches_entry(&client_ip, entry) {
@@ -514,19 +532,12 @@ pub async fn ui_handler(
 
     drop(cfg);
 
-    for candidate in &[
-        "etc/ui.html",
-        "/home/paanday/fleet/control/etc/ui.html",
-        "/home/paanday/fleet/ui.html",
-        "/tmp/fleet/control/etc/ui.html",
-    ] {
-        if let Ok(content) = std::fs::read_to_string(candidate) {
-            return (
-                [(axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8")],
-                content,
-            )
-                .into_response();
-        }
+    if let Ok(content) = std::fs::read_to_string("etc/ui.html") {
+        return (
+            [(axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8")],
+            content,
+        )
+            .into_response();
     }
     (
         [(axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8")],
@@ -570,9 +581,9 @@ pub async fn ui_login(
     let cfg = state.config.read();
     let token = payload.token.trim();
 
-    // 1. Check custom UI password
+    // 1. Check custom UI password (constant-time)
     if let Some(ref pw) = cfg.basic.ui_password {
-        if token == pw {
+        if crate::state::constant_time_eq(token, pw) {
             return (
                 axum::http::StatusCode::OK,
                 axum::Json(serde_json::json!({ "status": "ok", "token": token })),
@@ -581,9 +592,9 @@ pub async fn ui_login(
         }
     }
 
-    // 2. Check fleet token
+    // 2. Check fleet token (constant-time)
     if let Some(ref ft) = cfg.basic.fleet_token {
-        if token == ft {
+        if crate::state::constant_time_eq(token, ft) {
             return (
                 axum::http::StatusCode::OK,
                 axum::Json(serde_json::json!({ "status": "ok", "token": token })),

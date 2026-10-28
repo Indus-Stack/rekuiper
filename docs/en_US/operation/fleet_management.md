@@ -10,11 +10,10 @@ Edge `kuiperd` gateways connect outbound to the Rekuiper Server Control Plane ac
 
 Edge gateways initiate outbound WebSocket connections to `/fleet/ws` on the Control Plane. Once the connection establishes, Yamux multiplexes the single TCP/TLS channel into independent streams:
 
-- **Stream 0 (Control & Telemetry):** Carries bidirectional JSON-RPC frames. The Control Plane dispatches commands (`ApplySnapshot`, `Rollback`, `GetStatus`). Edge agents send periodic heartbeats (CPU, memory, rule count, DLQ alerts, and active snapshot integrity hashes).
-- **Streams 1..N (Remote Proxy Channels):** Tunnel HTTP requests on-demand from the Control Plane (`/api/v1/fleet/devices/:id/proxy/*`) into the local Axum router of the target edge gateway.
+- **Stream 0 (Control & Telemetry):** Carries bidirectional JSON frames. The Control Plane dispatches commands (`ApplySnapshot`, `Rollback`, `GetStatus`) using a FIFO response queue so concurrent commands resolve deterministically. Each active session receives a monotonic connection identifier (`conn_id`) so delayed cleanup from a previous socket never disconnects a newer session. Edge agents send periodic heartbeats (CPU, memory, rule count, DLQ alerts, and active snapshot integrity hashes).
+- **Streams 1..N (Remote Proxy Channels):** Tunnel HTTP requests on-demand from the Control Plane (`/api/v1/fleet/devices/:id/proxy/*` or `/fleet/devices/:id/proxy/*`) into the local Axum router of the target edge gateway.
 
 ![Rekuiper Fleet Control Plane Multiplexing Architecture](/diagrams/fleet_control_plane.svg)
-
 
 ---
 
@@ -29,9 +28,10 @@ Start the edge gateway daemon with the Control Plane URL and device identificati
 | `--control-plane-url <URL>` | `REKUIPER_CONTROL_PLANE_URL` | None | WebSocket address of the Control Plane (for example, `ws://10.0.0.1:9081/fleet/ws`). |
 | `--device-id <ID>` | `REKUIPER_DEVICE_ID` | Hostname | Unique device identifier in the fleet catalog. |
 | `--device-name <NAME>` | `REKUIPER_DEVICE_NAME` | Device ID | Human-readable name for the device. |
-| `--plant <PLANT>` | `REKUIPER_DEVICE_PLANT` | `default-plant` | Plant group tag (for example, `plant-detroit`). |
-| `--region <REGION>` | `REKUIPER_DEVICE_REGION` | `default-region` | Regional group tag (for example, `us-east`). |
+| `--plant <PLANT>` | `REKUIPER_DEVICE_PLANT` | `default-plant` | Plant group tag (for example, `detroit-automotive`). |
+| `--region <REGION>` | `REKUIPER_DEVICE_REGION` | `default-region` | Regional group tag (for example, `us-midwest`). |
 | `--device-type <TYPE>` | `REKUIPER_DEVICE_TYPE` | `edge-gateway` | Device category tag. |
+| `--fleet-token <TOKEN>` | `REKUIPER_FLEET_TOKEN` | None | Shared authentication token verified by constant-time comparison (`Authorization: Bearer <token>` or `X-Fleet-Token`). |
 
 ### Startup Command
 
@@ -57,11 +57,11 @@ If the WebSocket connection disconnects:
 
 ## 3. Device Fleet Catalog
 
-The Control Plane records all registered edge gateways in memory and persists them in the internal key-value store (`kv.rs`).
+The Control Plane records all registered edge gateways in memory and persists all fleet state (`fleet_devices`, `fleet_snapshots`, `fleet_rollouts`, and `fleet_audit`) in the internal key-value store (`kv.rs`). All persisted fleet records are reloaded automatically on server startup.
 
 ### Endpoints
 
-- `GET /api/v1/fleet/devices` &mdash; Returns the list of all registered gateways.
+- `GET /api/v1/fleet/devices` &mdash; Returns the list of all registered gateways (also mounted at `/fleet/devices`).
 - `GET /api/v1/fleet/devices/:id` &mdash; Returns detailed state and telemetry for one device.
 - `DELETE /api/v1/fleet/devices/:id` &mdash; Deregisters an offline device.
 - `GET /api/v1/fleet/groups` &mdash; Returns device counts grouped by plant, region, and device type.
@@ -72,21 +72,25 @@ The Control Plane records all registered edge gateways in memory and persists th
 {
   "device_id": "gw-detroit-press-01",
   "name": "Detroit Stamping Press 01",
-  "group": {
-    "plant": "detroit-automotive",
-    "region": "us-midwest",
-    "device_type": "industrial-pc"
+  "plant": "detroit-automotive",
+  "region": "us-midwest",
+  "device_type": "industrial-pc",
+  "labels": {
+    "line": "stamping-01"
   },
+  "endpoint": "ws://connected",
   "status": "online",
   "version": "1.0.0-rc4",
   "last_heartbeat": 1740000000,
-  "cpu_percent": 14.2,
-  "memory_bytes": 48234496,
+  "cpu_usage": 14.2,
+  "memory_mb": 46.0,
+  "rules_count": 8,
+  "running_rules": 8,
+  "dlq_errors": 0,
   "active_snapshot_id": "snap-v2-1",
-  "active_snapshot_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-  "rule_count": 8,
-  "dlq_count": 0,
-  "last_rollback_reason": null
+  "active_snapshot_hash": 15892301948231,
+  "previous_snapshot_id": "snap-v2-0",
+  "ConnectedViaWs": true
 }
 ```
 
@@ -104,22 +108,48 @@ Send a `POST` request to `/api/v1/fleet/snapshots`:
 curl -X POST http://localhost:9081/api/v1/fleet/snapshots \
   -H "Content-Type: application/json" \
   -d '{
-    "snapshot_id": "snapshot-press-v2-4",
+    "name": "snapshot-press-v2-4",
     "description": "Added motor vibration anomaly rule",
-    "manifest_yaml": "streams:\n  - sql: CREATE STREAM motor_vibration () WITH (DATASOURCE=\"vibration/raw\", FORMAT=\"json\");\nrules:\n  - id: rule_vib_high\n    sql: SELECT * FROM motor_vibration WHERE val > 80\n    actions:\n      - mqtt: { server: \"tcp://broker:1883\", topic: \"alerts/vibration\" }"
+    "declarative": {
+      "version": "1.0",
+      "streams": {
+        "motor_vibration": "CREATE STREAM motor_vibration () WITH (DATASOURCE=\"vibration/raw\", FORMAT=\"json\");"
+      },
+      "rules": {
+        "rule_vib_high": {
+          "sql": "SELECT * FROM motor_vibration WHERE val > 80",
+          "actions": [
+            {"mqtt": {"server": "tcp://broker:1883", "topic": "alerts/vibration"}}
+          ]
+        }
+      }
+    }
   }'
 ```
 
-The response contains the computed `sha256_hash`:
+The response contains the computed `sha256` digest:
 
 ```json
 {
-  "snapshot_id": "snapshot-press-v2-4",
-  "sha256_hash": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+  "id": "snap-1",
+  "name": "snapshot-press-v2-4",
   "description": "Added motor vibration anomaly rule",
   "created_at": 1740001000,
-  "stream_count": 1,
-  "rule_count": 1
+  "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+  "declarative": {
+    "version": "1.0",
+    "streams": {
+      "motor_vibration": "CREATE STREAM motor_vibration () WITH (DATASOURCE=\"vibration/raw\", FORMAT=\"json\");"
+    },
+    "rules": {
+      "rule_vib_high": {
+        "sql": "SELECT * FROM motor_vibration WHERE val > 80",
+        "actions": [
+          {"mqtt": {"server": "tcp://broker:1883", "topic": "alerts/vibration"}}
+        ]
+      }
+    }
+  }
 }
 ```
 
@@ -130,20 +160,20 @@ The response contains the computed `sha256_hash`:
 The Control Plane manages declarative rollout pipelines through four progressive stages:
 
 ```
-[Development] ──> [Staging] ──> [Canary (5%)] ──> [Production (100%)]
+[canary (10%)] ──> [batch_25 (25%)] ──> [batch_50 (50%)] ──> [full / completed (100%)]
 ```
 
 ### Health-Gated Canary Promotion
 
-When you target a cohort (for example, `plant-detroit` or `all`):
+When you target a cohort (for example, `plant:detroit-automotive` or `all`):
 
 1. **Deploy to Canary:** The rollout pushes the snapshot first to the Canary cohort over Yamux Stream 0.
-2. **Watchdog Evaluation:** The Control Plane enters `canary_evaluating` state and monitors telemetry heartbeats.
+2. **Watchdog Evaluation:** The Control Plane monitors telemetry heartbeats from canary devices.
 3. **Automatic Halt on Anomaly:**
    - If an edge device triggers an automatic watchdog rollback (runtime exception, panic, or rule error),
    - Or if an edge device reports an active DLQ count spike,
    - The Control Plane automatically marks the rollout as `rolled_back`, halts further deployment, and writes a failure record to the audit trail.
-4. **Production Promotion:** If Canary devices remain healthy without rollbacks or DLQ spikes, an administrator calls `/api/v1/fleet/rollouts/:id/promote` to promote the snapshot to 100% of the fleet.
+4. **Progressive Promotion:** If Canary devices remain healthy without rollbacks or DLQ spikes, an administrator calls `/api/v1/fleet/rollouts/:id/promote` to advance the rollout through `batch_25`, `batch_50`, and `full` (`completed`).
 
 ### Launching a Rollout
 
@@ -151,24 +181,22 @@ When you target a cohort (for example, `plant-detroit` or `all`):
 curl -X POST http://localhost:9081/api/v1/fleet/rollouts \
   -H "Content-Type: application/json" \
   -d '{
-    "rollout_id": "rollout-press-v2-4",
-    "snapshot_id": "snapshot-press-v2-4",
-    "target_group": "detroit-automotive",
-    "current_stage": "canary",
-    "canary_percentage": 5
+    "snapshot_id": "snap-1",
+    "target_group": "plant:detroit-automotive",
+    "auto_promote": false
   }'
 ```
 
 ### Promoting a Healthy Rollout
 
 ```bash
-curl -X POST http://localhost:9081/api/v1/fleet/rollouts/rollout-press-v2-4/promote
+curl -X POST http://localhost:9081/api/v1/fleet/rollouts/rollout-1/promote
 ```
 
 ### Halting a Faulty Rollout
 
 ```bash
-curl -X POST http://localhost:9081/api/v1/fleet/rollouts/rollout-press-v2-4/rollback
+curl -X POST http://localhost:9081/api/v1/fleet/rollouts/rollout-1/rollback
 ```
 
 ---
@@ -224,9 +252,9 @@ All administrative actions (snapshot creation, rollout launch, Canary promotion,
   {
     "timestamp": 1740001050,
     "action": "start_rollout",
-    "target": "rollout-press-v2-4",
+    "target": "rollout-1",
     "status": "success",
-    "details": "Stage: canary, Target: detroit-automotive"
+    "details": "Stage: canary, Target: plant:detroit-automotive"
   }
 ]
 ```
@@ -238,7 +266,7 @@ All administrative actions (snapshot creation, rollout launch, Canary promotion,
 The built-in web console (`/ui`) provides a graphical interface for Fleet Management:
 
 - **Summary KPI Strip:** Displays total edge gateways, online count, active rollouts, and global DLQ status.
-- **Staged Pipeline Progress Bar:** Visualizes stage movement (Dev &rarr; Staging &rarr; Canary 5% &rarr; Prod 100%) with Canary evaluation status and action triggers.
+- **Staged Pipeline Progress Bar:** Visualizes stage movement (Canary 10% &rarr; Batch 25% &rarr; Batch 50% &rarr; Full 100%) with Canary evaluation status and action triggers.
 - **Filterable Catalog:** Filter edge gateways by plant, region, device type, or health status.
 - **Remote Inspect Viewer:** Opens a live modal to inspect rules, metrics, and logs through the Yamux proxy tunnel.
 - **Audit & DLQ Tables:** Shows live alerts and security audit logs with timestamps and status indicators.

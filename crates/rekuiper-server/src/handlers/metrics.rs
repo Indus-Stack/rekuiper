@@ -2,24 +2,42 @@ use crate::handlers::current_process_stats;
 use crate::state::AppState;
 use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
 use serde_json::json;
+use std::sync::LazyLock;
+use std::time::{Duration, Instant};
 use sysinfo::{CpuRefreshKind, MemoryRefreshKind, RefreshKind, System};
+
+static HOST_STATS_CACHE: LazyLock<parking_lot::Mutex<(Instant, System)>> = LazyLock::new(|| {
+    let mut sys = System::new_with_specifics(
+        RefreshKind::new()
+            .with_cpu(CpuRefreshKind::everything())
+            .with_memory(MemoryRefreshKind::everything()),
+    );
+    sys.refresh_cpu_usage();
+    sys.refresh_memory();
+    parking_lot::Mutex::new((Instant::now(), sys))
+});
+
+fn cached_host_stats() -> (f32, u64, u64) {
+    let mut guard = HOST_STATS_CACHE.lock();
+    if guard.0.elapsed() >= Duration::from_millis(500) {
+        guard.1.refresh_cpu_usage();
+        guard.1.refresh_memory();
+        guard.0 = Instant::now();
+    }
+    (
+        guard.1.global_cpu_info().cpu_usage(),
+        guard.1.used_memory(),
+        guard.1.total_memory(),
+    )
+}
 
 pub async fn ping_handler() -> impl IntoResponse {
     StatusCode::OK
 }
 
 pub async fn root_handler(State(state): State<AppState>) -> impl IntoResponse {
-    let mut sys = System::new_with_specifics(
-        RefreshKind::new()
-            .with_cpu(CpuRefreshKind::everything())
-            .with_memory(MemoryRefreshKind::everything()),
-    );
-    sys.refresh_all();
-
     let uptime = state.start_time.elapsed().as_secs();
-    let cpu_usage = sys.global_cpu_info().cpu_usage();
-    let memory_used = sys.used_memory();
-    let memory_total = sys.total_memory();
+    let (cpu_usage, memory_used, memory_total) = cached_host_stats();
 
     let arch = match std::env::consts::ARCH {
         "x86_64" => "amd64",
@@ -58,16 +76,15 @@ pub async fn metrics_dump_check() -> impl IntoResponse {
 
 pub async fn metrics_dump(State(state): State<AppState>) -> impl IntoResponse {
     let (cpu, memory) = current_process_stats();
-    let mut sys = System::new_all();
-    sys.refresh_all();
+    let (_host_cpu, used_memory, total_memory) = cached_host_stats();
     Json(json!({
         "metrics": {
             "cpu": cpu,
             "cpu_usage": cpu,
             "memory": memory,
             "memory_bytes": memory,
-            "total_memory": sys.total_memory(),
-            "used_memory": sys.used_memory(),
+            "total_memory": total_memory,
+            "used_memory": used_memory,
             "uptime_seconds": state.start_time.elapsed().as_secs(),
         },
         "cpu": cpu,

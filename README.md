@@ -128,8 +128,8 @@ All tests run in a container limited to one CPU core and 1 GiB of RAM.
 
 | Measure | Result | Tested on |
 | :--- | :--- | :--- |
-| End-to-end streaming SQL throughput | 1,085,885 events per second (460 ms for 500k records) | 1.0.0-rc4 |
-| Zero-parse in-process SQL pipeline | 2,207,367 events per second (226 ms for 500k records) | 1.0.0-rc4 |
+| End-to-end streaming SQL throughput | 1,141,417 events per second (438 ms for 500k records) | 1.0.0-rc4 |
+| Zero-parse in-process SQL pipeline | 2,464,711 events per second (203 ms for 500k records) | 1.0.0-rc4 |
 | Parallel rules on one stream | 1,000 rules, 500,000 evaluations per second | 0.505 |
 | MQTT rule throughput, single rule | 150,000 to 200,000 messages per second | 0.500 |
 | Heap memory under load | 4.4 to 10.2 MiB | 0.500 |

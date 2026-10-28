@@ -9,3 +9,7 @@ rekuiper supports these built-in window categories:
 
 For complete window syntax and types, refer to [Window Functions](../../sqls/windows.md).
 
+![Tumbling Time Window](/diagrams/windows/tumbling_window.svg)
+
+![Tumbling Count Window](/diagrams/windows/tumbling_count_window.svg)
+

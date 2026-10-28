@@ -119,8 +119,11 @@ pub enum FleetServerCmd {
     ),
 }
 
+static NEXT_CONN_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
 #[derive(Clone)]
 pub struct ConnectedDeviceHandle {
+    pub conn_id: u64,
     pub cmd_tx: tokio::sync::mpsc::Sender<FleetServerCmd>,
     pub connected_at: i64,
 }
@@ -161,6 +164,62 @@ impl FleetManager {
         let mut mgr = Self::new();
         mgr.kv = Some(kv);
         mgr
+    }
+
+    pub async fn load_from_kv(&self, kv: &Arc<dyn KvStore>) -> Result<()> {
+        if let Ok(devs) = kv.list_all("fleet_devices").await {
+            let mut guard = self.devices.write();
+            for (k, v) in devs {
+                if let Ok(mut dev) = serde_json::from_str::<FleetDevice>(&v) {
+                    if dev.status == "online" {
+                        dev.status = "offline".to_string();
+                    }
+                    guard.insert(k, dev);
+                }
+            }
+        }
+        if let Ok(snaps) = kv.list_all("fleet_snapshots").await {
+            let mut guard = self.snapshots.write();
+            for (k, v) in snaps {
+                if let Ok(snap) = serde_json::from_str::<FleetSnapshot>(&v) {
+                    guard.insert(k, snap);
+                }
+            }
+        }
+        if let Ok(rollouts) = kv.list_all("fleet_rollouts").await {
+            let mut guard = self.rollouts.write();
+            for (k, v) in rollouts {
+                if let Ok(ro) = serde_json::from_str::<FleetRollout>(&v) {
+                    guard.insert(k, ro);
+                }
+            }
+        }
+        if let Ok(audits) = kv.list_all("fleet_audit").await {
+            let mut entries = Vec::new();
+            for (_k, v) in audits {
+                if let Ok(entry) = serde_json::from_str::<FleetAuditEntry>(&v) {
+                    entries.push(entry);
+                }
+            }
+            entries.sort_by_key(|e| e.timestamp);
+            if entries.len() > 1000 {
+                let drain_count = entries.len() - 1000;
+                entries.drain(0..drain_count);
+            }
+            *self.audit_log.write() = entries;
+        }
+        Ok(())
+    }
+
+    fn persist_rollout(&self, rollout: &FleetRollout) {
+        if let Some(kv) = &self.kv {
+            let kv_clone = kv.clone();
+            let key = rollout.rollout_id.clone();
+            let json_str = serde_json::to_string(rollout).unwrap_or_default();
+            tokio::spawn(async move {
+                let _ = kv_clone.set("fleet_rollouts", &key, &json_str).await;
+            });
+        }
     }
 
     pub fn record_audit(&self, action: &str, actor: &str, target_id: &str, details: Value) {
@@ -383,6 +442,7 @@ impl FleetManager {
         self.rollouts
             .write()
             .insert(rollout_id.clone(), rollout.clone());
+        self.persist_rollout(&rollout);
         self.record_audit(
             "rollout_started",
             "admin",
@@ -454,6 +514,7 @@ impl FleetManager {
                     r.status = RolloutStatus::RolledBack;
                     r.message = halt_msg.clone();
                     r.updated_at = chrono::Utc::now().timestamp();
+                    self.persist_rollout(r);
                 }
             }
             self.record_audit(
@@ -514,6 +575,7 @@ impl FleetManager {
                     r.message =
                         "Staged rollout promoted to 100% production successfully.".to_string();
                     r.updated_at = chrono::Utc::now().timestamp();
+                    self.persist_rollout(r);
                 }
             }
             self.record_audit(
@@ -564,6 +626,7 @@ impl FleetManager {
                 r.status = RolloutStatus::Completed;
                 r.message = "Rollout completed successfully across entire fleet.".to_string();
                 r.updated_at = chrono::Utc::now().timestamp();
+                self.persist_rollout(r);
             }
         }
 
@@ -585,6 +648,7 @@ impl FleetManager {
             r.status = RolloutStatus::RolledBack;
             r.message = "Rollout halted & rolled back manually by administrator.".to_string();
             r.updated_at = chrono::Utc::now().timestamp();
+            self.persist_rollout(r);
             (r.canary_devices.clone(), r.production_devices.clone())
         };
 
@@ -970,31 +1034,40 @@ pub async fn handle_fleet_ws_client(socket: AxumWebSocket, state: AppState) {
     let device_id = initial_hb.agent_id.clone();
     state.fleet.register_or_update_heartbeat(initial_hb);
 
-    // Register active connection
+    // Register active connection with monotonic session ID
+    let conn_id = NEXT_CONN_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     state.fleet.active_connections.write().insert(
         device_id.clone(),
         ConnectedDeviceHandle {
+            conn_id,
             cmd_tx: cmd_tx.clone(),
             connected_at: chrono::Utc::now().timestamp(),
         },
     );
-    state
-        .fleet
-        .record_audit("device_connected", "system", &device_id, json!({}));
+    state.fleet.record_audit(
+        "device_connected",
+        "system",
+        &device_id,
+        json!({"conn_id": conn_id}),
+    );
 
-    // Stream 0 session loop: manages incoming telemetry frames and pending command dispatches
+    // Stream 0 session loop: manages incoming telemetry frames and pending command dispatches (FIFO queue)
     let fleet_clone_session = state.fleet.clone();
-    type PendingReplySlot =
-        Arc<tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<Result<Value, String>>>>>;
-    let pending_reply: PendingReplySlot = Arc::new(tokio::sync::Mutex::new(None));
+    type PendingReplyQueue = Arc<
+        tokio::sync::Mutex<
+            std::collections::VecDeque<tokio::sync::oneshot::Sender<Result<Value, String>>>,
+        >,
+    >;
+    let pending_replies: PendingReplyQueue =
+        Arc::new(tokio::sync::Mutex::new(std::collections::VecDeque::new()));
 
-    let pending_reply_reader = pending_reply.clone();
+    let pending_reply_reader = pending_replies.clone();
     let reader_task = tokio::spawn(async move {
         while let Ok(bytes) = read_frame(&mut read_half).await {
             if let Ok(val) = serde_json::from_slice::<Value>(&bytes) {
                 if val.get("agent_id").is_none() && val.get("status").is_some() {
                     let mut guard = pending_reply_reader.lock().await;
-                    if let Some(reply) = guard.take() {
+                    if let Some(reply) = guard.pop_front() {
                         let _ = reply.send(Ok(val));
                         continue;
                     }
@@ -1006,17 +1079,17 @@ pub async fn handle_fleet_ws_client(socket: AxumWebSocket, state: AppState) {
         }
     });
 
-    let pending_reply_writer = pending_reply.clone();
+    let pending_reply_writer = pending_replies.clone();
     let write_task = tokio::spawn(async move {
         while let Some((cmd, reply)) = ctrl_cmd_rx.recv().await {
             {
                 let mut guard = pending_reply_writer.lock().await;
-                *guard = Some(reply);
+                guard.push_back(reply);
             }
             let payload = serde_json::to_vec(&cmd).unwrap_or_default();
             if let Err(e) = send_frame(&mut write_half, &payload).await {
                 let mut guard = pending_reply_writer.lock().await;
-                if let Some(r) = guard.take() {
+                if let Some(r) = guard.pop_back() {
                     let _ = r.send(Err(format!("Failed to write command to Stream 0: {}", e)));
                 }
                 break;
@@ -1033,10 +1106,33 @@ pub async fn handle_fleet_ws_client(socket: AxumWebSocket, state: AppState) {
     reader_task.abort();
     write_task.abort();
 
-    // Cleanup on disconnect
-    fleet_clone.active_connections.write().remove(&dev_id_clone);
-    fleet_clone.set_device_status(&dev_id_clone, "offline");
-    fleet_clone.record_audit("device_disconnected", "system", &dev_id_clone, json!({}));
+    // Drain any in-flight command replies so callers fail immediately instead of waiting for timeout
+    {
+        let mut guard = pending_replies.lock().await;
+        while let Some(reply) = guard.pop_front() {
+            let _ = reply.send(Err("Device connection closed".to_string()));
+        }
+    }
+
+    // Cleanup on disconnect only if this connection is still the active handle
+    let was_current = {
+        let mut conns = fleet_clone.active_connections.write();
+        if conns.get(&dev_id_clone).map(|h| h.conn_id) == Some(conn_id) {
+            conns.remove(&dev_id_clone);
+            true
+        } else {
+            false
+        }
+    };
+    if was_current {
+        fleet_clone.set_device_status(&dev_id_clone, "offline");
+        fleet_clone.record_audit(
+            "device_disconnected",
+            "system",
+            &dev_id_clone,
+            json!({"conn_id": conn_id}),
+        );
+    }
 }
 
 // ============================================================================

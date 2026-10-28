@@ -2,6 +2,33 @@
 
 Declarative GitOps mode lets you manage stream processing pipelines with configuration files.
 
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 860 195" width="100%" height="auto" role="img" aria-label="Declarative GitOps Workflow and Mutation Guard" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">
+  <rect x="0" y="0" width="860" height="195" rx="10" fill="#f8fafc" stroke="#e2e8f0" stroke-width="1" />
+  <text x="430" y="26" text-anchor="middle" font-size="14" font-weight="700" fill="#0f172a">Declarative GitOps Lifecycle &amp; Read-Only Mutation Guard</text>
+  <rect x="25" y="48" width="230" height="125" rx="8" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5" />
+  <text x="140" y="72" text-anchor="middle" font-size="12" font-weight="700" fill="#1e40af">1. Offline CI Validation</text>
+  <text x="140" y="94" text-anchor="middle" font-size="11" fill="#334155">rekuiper validate pipelines.d/</text>
+  <text x="140" y="114" text-anchor="middle" font-size="10" fill="#64748b">Checks SQL AST &amp; 221 Functions</text>
+  <text x="140" y="132" text-anchor="middle" font-size="10" fill="#64748b">Verifies Stream/Table References</text>
+  <text x="140" y="150" text-anchor="middle" font-size="10" fill="#2563eb">YAML / TOML / JSON Manifests</text>
+  <path d="M 255 110 L 305 110" stroke="#64748b" stroke-width="2" />
+  <polygon points="305,110 297,106 297,114" fill="#64748b" />
+  <rect x="305" y="48" width="250" height="125" rx="8" fill="#ffffff" stroke="#ea580c" stroke-width="1.5" />
+  <text x="430" y="72" text-anchor="middle" font-size="12" font-weight="700" fill="#c2410c">2. Differential Reconciliation</text>
+  <text x="430" y="94" text-anchor="middle" font-size="11" fill="#334155">--declarative &amp; --watch / SIGHUP</text>
+  <text x="430" y="114" text-anchor="middle" font-size="10" fill="#059669">Unchanged Rules Keep Running</text>
+  <text x="430" y="132" text-anchor="middle" font-size="10" fill="#64748b">Restarts Modified Rules Only</text>
+  <text x="430" y="150" text-anchor="middle" font-size="10" fill="#64748b">Atomic Rollback on Parse Error</text>
+  <path d="M 555 110 L 605 110" stroke="#64748b" stroke-width="2" />
+  <polygon points="605,110 597,106 597,114" fill="#64748b" />
+  <rect x="605" y="48" width="230" height="125" rx="8" fill="#ffffff" stroke="#10b981" stroke-width="1.5" />
+  <text x="720" y="72" text-anchor="middle" font-size="12" font-weight="700" fill="#047857">3. Read-Only Mutation Guard</text>
+  <text x="720" y="94" text-anchor="middle" font-size="11" fill="#334155">Blocks Ad-Hoc REST Drift (403)</text>
+  <text x="720" y="114" text-anchor="middle" font-size="10" fill="#059669">Permits GET, /v1/*, /ruletest</text>
+  <text x="720" y="132" text-anchor="middle" font-size="10" fill="#059669">Permits POST /declarative/reload</text>
+  <text x="720" y="150" text-anchor="middle" font-size="10" fill="#64748b">Zero Configuration Drift</text>
+</svg>
+
 Key capabilities:
 - Define streams, tables, rules, connections, and schemas in YAML, TOML, or JSON manifest files.
 - Validate pipelines offline before deployment with `rekuiper validate`.

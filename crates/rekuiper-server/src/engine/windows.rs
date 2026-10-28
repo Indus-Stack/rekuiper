@@ -249,7 +249,7 @@ pub(crate) async fn run_count_window_rule(
         .state
         .write()
         .insert("__rule_start__".to_string(), Value::from(start_time_ms));
-    let mut buffer: Vec<TaggedRow> = Vec::new();
+    let mut buffer: std::collections::VecDeque<TaggedRow> = std::collections::VecDeque::new();
     let mut events_since_trigger: usize = 0;
     let from_source = select_stmt.from.clone();
     let mut join_rx = spawn_join_forwarders(join_rxs);
@@ -274,7 +274,7 @@ pub(crate) async fn run_count_window_rule(
                 if !window_ingest_passes(&select_stmt, &record.data) {
                     continue;
                 }
-                buffer.push(TaggedRow { source: from_source.clone(), data: record.data });
+                buffer.push_back(TaggedRow { source: from_source.clone(), data: record.data });
                 events_since_trigger += 1;
                 if hop <= count {
                     // Standard count window (tumbling when hop == count, overlapping when hop < count)
@@ -283,7 +283,7 @@ pub(crate) async fn run_count_window_rule(
                             buffer.drain(0..count).collect()
                         } else {
                             // Overlapping: discard only the oldest `hop` records.
-                            let batch = buffer[0..count].to_vec();
+                            let batch: Vec<TaggedRow> = buffer.iter().take(count).cloned().collect();
                             buffer.drain(0..hop.min(buffer.len()));
                             batch
                         };
@@ -293,12 +293,13 @@ pub(crate) async fn run_count_window_rule(
                 } else {
                     // Sparsely sampled count window with gap (hop > count)
                     if buffer.len() > count {
-                        buffer.remove(0);
+                        buffer.pop_front();
                     }
                     if events_since_trigger >= hop {
                         if !buffer.is_empty() {
                             let now_ms = chrono::Utc::now().timestamp_millis();
-                            emit_window_batch(&counters, &table_manager, &source_configs, &select_stmt, std::mem::take(&mut buffer), false, Some((now_ms, now_ms)), &sink, Some(&rule_state)).await;
+                            let batch: Vec<TaggedRow> = buffer.drain(..).collect();
+                            emit_window_batch(&counters, &table_manager, &source_configs, &select_stmt, batch, false, Some((now_ms, now_ms)), &sink, Some(&rule_state)).await;
                         }
                         events_since_trigger = 0;
                         buffer.clear();
@@ -325,14 +326,14 @@ pub(crate) async fn run_count_window_rule(
                         if !window_ingest_passes(&select_stmt, &tagged.data) {
                             continue;
                         }
-                        buffer.push(tagged);
+                        buffer.push_back(tagged);
                         events_since_trigger += 1;
                         if hop <= count {
                             if buffer.len() >= count {
                                 let batch: Vec<TaggedRow> = if hop == count {
                                     buffer.drain(0..count).collect()
                                 } else {
-                                    let batch = buffer[0..count].to_vec();
+                                    let batch: Vec<TaggedRow> = buffer.iter().take(count).cloned().collect();
                                     buffer.drain(0..hop.min(buffer.len()));
                                     batch
                                 };
@@ -341,11 +342,12 @@ pub(crate) async fn run_count_window_rule(
                             }
                         } else if events_since_trigger >= hop {
                             if buffer.len() > count {
-                                buffer.remove(0);
+                                buffer.pop_front();
                             }
                             if !buffer.is_empty() {
                                 let now_ms = chrono::Utc::now().timestamp_millis();
-                                emit_window_batch(&counters, &table_manager, &source_configs, &select_stmt, std::mem::take(&mut buffer), false, Some((now_ms, now_ms)), &sink, Some(&rule_state)).await;
+                                let batch: Vec<TaggedRow> = buffer.drain(..).collect();
+                                emit_window_batch(&counters, &table_manager, &source_configs, &select_stmt, batch, false, Some((now_ms, now_ms)), &sink, Some(&rule_state)).await;
                             }
                             events_since_trigger = 0;
                             buffer.clear();

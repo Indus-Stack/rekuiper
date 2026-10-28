@@ -152,7 +152,7 @@ To ensure only designated engineering subnets can connect to the web console:
       - "10.0.0.0/8"
       - "192.168.1.0/24"
   ```
-Any connection originating from an unlisted IP address is immediately rejected with `HTTP 403 Forbidden`.
+Any connection originating from an unlisted IP address (or when the client IP cannot be verified) is immediately rejected with `HTTP 403 Forbidden` (fail-closed). Forwarded IP headers (`X-Forwarded-For` and `X-Real-IP`) are trusted only when the direct TCP connection originates from a local reverse proxy (`127.0.0.1` or `::1`).
 
 #### 3. Set a Console Password or JWT Token
 
@@ -313,12 +313,12 @@ To ensure operators never need to search externally, every interactive component
 
 | UI Location | In-Console Trigger | Documentation Target | Purpose |
 | :--- | :--- | :--- | :--- |
-| **Topbar Navigation** | `📖 User Guide & Docs` | [Web Console User Guide](file:///docs/en_US/guide/ui/web_console_user_guide.md) | Full user manual, security architecture, and operational journeys |
-| **Topbar Navigation** | `🔒 Console Security Status` | [Security & Access Control Architecture](file:///docs/en_US/guide/ui/web_console_user_guide.md#security--access-control-architecture) | Port exposure protection, IP allowlists, and credentials |
-| **Rule Designer** | `📖 Rule Docs` | [Rule Overview](file:///docs/en_US/guide/rules/overview.md) | SQL syntax, temporal windows, and multi-sink actions |
-| **Rule Designer** | `📖 Window Docs` | [Window Functions](file:///docs/en_US/guide/rules/overview.md#window-functions) | Tumbling, Hopping, Session, and Counting window semantics |
-| **Stream Designer** | `📖 Stream Docs` | [Stream Overview](file:///docs/en_US/guide/streams/overview.md) | Data sources, connectors, payload formats, and DDL syntax |
-| **ConfKey Modal** | `📖 ConfKey Docs` | [Data Sources Configuration](file:///docs/en_US/guide/sources/overview.md) | Reusable connector profiles, TLS options, and credentials |
-| **Schema Registry** | `📖 Schema Docs` | [Schema Registry Guide](file:///docs/en_US/guide/schemas/schema_registry.md) | Protobuf contracts, Custom formats, and AST validation |
-| **Plugins & UDF Hub** | `📖 Plugin Docs` | [Plugins & Services Hub](file:///docs/en_US/guide/plugins/plugins_and_services_hub.md) | Wasm modules, JavaScript UDFs, and external RPC services |
-| **Fleet Top Bar** | `📖 Fleet Docs` | [Fleet Deployment Guide](file:///docs/en_US/guide/fleet/fleet_deployment_and_canary.md) | Health-gated rollouts, Canary verification, and device monitoring |
+| **Topbar Navigation** | `📖 User Guide & Docs` | [Web Console User Guide](./web_console_user_guide.md) | Full user manual, security architecture, and operational journeys |
+| **Topbar Navigation** | `🔒 Console Security Status` | [Security & Access Control Architecture](./web_console_user_guide.md#1-security--access-control-architecture) | Port exposure protection, IP allowlists, and credentials |
+| **Rule Designer** | `📖 Rule Docs` | [Rule Overview](../rules/overview.md) | SQL syntax, temporal windows, and multi-sink actions |
+| **Rule Designer** | `📖 Window Docs` | [Window Functions](../../sqls/windows.md) | Tumbling, Hopping, Session, and Counting window semantics |
+| **Stream Designer** | `📖 Stream Docs` | [Stream Overview](../streams/overview.md) | Data sources, connectors, payload formats, and DDL syntax |
+| **ConfKey Modal** | `📖 ConfKey Docs` | [Data Sources Configuration](../sources/overview.md) | Reusable connector profiles, TLS options, and credentials |
+| **Schema Registry** | `📖 Schema Docs` | [Schema Registry Guide](../schemas/schema_registry.md) | Protobuf contracts, Custom formats, and AST validation |
+| **Plugins & UDF Hub** | `📖 Plugin Docs` | [Plugins & Services Hub](../plugins/plugins_and_services_hub.md) | Wasm modules, JavaScript UDFs, and external RPC services |
+| **Fleet Top Bar** | `📖 Fleet Docs` | [Fleet Deployment Guide](../../operation/fleet_management.md) | Health-gated rollouts, Canary verification, and device monitoring |

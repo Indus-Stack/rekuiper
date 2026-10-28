@@ -117,7 +117,7 @@ pub type TableRow = HashMap<String, Value>;
 #[derive(Clone, Default)]
 pub struct TableManager {
     tables: Arc<RwLock<HashMap<String, TableDefinition>>>,
-    rows: Arc<RwLock<HashMap<String, Vec<TableRow>>>>,
+    rows: Arc<RwLock<HashMap<String, VecDeque<TableRow>>>>,
     kv: Option<Arc<dyn KvStore>>,
     op_lock: Arc<AsyncMutex<()>>,
 }
@@ -179,16 +179,20 @@ impl TableManager {
                 }
             }
         }
-        rows.push(row);
+        rows.push_back(row);
         let max_size = retain_size.unwrap_or(if key_col.is_some() { usize::MAX } else { 100 });
         while rows.len() > max_size {
-            rows.remove(0);
+            rows.pop_front();
         }
     }
 
     /// Returns all lookup rows stored for a table (empty when none).
     pub fn get_table_rows(&self, table: &str) -> Vec<HashMap<String, Value>> {
-        self.rows.read().get(table).cloned().unwrap_or_default()
+        self.rows
+            .read()
+            .get(table)
+            .map(|r| r.iter().cloned().collect())
+            .unwrap_or_default()
     }
 
     pub async fn create_table(&self, def: TableDefinition) -> Result<()> {

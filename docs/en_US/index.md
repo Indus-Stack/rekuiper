@@ -229,8 +229,8 @@ All tests run on dedicated Linux hardware constrained to **one physical CPU core
 
 | Measure | Result | Tested on |
 | :--- | :--- | :---: |
-| **In-process stream throughput (Zero-parse)** | **2,207,367 events/s** (500k in 226 ms, 0 ms drain) | **1.0.0-rc4** |
-| **End-to-end JSON stream throughput** | **1,085,885 events/s** (500k in 460 ms, 0 ms drain) | **1.0.0-rc4** |
+| **In-process stream throughput (Zero-parse)** | **2,464,711 events/s** (500k in 203 ms, 0 ms drain) | **1.0.0-rc4** |
+| **End-to-end JSON stream throughput** | **1,141,417 events/s** (500k in 438 ms, 0 ms drain) | **1.0.0-rc4** |
 | MQTT network throughput (Single rule) | 150,000 to 200,000 messages/s (0.00% loss) | 0.500 |
 | Concurrent rules on one stream | 1,000 rules (500,000 evaluations/s) | 0.505 |
 | Heap memory under load | 4.4 to 10.2 MiB (Flat plateau, zero GC pauses) | 1.0.0-rc4 |

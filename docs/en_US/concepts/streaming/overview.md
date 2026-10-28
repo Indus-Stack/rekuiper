@@ -2,6 +2,8 @@
 
 Streaming data is a continuous sequence of data records generated over time. Stream processing processes records in motion. Unlike batch processing, the engine processes each record immediately upon arrival.
 
+![rekuiper Stream Processing Pipeline](/diagrams/how_it_works.svg)
+
 ## Streaming Characteristics
 
 Stream processing features these primary characteristics:

@@ -144,6 +144,7 @@ pub async fn start_server_with_options(
         state.rule_manager.load_from_kv(&kv).await?;
         state.schema_manager.load_from_kv(&kv).await?;
         state.plugin_manager.load_from_kv(&kv).await?;
+        state.fleet.load_from_kv(&kv).await?;
         let proto_schemas = state
             .schema_manager
             .load_proto_dir(std::path::Path::new("etc/schemas"));
@@ -226,18 +227,18 @@ pub async fn start_server_with_options(
     // Dedicated Prometheus listener when enabled on its own port, mirroring
     // eKuiper's prome_init behaviour.
     if config.basic.prometheus && config.basic.prometheus_port != config.basic.rest_port {
+        let prom_ip = config.basic.rest_ip.clone();
         let prom_port = config.basic.prometheus_port;
         let prom_app =
             axum::Router::new().route("/metrics", axum::routing::get(prometheus_metrics_handler));
         let prom_app = prom_app.with_state(state.clone());
         tokio::spawn(async move {
-            let addr = SocketAddr::from(([0, 0, 0, 0], prom_port));
+            let addr: SocketAddr = format!("{}:{}", prom_ip, prom_port)
+                .parse()
+                .unwrap_or_else(|_| SocketAddr::from(([127, 0, 0, 1], prom_port)));
             match tokio::net::TcpListener::bind(addr).await {
                 Ok(listener) => {
-                    tracing::info!(
-                        "Serving prometheus metrics on port http://localhost:{}/metrics",
-                        prom_port
-                    );
+                    tracing::info!("Serving prometheus metrics on port http://{}/metrics", addr);
                     if let Err(e) = axum::serve(listener, prom_app).await {
                         tracing::warn!("Prometheus metrics server error: {}", e);
                     }
@@ -266,22 +267,32 @@ pub async fn start_server_with_options(
     // Support EdgeX dual port (59720) concurrently alongside default port (9081)
     let edgex_port = 59720;
     if config.basic.rest_port != edgex_port {
+        let edgex_ip = config.basic.rest_ip.clone();
         let edgex_app = app.clone();
         tokio::spawn(async move {
-            let edgex_addr = SocketAddr::from(([0, 0, 0, 0], edgex_port));
+            let edgex_addr: SocketAddr = format!("{}:{}", edgex_ip, edgex_port)
+                .parse()
+                .unwrap_or_else(|_| SocketAddr::from(([127, 0, 0, 1], edgex_port)));
             if let Ok(listener) = tokio::net::TcpListener::bind(edgex_addr).await {
-                tracing::info!(
-                    "Serving EdgeX dual-port REST API on http://0.0.0.0:{}",
-                    edgex_port
-                );
-                let _ = axum::serve(listener, edgex_app).tcp_nodelay(true).await;
+                tracing::info!("Serving EdgeX dual-port REST API on http://{}", edgex_addr);
+                let _ = axum::serve(
+                    listener,
+                    edgex_app.into_make_service_with_connect_info::<SocketAddr>(),
+                )
+                .tcp_nodelay(true)
+                .await;
             }
         });
     }
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
     println!("Server initialized and ready in {:?}", init_start.elapsed());
-    axum::serve(listener, app).tcp_nodelay(true).await?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .tcp_nodelay(true)
+    .await?;
 
     Ok(())
 }

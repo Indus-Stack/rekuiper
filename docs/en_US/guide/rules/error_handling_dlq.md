@@ -4,6 +4,29 @@ Invalid records occur during stream processing. Examples include malformed JSON,
 
 rekuiper includes dead-letter queues (DLQ) to isolate and store invalid records without stopping the pipeline.
 
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 195" width="100%" height="auto" role="img" aria-label="5-Stage Dead-Letter Queue Error Routing Architecture" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">
+  <rect x="0" y="0" width="880" height="195" rx="10" fill="#f8fafc" stroke="#e2e8f0" stroke-width="1" />
+  <text x="440" y="26" text-anchor="middle" font-size="14" font-weight="700" fill="#0f172a">5-Stage Dead-Letter Queue (DLQ) Isolation &amp; Routing Pipeline</text>
+  <rect x="20" y="46" width="145" height="64" rx="6" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5" />
+  <text x="92" y="72" text-anchor="middle" font-size="11" font-weight="700" fill="#1e40af">0. CodecDecode</text>
+  <text x="92" y="92" text-anchor="middle" font-size="10" fill="#64748b">JSON / Protobuf / UTF-8</text>
+  <rect x="190" y="46" width="150" height="64" rx="6" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5" />
+  <text x="265" y="72" text-anchor="middle" font-size="11" font-weight="700" fill="#1e40af">1. SchemaValidation</text>
+  <text x="265" y="92" text-anchor="middle" font-size="10" fill="#64748b">Strict DDL Field Types</text>
+  <rect x="365" y="46" width="145" height="64" rx="6" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5" />
+  <text x="437" y="72" text-anchor="middle" font-size="11" font-weight="700" fill="#1e40af">2. SqlEval</text>
+  <text x="437" y="92" text-anchor="middle" font-size="10" fill="#64748b">Math / Cast / UDF Trap</text>
+  <rect x="535" y="46" width="150" height="64" rx="6" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5" />
+  <text x="610" y="72" text-anchor="middle" font-size="11" font-weight="700" fill="#1e40af">3. DataTemplate</text>
+  <text x="610" y="92" text-anchor="middle" font-size="10" fill="#64748b">Go Template Formatting</text>
+  <rect x="710" y="46" width="150" height="64" rx="6" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5" />
+  <text x="785" y="72" text-anchor="middle" font-size="11" font-weight="700" fill="#1e40af">4. SinkDelivery</text>
+  <text x="785" y="92" text-anchor="middle" font-size="10" fill="#64748b">Permanent 4xx Rejections</text>
+  <rect x="140" y="132" width="600" height="46" rx="8" fill="#fef2f2" stroke="#ef4444" stroke-width="1.5" />
+  <text x="440" y="153" text-anchor="middle" font-size="12" font-weight="700" fill="#b91c1c">Bounded Ring Buffer (GET/DELETE /rules/:id/errors) + Optional External DLQ Sink</text>
+  <text x="440" y="170" text-anchor="middle" font-size="10" fill="#dc2626">Poison-Pill Payload Truncated to 4 KB  •  Atomic Prometheus Stage Counters  •  Non-Recursive Dispatch</text>
+</svg>
+
 ---
 
 ## Architecture Overview
