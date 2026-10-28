@@ -4,6 +4,8 @@ rekuiper supports SQL queries and graph models to define rule logic. The graph A
 
 The `graph` object contains `nodes` and `topo` properties. `nodes` defines pipeline elements. `topo` defines directed connections (edges) between nodes.
 
+![Directed Acyclic Graph (DAG) Pipeline Topology](/diagrams/topology_dag.svg)
+
 Below is an example of a linear graph rule: `demo` -> `humidityFilter` -> `mqttout`. The rule reads from an MQTT source, filters by humidity, and transmits output to an MQTT sink:
 
 ```json

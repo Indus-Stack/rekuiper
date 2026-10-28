@@ -51,7 +51,7 @@ Different benchmark suites evaluate specific capabilities across versions:
 
 | Suite Name | Evaluated Version | Workload Type | Key Result | Link |
 | :--- | :---: | :--- | :--- | :--- |
-| **In-Process Engine Throughput** | **rekuiper 1.0.0-rc4** | Continuous stream execution of 500k events on 1 core | Measures **2,207,367 events/s** (zero-parse pipeline) and **1,085,885 events/s** (JSON pipeline) with active dead-letter queue support. | [View Benchmark](#version-1-0-0-rc4-in-process-engine-throughput-benchmark) |
+| **In-Process Engine Throughput** | **rekuiper 1.0.0-rc5** | Continuous stream execution of 500k events on 1 core | Measures **2,464,711 events/s** (zero-parse pipeline) and **1,141,417 events/s** (JSON pipeline) with active dead-letter queue support. | [View Benchmark](#version-1-0-0-rc5-in-process-engine-throughput-benchmark) |
 | **Concurrent Parallel Rules** | **rekuiper 0.505-beta** | Stream fan-out to $N$ parallel SQL rules | Sustains **1,000 parallel rules** (500,000 evals/s) on 1 core; eKuiper ceiling is 100 rules. | [View Benchmark](./parallel_rules.md) |
 | **Single-Rule MQTT Throughput** | **rekuiper 0.500-beta** | Ingestion of 5 industrial MQTT shapes | Sustains **150,000 to 200,000 msg/s** loss-free on 1 core; 6.3x to 10x higher than competitors. | [View Benchmark](./throughput.md) |
 | **120-Second Bounded Sustained** | **rekuiper 0.426-beta** | Long-duration MQTT ingest (12M events) | Sustains **100,000 msg/s for 120s** across all five workloads with 0.00% loss. | [View Benchmark](./throughput.md#version-0-426-bounded-sustained-ladder) |
@@ -61,16 +61,16 @@ Different benchmark suites evaluate specific capabilities across versions:
 
 ## 5. Release-Specific Benchmark History
 
-### Version 1.0.0-rc4: In-Process Engine Throughput Benchmark
+### Version 1.0.0-rc5: In-Process Engine Throughput Benchmark
 
-rekuiper version 1.0.0-rc4 evaluates in-process SQL streaming throughput on a single CPU core.
+rekuiper version 1.0.0-rc5 evaluates in-process SQL streaming throughput on a single CPU core.
 The test runs with active dead-letter queue routing and complete projection evaluation.
 
 #### Test Configuration
 
 | Parameter | Specification |
 | :--- | :--- |
-| **Software Version** | rekuiper v1.0.0-rc4 |
+| **Software Version** | rekuiper v1.0.0-rc5 |
 | **Test Suite** | `crates/rekuiper-server/tests/perf_throughput.rs` |
 | **Compiler Profile** | `--release` with `-C target-cpu=native` |
 | **Storage Subsystem** | Native Linux ext4 filesystem |
@@ -87,14 +87,31 @@ The engine delivers projected records to a bounded in-memory subscriber channel.
 
 #### Measured Performance Results
 
-rekuiper version 1.0.0-rc4 recorded the following performance metrics:
+rekuiper version 1.0.0-rc5 recorded the following performance metrics:
+
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 860 215" width="100%" height="auto" role="img" aria-label="Single-Core Streaming SQL Throughput Comparison" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">
+  <rect x="0" y="0" width="860" height="215" rx="10" fill="#f8fafc" stroke="#e2e8f0" stroke-width="1" />
+  <text x="430" y="28" text-anchor="middle" font-size="14" font-weight="700" fill="#0f172a">Single-Core Throughput &amp; Resource Profile (1 Physical Core, 1 GiB RAM Limit)</text>
+  <text x="30" y="66" font-size="12" font-weight="600" fill="#0f172a">Zero-Parse In-Process SQL</text>
+  <rect x="230" y="50" width="520" height="24" rx="4" fill="#ea580c" />
+  <text x="760" y="66" font-size="12" font-weight="700" fill="#c2410c">2,464,711 eps (202.86 ms)</text>
+  <text x="30" y="106" font-size="12" font-weight="600" fill="#0f172a">End-to-End JSON SQL</text>
+  <rect x="230" y="90" width="242" height="24" rx="4" fill="#2563eb" />
+  <text x="482" y="106" font-size="12" font-weight="700" fill="#1d4ed8">1,141,417 eps (438.05 ms)</text>
+  <text x="30" y="146" font-size="12" font-weight="600" fill="#0f172a">Parallel 1,000-Rule Fan-Out</text>
+  <rect x="230" y="130" width="106" height="24" rx="4" fill="#059669" />
+  <text x="346" y="146" font-size="12" font-weight="700" fill="#047857">500,000 evals/s (1,000 rules)</text>
+  <text x="30" y="186" font-size="12" font-weight="600" fill="#0f172a">Sustained MQTT Broker I/O</text>
+  <rect x="230" y="170" width="44" height="24" rx="4" fill="#0f172a" />
+  <text x="284" y="186" font-size="12" font-weight="700" fill="#334155">150,000 - 200,000 msg/s (4.4 - 10.2 MiB RSS, 0.00% Loss)</text>
+</svg>
 
 | Pipeline Architecture | Evaluated Version | Records Processed | Elapsed Time | Throughput | Memory Model | Drain Delay |
 | :--- | :---: | :---: | :---: | :---: | :--- | :---: |
-| **Zero-Parse In-Process Engine Pipeline** | **v1.0.0-rc4** | 500,000 | **226.51 ms** | **2,207,367 events/s** | Zero heap allocation, zero GC pauses | **0.0 ms** |
-| **End-to-End JSON Streaming Pipeline** | **v1.0.0-rc4** | 500,000 | **460.45 ms** | **1,085,885 events/s** | Dynamic JSON parse and serialize | **0.0 ms** |
+| **Zero-Parse In-Process Engine Pipeline** | **v1.0.0-rc5** | 500,000 | **202.86 ms** | **2,464,711 events/s** | Zero heap allocation, zero GC pauses | **0.0 ms** |
+| **End-to-End JSON Streaming Pipeline** | **v1.0.0-rc5** | 500,000 | **438.05 ms** | **1,141,417 events/s** | Dynamic JSON parse and serialize | **0.0 ms** |
 
-#### Key Enabling Optimizations in Version 1.0.0-rc4
+#### Key Enabling Optimizations in Version 1.0.0-rc5
 
 1. **Zero-Allocation Error Key Checks**:
    The engine iterates directly over key-value pairs to detect error keys. This eliminates hash calculations on valid records. Dead-letter queue routing for invalid records remains active.

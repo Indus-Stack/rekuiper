@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > See `BENCHMARK-AUDIT.md` and `test/BENCHMARKS.md` for the audited methodology.
 > No latency-histogram p99 is claimed.
 
-## [Unreleased] - Rekuiper Manager & Visual Stream Studio (Phases 1–4)
+## [1.0.0-rc5] - 2026-10-28
 
 ### Added
 - **Zero-Copy Record Metadata (`RecordMeta`)**: Added an immutable, `Arc`-shared `RecordMeta` structure (`topic`, `source`, `custom`) to `StreamRecord`. Metadata passes through SQL projection pipelines and multi-port graph stages with zero map allocations and constant time ($O(1)$) overhead. Added zero-copy `meta()` SQL function with backward-compatible `__meta__` and JSON envelope fallback.
@@ -24,6 +24,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Fleet Control Plane ("Rekuiper Manager")**: Added device fleet catalog (`/api/v1/fleet/devices`) and group management (`/api/v1/fleet/groups`). Added staged canary rollout engine (`/api/v1/fleet/rollouts`) supporting progressive rollout stages (5% -> 25% -> 100%) and automatic canary rollback. Added remote Yamux proxy (`/fleet/proxy/:device_id/*path`), unified audit logging (`/api/v1/fleet/audit`), and fleet control dashboard in `/ui`.
 - **Fleet Provisioning and Bearer Authentication**: Added token validation (`BasicConfig.fleet_token`, `REKUIPER_FLEET_TOKEN`) for `/fleet/ws` and `/api/v1/fleet/*` endpoints. Rejects unauthorized registrations, proxy requests, and rollout commands with HTTP 401 Unauthorized.
 - **Model Context Protocol (`rekuiper-mcp`) Expansion**: Expanded the native MCP server to 57 tools with dedicated categories for Fleet Management (`list_fleet_devices`, `get_fleet_rollouts`, `trigger_fleet_rollout`, `list_fleet_snapshots`, `proxy_fleet_device_api`) and Visual Stream Studio & Wire-Tap (`get_studio_palette`, `validate_graph_rule`, `toggle_wire_tap`, `get_wire_tap_status`). Added 3 new MCP live resources (`rekuiper://fleet/devices`, `rekuiper://fleet/rollouts`, `rekuiper://studio/palette`) and 2 interactive orchestration prompts (`staged_fleet_rollout`, `design_visual_dag_pipeline`).
+- **WASM Fuel Metering and Instance Pooling**: Added deterministic instruction fuel metering (`DEFAULT_WASM_FUEL_BUDGET = 1,000,000`) to `WasmManager` (`wasmi::Config::consume_fuel(true)`), terminating runaway guest loops before they stall worker threads. Added lock-free `ArrayQueue<PooledInstance>` pooling (8 pre-instantiated instances per module) to eliminate per-event linear memory instantiation overhead.
+- **Fleet Control Plane KV Persistence and Non-Blocking Concurrency**: Added durable KV persistence across `fleet_devices`, `fleet_snapshots`, `fleet_rollouts`, and `fleet_audit` namespaces with automatic state restoration (`FleetControlPlane::restore_from_kv`). Refactored `dispatch_snapshot_to_cohort` and `trigger_rollback` to collect command channels under short synchronous locks and perform asynchronous I/O and KV persistence outside lock guards.
+
+### Security
+- **Supply-Chain & RustSec Advisory Remediation**: Upgraded `tokio` to `1.54.1` (remediating `RUSTSEC-2026-0386`), upgraded `zstd-sys` to `2.1.2+zstd.1.5.7` (remediating `RUSTSEC-2026-0410`), and upgraded direct `zstd` dependency in `rekuiper-sql` to `0.14.3` (`zstd-safe 8.2.0`, remediating `RUSTSEC-2026-0391`, `RUSTSEC-2026-0398`, and `RUSTSEC-2026-0403` with zero ignored advisories in downstream core crates).
+- **Conditional Route Mounting and Auth Middleware Hardening**: Mounted `/ui` and `/ui/ws` routes only when `basic.enable_ui` is enabled. Enforced `basic.authentication` RS256 JWT validation across `/ui`, `/v1/metrics`, `/v1/logs`, and `/v1/traces` (exempting only `/`, `/ping`, `/fleet/ws`, and `/api/v1/fleet/*` which enforce dedicated fleet bearer token checks).
+- **ConnectInfo Peer IP Enforcement and Configurable Prometheus Port**: Wired `into_make_service_with_connect_info::<SocketAddr>()` on both primary and secondary listeners so `ui_ip_allowlist` validates peer socket addresses reliably. Fixed standalone Prometheus exporter to bind to `config.basic.prometheus_port` instead of a hardcoded port.
+
+### Changed
+- **Verified Benchmark Results (2.46M+ EPS)**: Re-verified single-core `--release` throughput (`perf_throughput.rs`): **2,464,711 events/s** (`202.86 ms` for 500,000 records, zero-parse in-process SQL pipeline) and **1,141,417 events/s** (`438.05 ms` for 500,000 records, end-to-end JSON pipeline).
+- **Non-Blocking Host Metrics Cache & O(1) Ring Buffers**: Added a 500ms TTL cache for `sysinfo::System` CPU and memory refreshes on `GET /` and `GET /metrics`. Replaced `Vec::remove(0)` shifts with $O(1)$ `VecDeque::pop_front()` across `TraceSpan`, `RuleErrorBuffer`, and `JoinStreamState`.
+- **Modular Source Connectors & Documentation Visuals**: Extracted 2,533 lines of source connector actors into `crates/rekuiper-server/src/engine/sources.rs`. Added 14 architectural SVG diagrams across `docs/en_US/` and resolved all broken documentation links.
 
 ## [1.0.0-rc4] - 2026-10-16
 
@@ -143,7 +155,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Model Context Protocol (MCP) Server 2.0**: Added 4 new tools (`register_wasm_plugin`, `list_wasm_plugins`, `delete_wasm_plugin`, `validate_secrets`), 4 new resources (`rekuiper://plugins/wasm`, `rekuiper://schemas/rabbitmq`, `rekuiper://schemas/parquet`, `rekuiper://schemas/edgex`), 3 new prompts, and embedded offline support for vector similarity, array, and stateful analytics.
 
 ### Changed
-- **Documentation Standards**: Rewrote and aligned all technical documentation in `docs/en_US/` to the ASD-STE100 Simplified Technical English standard with complete VitePress static build validation.
+- **Documentation Standards**: Rewrote and aligned all technical documentation in `docs/en_US/` with complete VitePress static build validation.
 
 ### Packaging
 - Updated official Docker images to `ankurkrp/rekuiper:0.506-beta`.

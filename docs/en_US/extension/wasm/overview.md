@@ -163,6 +163,42 @@ Unloads the module and removes all its exported functions from the active SQL ca
 
 ---
 
+## Sandbox Fuel Metering and Instance Pooling
+
+The `rekuiper` WebAssembly runtime enforces deterministic execution limits and lock-free concurrency across streaming rules:
+
+1. **Deterministic Fuel Metering (`DEFAULT_WASM_FUEL_BUDGET = 1,000,000`)**: Every WASM UDF invocation runs with `wasmi` fuel consumption enabled and a strict per-call budget of `1,000,000` instructions. A buggy or malicious `.wasm` module containing an infinite `loop {}` traps deterministically once its fuel budget is exhausted instead of starving Tokio worker threads.
+2. **Lock-Free Instance Pooling (`runtime_pool`)**: Compiled `wasmi::Module` definitions maintain a pool of pre-instantiated `WasmRuntimeInstance` states (`Store` + `Instance`). Concurrent SQL rules check out an instance, execute the UDF outside the registry lock, and return the healthy instance to the pool upon completion.
+
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 860 200" width="100%" height="auto" role="img" aria-label="WebAssembly Sandbox Fuel Metering and Instance Pool Architecture" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">
+  <rect x="0" y="0" width="860" height="200" rx="10" fill="#f8fafc" stroke="#e2e8f0" stroke-width="1" />
+  <text x="430" y="28" text-anchor="middle" font-size="14" font-weight="700" fill="#0f172a">WebAssembly (wasmi) UDF Sandbox &amp; Instance Pool</text>
+  <rect x="25" y="50" width="220" height="125" rx="8" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5" />
+  <text x="135" y="76" text-anchor="middle" font-size="12" font-weight="700" fill="#1e40af">1. Module Registry</text>
+  <text x="135" y="98" text-anchor="middle" font-size="11" fill="#334155">POST /plugins/wasm</text>
+  <text x="135" y="118" text-anchor="middle" font-size="10" fill="#64748b">Validates .wasm Magic Bytes</text>
+  <text x="135" y="136" text-anchor="middle" font-size="10" fill="#64748b">Extracts Exported UDF Symbols</text>
+  <text x="135" y="154" text-anchor="middle" font-size="10" fill="#2563eb">Pre-compiles wasmi::Module</text>
+  <path d="M 245 112 L 295 112" stroke="#64748b" stroke-width="2" />
+  <polygon points="295,112 287,108 287,116" fill="#64748b" />
+  <rect x="295" y="50" width="260" height="125" rx="8" fill="#ffffff" stroke="#ea580c" stroke-width="1.5" />
+  <text x="425" y="76" text-anchor="middle" font-size="12" font-weight="700" fill="#c2410c">2. Lock-Free Runtime Pool</text>
+  <text x="425" y="98" text-anchor="middle" font-size="11" fill="#334155">Pooled WasmRuntimeInstance (Store + Instance)</text>
+  <text x="425" y="118" text-anchor="middle" font-size="10" fill="#64748b">Checked Out Outside Global Mutex</text>
+  <text x="425" y="136" text-anchor="middle" font-size="10" fill="#059669">Concurrent Multi-Rule SQL Execution</text>
+  <text x="425" y="154" text-anchor="middle" font-size="10" fill="#64748b">Recycled on Clean Completion</text>
+  <path d="M 555 112 L 605 112" stroke="#64748b" stroke-width="2" />
+  <polygon points="605,112 597,108 597,116" fill="#64748b" />
+  <rect x="605" y="50" width="230" height="125" rx="8" fill="#ffffff" stroke="#10b981" stroke-width="1.5" />
+  <text x="720" y="76" text-anchor="middle" font-size="12" font-weight="700" fill="#047857">3. Deterministic Sandbox</text>
+  <text x="720" y="98" text-anchor="middle" font-size="11" fill="#334155">Fuel Budget: 1,000,000 / Call</text>
+  <text x="720" y="118" text-anchor="middle" font-size="10" fill="#64748b">Isolated Linear Memory</text>
+  <text x="720" y="136" text-anchor="middle" font-size="10" fill="#dc2626">Traps Infinite Loops Instantly</text>
+  <text x="720" y="154" text-anchor="middle" font-size="10" fill="#059669">Zero Host Syscall Access</text>
+</svg>
+
+---
+
 ## Invoking Wasm Functions in SQL
 
 Once registered, you can invoke exported functions directly in SQL rules or through the `wasm_run` helper function:

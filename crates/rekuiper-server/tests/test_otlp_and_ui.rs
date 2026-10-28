@@ -551,3 +551,53 @@ async fn test_otlp_sink_400_error_routes_to_dlq() {
     let error_msg = dlq_rec.data.get("error").and_then(|v| v.as_str()).unwrap();
     assert!(error_msg.contains("HTTP 400"));
 }
+
+#[tokio::test]
+async fn test_ui_ip_allowlist_fails_closed_and_jwt_coexistence() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let local_addr = listener.local_addr().unwrap();
+
+    let stream_bus = StreamBus::new();
+    let stream_manager = StreamManager::new();
+    let rule_manager = RuleManager::new(stream_bus.clone());
+
+    let mut config = KuiperConfig::default();
+    config.basic.enable_ui = true;
+    config.basic.ui_ip_allowlist = vec!["127.0.0.1/32".to_string()];
+    // Enable both basic.authentication (JWT) and ui_password simultaneously
+    config.basic.authentication = true;
+    config.basic.ui_password = Some("CoexistingAdminToken123".to_string());
+
+    let state = AppState::new(
+        "test_ui_coexist".to_string(),
+        config,
+        stream_manager,
+        TableManager::new(),
+        rule_manager,
+        stream_bus,
+    );
+
+    let app = create_router(state);
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let client = reqwest::Client::new();
+
+    // 1. Without ConnectInfo or X-Forwarded-For, allowlist must fail closed (403 Forbidden), NOT default to 127.0.0.1
+    let no_ip_resp = client
+        .get(format!("http://{}/ui", local_addr))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(no_ip_resp.status(), reqwest::StatusCode::FORBIDDEN);
+
+    // 2. With basic.authentication = true AND ui_password set, Bearer <ui_password> must succeed
+    let auth_resp = client
+        .get(format!("http://{}/streams", local_addr))
+        .header("Authorization", "Bearer CoexistingAdminToken123")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(auth_resp.status(), reqwest::StatusCode::OK);
+}

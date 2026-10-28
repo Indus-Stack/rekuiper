@@ -131,7 +131,7 @@
     <!-- Badge stats -->
     <g transform="translate(14, 258)">
       <rect x="0" y="0" width="252" height="36" rx="6" fill="#0f172a" stroke="#334155" stroke-width="1" />
-      <text x="12" y="16" fill="#c084fc" class="mono">42 Tools  •  11 Resources  •  5 Prompts</text>
+      <text x="12" y="16" fill="#c084fc" class="mono">57 Tools  •  25 Resources  •  12 Prompts</text>
       <text x="12" y="28" fill="#94a3b8" font-size="9" font-family="-apple-system, BlinkMacSystemFont, sans-serif">Native Rust binary  •  Instant response</text>
     </g>
   </g>

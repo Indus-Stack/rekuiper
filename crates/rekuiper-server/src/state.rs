@@ -648,9 +648,25 @@ pub fn apply_edgex_env_overlays(source_configs: &Arc<RwLock<HashMap<String, Valu
     }
 }
 
+/// Constant-time string comparison.
+#[inline]
+pub fn constant_time_eq(a: &str, b: &str) -> bool {
+    let a_bytes = a.as_bytes();
+    let b_bytes = b.as_bytes();
+    if a_bytes.len() != b_bytes.len() {
+        return false;
+    }
+    let mut diff: u8 = 0;
+    for (&x, &y) in a_bytes.iter().zip(b_bytes.iter()) {
+        diff |= std::hint::black_box(x ^ y);
+    }
+    std::hint::black_box(diff) == 0
+}
+
 /// JWT authorization guard for deployments with `basic.authentication:
 /// true`. eKuiper accepts only a raw RS256 JWT (no `Bearer ` prefix); `/`
-/// and `/ping` stay public.
+/// and `/ping` stay public. When `ui_password` or `fleet_token` are also
+/// configured, valid UI/fleet tokens are accepted alongside JWT.
 pub async fn auth_guard(
     State(state): State<AppState>,
     request: axum::http::Request<axum::body::Body>,
@@ -680,36 +696,6 @@ pub async fn auth_guard(
         return next.run(request).await;
     }
 
-    // If upstream JWT authentication is enabled, enforce strict upstream wire-compatibility:
-    if auth_enabled {
-        let Some(header_val) = request
-            .headers()
-            .get(header::AUTHORIZATION)
-            .and_then(|v| v.to_str().ok())
-        else {
-            return (StatusCode::UNAUTHORIZED, "Missing authorization header\n").into_response();
-        };
-        if header_val.starts_with("Bearer ") || header_val.starts_with("bearer ") {
-            return (
-                StatusCode::UNAUTHORIZED,
-                "Bearer token is not supported, please use raw JWT token\n",
-            )
-                .into_response();
-        }
-        let Some(key_der) = load_auth_public_key() else {
-            return (
-                StatusCode::UNAUTHORIZED,
-                "Authentication misconfigured: public key not found\n",
-            )
-                .into_response();
-        };
-        return match verify_jwt_raw(header_val.trim(), &key_der) {
-            Ok(()) => next.run(request).await,
-            Err(msg) => (StatusCode::UNAUTHORIZED, msg).into_response(),
-        };
-    }
-
-    // Otherwise, check UI password and fleet token authentication:
     let query_token = request.uri().query().and_then(|q| {
         q.split('&').find_map(|pair| {
             let mut parts = pair.split('=');
@@ -739,22 +725,47 @@ pub async fn auth_guard(
         query_token
     };
 
-    let Some(token) = token_candidate else {
-        return (StatusCode::UNAUTHORIZED, "Missing authorization header\n").into_response();
-    };
-
-    // If a UI custom password is configured, check if it matches
-    if let Some(ref pw) = ui_password {
-        if token == pw {
-            return next.run(request).await;
+    // Check UI custom password or fleet provisioning token first (constant-time)
+    if let Some(token) = token_candidate {
+        if let Some(ref pw) = ui_password {
+            if constant_time_eq(token, pw) {
+                return next.run(request).await;
+            }
+        }
+        if let Some(ref ft) = fleet_token {
+            if constant_time_eq(token, ft) {
+                return next.run(request).await;
+            }
         }
     }
 
-    // If a fleet bearer/provisioning token is configured, check if it matches
-    if let Some(ref ft) = fleet_token {
-        if token == ft {
-            return next.run(request).await;
+    // If upstream JWT authentication is enabled, enforce strict upstream wire-compatibility:
+    if auth_enabled {
+        let Some(header_val) = header_val else {
+            return (StatusCode::UNAUTHORIZED, "Missing authorization header\n").into_response();
+        };
+        if header_val.starts_with("Bearer ") || header_val.starts_with("bearer ") {
+            return (
+                StatusCode::UNAUTHORIZED,
+                "Bearer token is not supported, please use raw JWT token\n",
+            )
+                .into_response();
         }
+        let Some(key_der) = load_auth_public_key() else {
+            return (
+                StatusCode::UNAUTHORIZED,
+                "Authentication misconfigured: public key not found\n",
+            )
+                .into_response();
+        };
+        return match verify_jwt_raw(header_val.trim(), &key_der) {
+            Ok(()) => next.run(request).await,
+            Err(msg) => (StatusCode::UNAUTHORIZED, msg).into_response(),
+        };
+    }
+
+    if token_candidate.is_none() {
+        return (StatusCode::UNAUTHORIZED, "Missing authorization header\n").into_response();
     }
 
     (

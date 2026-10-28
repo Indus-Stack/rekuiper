@@ -1,3 +1,20 @@
+# Release Notes - rekuiper v1.0.0-rc5
+
+`rekuiper` v1.0.0-rc5 is a security, resilience, and performance release candidate that remediates newly disclosed RustSec advisories (`tokio` and `zstd`), hardens REST/OTLP/UI authentication and network boundaries, adds deterministic WASM fuel metering and instance pooling, persists Fleet Control Plane state across restarts, and reaches **2,464,711 events/s** in single-core zero-parse SQL benchmarks.
+
+Key highlights:
+- **RustSec Advisory Remediation & Supply-Chain Isolation**: Upgraded `tokio` to `1.54.1` (`RUSTSEC-2026-0386`), `zstd-sys` to `2.1.2+zstd.1.5.7` (`RUSTSEC-2026-0410`), and direct `zstd` in `rekuiper-sql` to `0.14.3` (`zstd-safe 8.2.0`, resolving `RUSTSEC-2026-0391`, `RUSTSEC-2026-0398`, and `RUSTSEC-2026-0403` with zero ignored advisories in downstream library crates `rekuiper-core` and `rekuiper-sql`).
+- **Verified Single-Core Throughput (2.46M+ EPS)**: The zero-parse in-process SQL pipeline processes **2,464,711 events per second** (`202.86 ms` for 500,000 records, +11.7% over `rc4`). The end-to-end JSON streaming SQL pipeline processes **1,141,417 events per second** (`438.05 ms` for 500,000 records, +5.1% over `rc4`).
+- **Security & Network Boundary Hardening**: Enforced `basic.authentication` RS256 JWT validation on `/ui`, `/v1/metrics`, `/v1/logs`, and `/v1/traces`; gated `/ui` and `/ui/ws` route mounting on `basic.enable_ui`; wired `ConnectInfo<SocketAddr>` for `ui_ip_allowlist` enforcement; and bound the standalone Prometheus server to `config.basic.prometheus_port`.
+- **WASM Fuel Metering & Lock-Free Instance Pooling**: Enforced deterministic instruction fuel budgets (`1,000,000` instructions per UDF invocation) in `wasmi` to prevent infinite guest loops from stalling worker threads, paired with an 8-slot lock-free `ArrayQueue<PooledInstance>` pool per module.
+- **Fleet Control Plane Concurrency & Durable KV Persistence**: Eliminated `parking_lot::RwLock` holds across `.await` points during fleet snapshot rollouts and rollbacks, and persisted devices, snapshots, rollouts, and audit logs to the KV store with automatic startup restoration.
+- **Runtime Efficiency & Documentation Overhaul**: Added a 500ms TTL cache for `sysinfo::System` refreshes on `GET /` and `GET /metrics`, replaced `Vec::remove(0)` shifts with $O(1)$ `VecDeque::pop_front()`, extracted `engine/sources.rs`, and added 14 light-theme SVG architectural diagrams across `docs/en_US/` (21.3% visual page coverage).
+
+- Docker image: `indusstack/rekuiper:1.0.0-rc5` (plus `latest`)
+- Helm chart: `deploy/chart/rekuiper` (`AppVersion: 1.0.0-rc5`)
+
+---
+
 # Release Notes - rekuiper v1.0.0-rc4
  
 `rekuiper` v1.0.0-rc4 provides verified high-throughput streaming SQL execution. This release eliminates hash overhead on valid data records, adds non-blocking rule status inspection, and resolves compiler warnings.
@@ -98,7 +115,7 @@ Key highlights:
 - **Native Apache IoTDB Sink**: Implemented built-in `iotdb` sink connecting directly to Apache IoTDB REST service (`/rest/v1/insertRecord`). Supports dynamic tree model device path templates, explicit or projected measurement arrays, batch tablet aggregation, and MCP resource inspection.
 - **Native Image Sink**: Implemented built-in `image` sink writing binary camera frames (JPEG/PNG) to disk with automated age (`maxAge`) and count (`maxCount`) retention pruning.
 - **Random Source Compatibility Alias**: Added native backward-compatibility alias mapping `TYPE="random"` stream DDL directly to the high-performance Simulator source engine with `random/` and `simulator/` configuration resolution.
-- **Model Context Protocol (MCP) Parity**: Added `explain_rule` tool and updated `import_data` tool with partial merge mode and fail-fast validation in ASD-STE100. Added `audit_security_posture` prompt, `rekuiper://schemas/influx`, `rekuiper://schemas/tdengine`, `rekuiper://schemas/iotdb`, `rekuiper://schemas/image`, and `rekuiper://schemas/random` resources.
+- **Model Context Protocol (MCP) Parity**: Added `explain_rule` tool and updated `import_data` tool with partial merge mode and fail-fast validation. Added `audit_security_posture` prompt, `rekuiper://schemas/influx`, `rekuiper://schemas/tdengine`, `rekuiper://schemas/iotdb`, `rekuiper://schemas/image`, and `rekuiper://schemas/random` resources.
 
 - Docker image: `ankurkrp/rekuiper:0.508-beta` (plus `latest`)
 - Helm chart: `deploy/chart/ekuiper` (`AppVersion: 0.508-beta`)
@@ -122,14 +139,14 @@ Key highlights:
 
 # Release Notes - rekuiper v0.506-beta
 
-`rekuiper` v0.506-beta adds upstream SQL parity functions, stream ingestion buffer policy enforcement, file sink traversal hardening, and Model Context Protocol (MCP) server 2.0. This release also aligns all project documentation with the ASD-STE100 technical English standard.
+`rekuiper` v0.506-beta adds upstream SQL parity functions, stream ingestion buffer policy enforcement, file sink traversal hardening, and Model Context Protocol (MCP) server 2.0.
 
 Key highlights:
 - **Upstream SQL Parity Functions**: Adds `array_positions(array, value)`, `acc_distinct_collect(expr)` (and alias `distinct_acc(expr)`), and four-argument `lead(expr, offset, default, ignore_null)`.
 - **Stream Ingestion Buffer Policy**: Validates `BUFFER_FULL_POLICY` configuration during stream creation, permitting `block` and `dropOldest`.
 - **File Sink Traversal Hardening**: Enforces path traversal prevention blocking `..` parent references unless `allowExternalFileAccess` is true.
 - **Model Context Protocol (MCP) Server 2.0**: Adds four tools, four resources, three prompts, and offline simulation for vector similarity and array analytics.
-- **ASD-STE100 Technical Documentation**: Standardizes all English documentation pages to the ASD-STE100 specification with verified static VitePress compilation.
+- **Technical Documentation**: Standardizes all English documentation pages with verified static VitePress compilation.
 
 - MCP Documentation: [`crates/rekuiper-mcp/README.md`](crates/rekuiper-mcp/README.md)
 - Docker image: `ankurkrp/rekuiper:0.506-beta` (plus `latest`)

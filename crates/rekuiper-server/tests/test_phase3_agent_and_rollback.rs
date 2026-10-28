@@ -127,11 +127,17 @@ async fn test_yamux_agent_heartbeat_and_http_tunneling() {
         .await
         .expect("Must send Ping command");
 
-    // Server reads Pong response from Stream 0
-    let pong_bytes = read_frame(&mut stream0)
-        .await
-        .expect("Must receive Pong frame");
-    let pong_val: Value = serde_json::from_slice(&pong_bytes).expect("Must parse Pong JSON");
+    // Server reads Pong response from Stream 0 (skipping any interleaved periodic heartbeat frames)
+    let pong_val: Value = loop {
+        let frame_bytes = read_frame(&mut stream0)
+            .await
+            .expect("Must receive Pong frame");
+        let val: Value = serde_json::from_slice(&frame_bytes).expect("Must parse frame JSON");
+        if val.get("agent_id").is_some() {
+            continue;
+        }
+        break val;
+    };
     assert_eq!(
         pong_val.get("status").and_then(|v| v.as_str()),
         Some("pong")

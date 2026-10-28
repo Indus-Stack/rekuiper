@@ -2,6 +2,29 @@
 
 rekuiper includes browser and terminal inspection tools for edge devices and isolated networks.
 
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 840 185" width="100%" height="auto" role="img" aria-label="Embedded Web Console and rekuiper top Architecture" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">
+  <rect x="0" y="0" width="840" height="185" rx="10" fill="#f8fafc" stroke="#e2e8f0" stroke-width="1" />
+  <text x="420" y="26" text-anchor="middle" font-size="14" font-weight="700" fill="#0f172a">Air-Gapped Inspection Architecture: Embedded Web Console &amp; rekuiper top</text>
+  <rect x="30" y="46" width="240" height="118" rx="8" fill="#ffffff" stroke="#2563eb" stroke-width="1.5" />
+  <text x="150" y="70" text-anchor="middle" font-size="12" font-weight="700" fill="#1e40af">Browser: GET /ui</text>
+  <text x="150" y="92" text-anchor="middle" font-size="10" fill="#334155">Zero External CDNs or Fonts</text>
+  <text x="150" y="110" text-anchor="middle" font-size="10" fill="#64748b">Visual DAG Studio &amp; Rule Inspector</text>
+  <text x="150" y="128" text-anchor="middle" font-size="10" fill="#64748b">DLQ Viewer &amp; Fleet Rollouts</text>
+  <text x="150" y="146" text-anchor="middle" font-size="10" fill="#059669">CIDR Allowlist &amp; Password Guard</text>
+  <rect x="300" y="46" width="240" height="118" rx="8" fill="#ffffff" stroke="#ea580c" stroke-width="1.5" />
+  <text x="420" y="70" text-anchor="middle" font-size="12" font-weight="700" fill="#c2410c">rekuiper Server (Port 9081)</text>
+  <text x="420" y="92" text-anchor="middle" font-size="10" fill="#334155">Atomic Rule &amp; Stage Counters</text>
+  <text x="420" y="110" text-anchor="middle" font-size="10" fill="#64748b">500ms Cached Host CPU &amp; Memory</text>
+  <text x="420" y="128" text-anchor="middle" font-size="10" fill="#64748b">Non-Blocking try_read() Status</text>
+  <text x="420" y="146" text-anchor="middle" font-size="10" fill="#ea580c">Single Binary • Zero Sidecars</text>
+  <rect x="570" y="46" width="240" height="118" rx="8" fill="#ffffff" stroke="#10b981" stroke-width="1.5" />
+  <text x="690" y="70" text-anchor="middle" font-size="12" font-weight="700" fill="#047857">Terminal: rekuiper top</text>
+  <text x="690" y="92" text-anchor="middle" font-size="10" fill="#334155">SSH-Friendly TUI Monitor</text>
+  <text x="690" y="110" text-anchor="middle" font-size="10" fill="#64748b">Live In/Out Throughput &amp; Status</text>
+  <text x="690" y="128" text-anchor="middle" font-size="10" fill="#64748b">5-Stage DLQ Breakdown &amp; Envelopes</text>
+  <text x="690" y="146" text-anchor="middle" font-size="10" fill="#059669">--once Snapshot Mode for CI</text>
+</svg>
+
 Key properties:
 - The tools run inside the rekuiper binary without external containers.
 - The web console uses no external scripts or fonts.

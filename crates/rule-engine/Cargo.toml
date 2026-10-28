@@ -20,14 +20,6 @@ path = "src/lib.rs"
 name = "rule-engine"
 path = "src/main.rs"
 
-[[bin]]
-name = "kuiperd"
-path = "src/bin/kuiperd.rs"
-
-[[bin]]
-name = "rekuiperd"
-path = "src/bin/rekuiperd.rs"
-
 [dependencies]
 kuiperd = { workspace = true }
 rekuiper-sql = { workspace = true }

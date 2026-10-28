@@ -1,7 +1,7 @@
 # rekuiper Helm Chart
 A lightweight, high-performance edge streaming SQL engine for Kubernetes.
 
-![Version: 1.5.0](https://img.shields.io/badge/Version-1.5.0-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: 1.0.0--rc4](https://img.shields.io/badge/AppVersion-1.0.0--rc4-informational?style=flat-square)
+![Version: 1.5.0](https://img.shields.io/badge/Version-1.5.0-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: 1.0.0--rc5](https://img.shields.io/badge/AppVersion-1.0.0--rc5-informational?style=flat-square)
 
 ## Install the Chart
 
@@ -16,7 +16,7 @@ helm install rekuiper deploy/chart/rekuiper
 ```bash
 helm install rekuiper deploy/chart/rekuiper \
   --set image.repository=indusstack/rekuiper \
-  --set image.tag=1.0.0-rc4
+  --set image.tag=1.0.0-rc5
 ```
 
 ## Uninstall Chart

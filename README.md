@@ -4,7 +4,7 @@
 
 rekuiper is a single-binary **MQTT rule engine** and **streaming SQL processor** written in **Rust**. It sits between your devices and your cloud—filtering, aggregating, and routing live telemetry over MQTT, Kafka, HTTP, Modbus, and OPC-UA on the gateway itself, so you send upstream only what matters.
 
-[![Release](https://img.shields.io/badge/release-v1.0.0--rc4-blue.svg)](https://github.com/Indus-Stack/rekuiper/releases)
+[![Release](https://img.shields.io/badge/release-v1.0.0--rc5-blue.svg)](https://github.com/Indus-Stack/rekuiper/releases)
 [![Rust CI](https://github.com/Indus-Stack/rekuiper/actions/workflows/ci.yml/badge.svg)](https://github.com/Indus-Stack/rekuiper/actions/workflows/ci.yml)
 [![License: MIT or Apache-2.0](https://img.shields.io/badge/license-MIT%20%2F%20Apache--2.0-yellow.svg)](LICENSE)
 [![Docker Pulls](https://img.shields.io/docker/pulls/indusstack/rekuiper?color=blue&logo=docker)](https://hub.docker.com/r/indusstack/rekuiper)
@@ -34,7 +34,7 @@ This demo needs only Docker. A built-in simulator makes the data.
 **1. Start the engine.**
 
 ```bash
-docker run -d --name rekuiper -p 9081:9081 indusstack/rekuiper:1.0.0-rc4
+docker run -d --name rekuiper -p 9081:9081 indusstack/rekuiper:1.0.0-rc5
 ```
 
 **2. Register simulated sensor readings, ten per second.**
@@ -128,12 +128,12 @@ All tests run in a container limited to one CPU core and 1 GiB of RAM.
 
 | Measure | Result | Tested on |
 | :--- | :--- | :--- |
-| End-to-end streaming SQL throughput | 1,085,885 events per second (460 ms for 500k records) | 1.0.0-rc4 |
-| Zero-parse in-process SQL pipeline | 2,207,367 events per second (226 ms for 500k records) | 1.0.0-rc4 |
+| End-to-end streaming SQL throughput | 1,141,417 events per second (438 ms for 500k records) | 1.0.0-rc5 |
+| Zero-parse in-process SQL pipeline | 2,464,711 events per second (203 ms for 500k records) | 1.0.0-rc5 |
 | Parallel rules on one stream | 1,000 rules, 500,000 evaluations per second | 0.505 |
 | MQTT rule throughput, single rule | 150,000 to 200,000 messages per second | 0.500 |
 | Heap memory under load | 4.4 to 10.2 MiB | 0.500 |
-| Footprint | One static Rust binary, about 30 MB | 1.0.0-rc4 |
+| Footprint | One static Rust binary, about 30 MB | 1.0.0-rc5 |
 
 Full method, hardware limits, and comparisons with eKuiper, Telegraf, and Redpanda Connect: [Benchmark Overview](docs/en_US/benchmarks/overview.md).
 
@@ -184,7 +184,7 @@ rekuiper implements the eKuiper REST API, SQL dialect, rule format, and `kuiper`
 
 | Method | Command or link |
 | :--- | :--- |
-| Docker | `docker run -d -p 9081:9081 indusstack/rekuiper:1.0.0-rc4` |
+| Docker | `docker run -d -p 9081:9081 indusstack/rekuiper:1.0.0-rc5` |
 | Docker Compose | `docker compose -f deploy/docker/docker-compose.yml up -d` |
 | Kubernetes | `helm install rekuiper deploy/chart/rekuiper` ([chart docs](deploy/chart/rekuiper/README.md)) |
 | Binaries | [Releases](https://github.com/Indus-Stack/rekuiper/releases) |

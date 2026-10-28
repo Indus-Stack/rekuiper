@@ -29,5 +29,5 @@ crc32fast = { workspace = true }
 sha1 = { workspace = true }
 rekuiper-core = { workspace = true }
 flate2 = { version = "1.0", default-features = false, features = ["rust_backend"] }
-zstd = "0.13"
+zstd = "0.14"
 chrono-tz = { version = "0.9", features = ["serde"] }

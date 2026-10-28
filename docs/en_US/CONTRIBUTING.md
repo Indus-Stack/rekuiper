@@ -60,7 +60,7 @@ Report security vulnerabilities privately to the **I-Dacs Labs Security Team**:
 
 ## Cargo Workspace Architecture
 
-`rekuiper` is structured as a modular Cargo workspace containing 8 crates:
+`rekuiper` is structured as a modular Cargo workspace containing 10 crates:
 
 | Crate | Directory | Purpose |
 | :--- | :--- | :--- |
@@ -71,7 +71,9 @@ Report security vulnerabilities privately to the **I-Dacs Labs Security Team**:
 | `rekuiper-server` | `crates/rekuiper-server` | REST API, 100% OpenAPI 3.0 route handlers, Prometheus metrics server, pipeline runner. |
 | `rekuiper-cli` | `crates/rekuiper-cli` | Command-line interface (`kuiper`) drop-in client binary. |
 | `rekuiper-mcp` | `crates/rekuiper-mcp` | Model Context Protocol server exposing AI assistant tools for rule validation and control. |
-| `kuiperd` | `crates/kuiperd` | Server daemon executable entrypoint (`kuiperd`). |
+| `kuiperd` | `crates/kuiperd` | Server daemon executable entrypoint (`kuiperd` and `rekuiperd`). |
+| `rule-engine` | `crates/rule-engine` | High-level embeddable library façade for Rust applications. |
+| `ruleengine` | `crates/ruleengine` | Crate alias re-exporting `rule-engine`. |
 
 ---
 
@@ -104,7 +106,7 @@ Or run directly through Cargo:
 cargo run --bin kuiperd -- --etc etc
 ```
 
-The server listens on `http://0.0.0.0:9081`. Prometheus metrics are available at `http://0.0.0.0:20499/metrics`.
+The server listens on `http://127.0.0.1:9081` by default (configurable via `basic.restIp` in `etc/kuiper.yaml`). Prometheus metrics are available at `http://127.0.0.1:20499/metrics`.
 
 ### Use the CLI Client
 Run client commands against the local daemon:

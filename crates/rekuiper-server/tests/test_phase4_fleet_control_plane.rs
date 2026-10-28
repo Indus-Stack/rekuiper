@@ -435,3 +435,111 @@ async fn test_fleet_auth_enforcement() {
         "Authenticated WebSocket handshake must succeed"
     );
 }
+
+#[tokio::test]
+async fn test_fleet_concurrent_commands_and_kv_reload() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let ws_url = format!("ws://127.0.0.1:{}/fleet/ws", port);
+
+    let kv: std::sync::Arc<dyn rekuiper_core::kv::KvStore> = std::sync::Arc::new(MemKvStore::new());
+    let mut cp_state = build_test_state("control_plane_concurrent");
+    cp_state.fleet = Arc::new(rekuiper_server::fleet::FleetManager::new_with_kv(
+        kv.clone(),
+    ));
+
+    let cp_router = create_router(cp_state.clone());
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, cp_router).await;
+    });
+
+    // Spawn 1 edge agent
+    let edge_state = build_test_state("edge_concurrent_1");
+    let edge_router = create_router(edge_state.clone());
+    let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
+    tokio::spawn(async move {
+        let _ = connect_outbound_ws_agent(
+            &ws_url,
+            edge_state,
+            edge_router,
+            AgentMetadata {
+                device_id: "edge-conc-01".to_string(),
+                name: "Concurrent Gateway".to_string(),
+                plant: "Plant-Austin".to_string(),
+                region: "US-South".to_string(),
+                device_type: "IPC-Edge".to_string(),
+                version: "1.0.0".to_string(),
+            },
+            Duration::from_millis(100),
+            cancel_rx,
+        )
+        .await;
+    });
+
+    // Wait for registration
+    for _ in 0..30 {
+        if cp_state
+            .fleet
+            .active_connections
+            .read()
+            .contains_key("edge-conc-01")
+        {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(cp_state
+        .fleet
+        .active_connections
+        .read()
+        .contains_key("edge-conc-01"));
+
+    // Fire 5 concurrent SendControl (Ping) commands on Stream 0 and verify none are dropped/overwritten
+    let mut handles = Vec::new();
+    for _ in 0..5 {
+        let fleet = cp_state.fleet.clone();
+        handles.push(tokio::spawn(async move {
+            fleet
+                .send_device_control(
+                    "edge-conc-01",
+                    rekuiper_server::agent::AgentControlCommand::Ping,
+                )
+                .await
+        }));
+    }
+    for h in handles {
+        let res = h.await.unwrap().expect("Concurrent Ping must succeed");
+        assert_eq!(res["status"], "pong");
+    }
+
+    // Create a snapshot and verify KV reload restores devices, snapshots, and audit logs
+    let snap = cp_state
+        .fleet
+        .create_snapshot(
+            "kv-snap".to_string(),
+            "desc".to_string(),
+            json!({"version": "v1"}),
+        )
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let reloaded_fleet = rekuiper_server::fleet::FleetManager::new_with_kv(kv.clone());
+    reloaded_fleet.load_from_kv(&kv).await.unwrap();
+    assert!(reloaded_fleet.devices.read().contains_key("edge-conc-01"));
+    // Reloaded online devices reset to "offline" until heartbeats resume
+    assert_eq!(
+        reloaded_fleet
+            .devices
+            .read()
+            .get("edge-conc-01")
+            .unwrap()
+            .status,
+        "offline"
+    );
+    assert!(reloaded_fleet
+        .snapshots
+        .read()
+        .contains_key(&snap.snapshot_id));
+
+    let _ = cancel_tx.send(true);
+}
