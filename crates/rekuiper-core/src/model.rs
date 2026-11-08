@@ -5,17 +5,123 @@ use std::collections::HashMap;
 use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 
+thread_local! {
+    static TLS_EMPTY_ARC: Arc<IndexMap<String, Value>> = Arc::new(IndexMap::new());
+    static TLS_INPUT_POOL: std::cell::RefCell<Vec<Arc<IndexMap<String, Value>>>> =
+        std::cell::RefCell::new(Vec::with_capacity(128));
+    static TLS_OUTPUT_POOL: std::cell::RefCell<Vec<Arc<IndexMap<String, Value>>>> =
+        std::cell::RefCell::new(Vec::with_capacity(128));
+}
+
+#[inline(always)]
+fn tls_empty_arc() -> Arc<IndexMap<String, Value>> {
+    TLS_EMPTY_ARC
+        .try_with(Arc::clone)
+        .unwrap_or_else(|_| Arc::new(IndexMap::new()))
+}
+
+#[inline(always)]
+fn sanitize_for_pool(map: &mut IndexMap<String, Value>) {
+    for (_, v) in map.iter_mut() {
+        match v {
+            Value::Array(_) | Value::Object(_) => *v = Value::Null,
+            Value::String(s) if s.capacity() > 256 => *v = Value::Null,
+            _ => {}
+        }
+    }
+}
+
 /// Copy-on-write map wrapper backed by `Arc<IndexMap<String, Value>>`.
 /// Preserves the SELECT projection field order or input record field order.
 /// Cloning a `StreamRecord` across N subscribers in `StreamBus` is an O(1)
 /// atomic refcount increment; mutation via `DerefMut` triggers `Arc::make_mut`.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct SharedMap(pub Arc<IndexMap<String, Value>>);
+
+impl Default for SharedMap {
+    #[inline]
+    fn default() -> Self {
+        Self(tls_empty_arc())
+    }
+}
+
+impl Drop for SharedMap {
+    #[inline]
+    fn drop(&mut self) {
+        if self.0.capacity() == 0 || self.0.len() > 16 || self.0.capacity() > 32 {
+            return;
+        }
+        if Arc::strong_count(&self.0) == 1 && Arc::weak_count(&self.0) == 0 {
+            let _ = TLS_INPUT_POOL.try_with(|pool| {
+                let mut p = pool.borrow_mut();
+                if p.len() < 128 {
+                    let mut recycled = std::mem::replace(&mut self.0, tls_empty_arc());
+                    if let Some(m) = Arc::get_mut(&mut recycled) {
+                        sanitize_for_pool(m);
+                        p.push(recycled);
+                    }
+                }
+            });
+        }
+    }
+}
 
 impl SharedMap {
     #[inline]
     pub fn new(map: IndexMap<String, Value>) -> Self {
         Self(Arc::new(map))
+    }
+
+    #[inline(always)]
+    pub fn get(&self, key: &str) -> Option<&Value> {
+        let map = &*self.0;
+        if map.len() <= 8 {
+            for (k, v) in map.iter() {
+                if k == key {
+                    return Some(v);
+                }
+            }
+            None
+        } else {
+            map.get(key)
+        }
+    }
+
+    #[inline(always)]
+    pub fn take_input_arc() -> Arc<IndexMap<String, Value>> {
+        TLS_INPUT_POOL
+            .try_with(|pool| pool.borrow_mut().pop())
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| Arc::new(IndexMap::with_capacity(4)))
+    }
+
+    #[inline(always)]
+    pub fn take_output_arc(cap: usize) -> Arc<IndexMap<String, Value>> {
+        TLS_OUTPUT_POOL
+            .try_with(|pool| pool.borrow_mut().pop())
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| Arc::new(IndexMap::with_capacity(cap)))
+    }
+
+    #[inline(always)]
+    pub fn recycle_to_output_pool(&mut self) {
+        if self.0.capacity() == 0 || self.0.len() > 16 || self.0.capacity() > 32 {
+            return;
+        }
+        if Arc::strong_count(&self.0) == 1 && Arc::weak_count(&self.0) == 0 {
+            let _ = TLS_OUTPUT_POOL.try_with(|pool| {
+                let mut p = pool.borrow_mut();
+                if p.len() < 128 {
+                    let mut recycled = std::mem::replace(&mut self.0, tls_empty_arc());
+                    if let Some(m) = Arc::get_mut(&mut recycled) {
+                        sanitize_for_pool(m);
+                        p.push(recycled);
+                    }
+                }
+            });
+        }
     }
 
     #[inline]
@@ -24,8 +130,9 @@ impl SharedMap {
     }
 
     #[inline]
-    pub fn into_inner(self) -> IndexMap<String, Value> {
-        Arc::try_unwrap(self.0).unwrap_or_else(|arc| (*arc).clone())
+    pub fn into_inner(mut self) -> IndexMap<String, Value> {
+        let arc = std::mem::replace(&mut self.0, tls_empty_arc());
+        Arc::try_unwrap(arc).unwrap_or_else(|a| (*a).clone())
     }
 
     #[inline]
@@ -143,9 +250,202 @@ impl Serialize for SharedMap {
     }
 }
 
+struct KeyMatchSeed<'a>(&'a str);
+
+enum KeyMatchResult {
+    Matched,
+    Mismatch(String),
+}
+
+impl<'de> serde::de::DeserializeSeed<'de> for KeyMatchSeed<'_> {
+    type Value = KeyMatchResult;
+
+    #[inline(always)]
+    fn deserialize<D: Deserializer<'de>>(self, deserializer: D) -> Result<Self::Value, D::Error> {
+        struct KeyVisitor<'a>(&'a str);
+        impl<'de> serde::de::Visitor<'de> for KeyVisitor<'_> {
+            type Value = KeyMatchResult;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("a map key string")
+            }
+
+            #[inline(always)]
+            fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<Self::Value, E> {
+                if v == self.0 {
+                    Ok(KeyMatchResult::Matched)
+                } else {
+                    Ok(KeyMatchResult::Mismatch(v.to_owned()))
+                }
+            }
+
+            #[inline(always)]
+            fn visit_string<E: serde::de::Error>(self, v: String) -> Result<Self::Value, E> {
+                if v == self.0 {
+                    Ok(KeyMatchResult::Matched)
+                } else {
+                    Ok(KeyMatchResult::Mismatch(v))
+                }
+            }
+        }
+        deserializer.deserialize_str(KeyVisitor(self.0))
+    }
+}
+
+struct ValueInPlaceSeed<'a>(&'a mut Value);
+
+impl<'de> serde::de::DeserializeSeed<'de> for ValueInPlaceSeed<'_> {
+    type Value = ();
+
+    #[inline(always)]
+    fn deserialize<D: Deserializer<'de>>(self, deserializer: D) -> Result<(), D::Error> {
+        struct ValVisitor<'a>(&'a mut Value);
+        impl<'de> serde::de::Visitor<'de> for ValVisitor<'_> {
+            type Value = ();
+
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("any valid JSON value")
+            }
+
+            #[inline(always)]
+            fn visit_bool<E>(self, v: bool) -> Result<(), E> {
+                *self.0 = Value::Bool(v);
+                Ok(())
+            }
+
+            #[inline(always)]
+            fn visit_i64<E>(self, v: i64) -> Result<(), E> {
+                *self.0 = Value::Number(v.into());
+                Ok(())
+            }
+
+            #[inline(always)]
+            fn visit_u64<E>(self, v: u64) -> Result<(), E> {
+                *self.0 = Value::Number(v.into());
+                Ok(())
+            }
+
+            #[inline(always)]
+            fn visit_f64<E>(self, v: f64) -> Result<(), E> {
+                *self.0 = serde_json::Number::from_f64(v)
+                    .map(Value::Number)
+                    .unwrap_or(Value::Null);
+                Ok(())
+            }
+
+            #[inline(always)]
+            fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<(), E> {
+                if let Value::String(ref mut s) = *self.0 {
+                    s.clear();
+                    s.push_str(v);
+                } else {
+                    *self.0 = Value::String(v.to_owned());
+                }
+                Ok(())
+            }
+
+            #[inline(always)]
+            fn visit_string<E>(self, v: String) -> Result<(), E> {
+                *self.0 = Value::String(v);
+                Ok(())
+            }
+
+            #[inline(always)]
+            fn visit_none<E>(self) -> Result<(), E> {
+                *self.0 = Value::Null;
+                Ok(())
+            }
+
+            #[inline(always)]
+            fn visit_unit<E>(self) -> Result<(), E> {
+                *self.0 = Value::Null;
+                Ok(())
+            }
+
+            #[inline(always)]
+            fn visit_some<D: Deserializer<'de>>(self, deserializer: D) -> Result<(), D::Error> {
+                Deserialize::deserialize(deserializer).map(|v| *self.0 = v)
+            }
+
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<(), A::Error> {
+                let mut vec = Vec::with_capacity(seq.size_hint().unwrap_or(0));
+                while let Some(elem) = seq.next_element()? {
+                    vec.push(elem);
+                }
+                *self.0 = Value::Array(vec);
+                Ok(())
+            }
+
+            fn visit_map<A: serde::de::MapAccess<'de>>(self, mut map: A) -> Result<(), A::Error> {
+                let mut m = serde_json::Map::new();
+                while let Some((k, v)) = map.next_entry()? {
+                    m.insert(k, v);
+                }
+                *self.0 = Value::Object(m);
+                Ok(())
+            }
+        }
+        deserializer.deserialize_any(ValVisitor(self.0))
+    }
+}
+
 impl<'de> Deserialize<'de> for SharedMap {
+    #[inline]
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        IndexMap::<String, Value>::deserialize(deserializer).map(Self::new)
+        struct SharedMapVisitor;
+
+        impl<'de> serde::de::Visitor<'de> for SharedMapVisitor {
+            type Value = SharedMap;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("a JSON object map")
+            }
+
+            #[inline]
+            fn visit_map<A: serde::de::MapAccess<'de>>(
+                self,
+                mut access: A,
+            ) -> Result<Self::Value, A::Error> {
+                let mut arc = SharedMap::take_input_arc();
+                let map = Arc::make_mut(&mut arc);
+                let existing_len = map.len();
+                let mut idx = 0usize;
+
+                while idx < existing_len {
+                    let match_res = {
+                        let (expected_key, _) = map.get_index(idx).unwrap();
+                        access.next_key_seed(KeyMatchSeed(expected_key.as_str()))?
+                    };
+                    match match_res {
+                        Some(KeyMatchResult::Matched) => {
+                            let (_, val_slot) = map.get_index_mut(idx).unwrap();
+                            access.next_value_seed(ValueInPlaceSeed(val_slot))?;
+                            idx += 1;
+                        }
+                        Some(KeyMatchResult::Mismatch(new_key)) => {
+                            map.truncate(idx);
+                            let val: Value = access.next_value()?;
+                            map.insert(new_key, val);
+                            while let Some((k, v)) = access.next_entry::<String, Value>()? {
+                                map.insert(k, v);
+                            }
+                            return Ok(SharedMap(arc));
+                        }
+                        None => {
+                            map.truncate(idx);
+                            return Ok(SharedMap(arc));
+                        }
+                    }
+                }
+
+                while let Some((k, v)) = access.next_entry::<String, Value>()? {
+                    map.insert(k, v);
+                }
+                Ok(SharedMap(arc))
+            }
+        }
+
+        deserializer.deserialize_map(SharedMapVisitor)
     }
 }
 
@@ -260,6 +560,133 @@ impl StreamRecord {
     pub fn set_meta(&mut self, meta: impl Into<Arc<RecordMeta>>) {
         self.meta = Some(meta.into());
     }
+}
+
+/// Compares an i64 with an f64 with exact mathematical precision,
+/// preventing float mantissa truncation (IEEE-754 precision limit of 2^53).
+#[inline]
+pub fn cmp_i64_f64(i: i64, f: f64) -> Option<std::cmp::Ordering> {
+    if f.is_nan() {
+        return None;
+    }
+    // 2^63 is 9223372036854775808.0
+    if f >= 9223372036854775808.0 {
+        return Some(std::cmp::Ordering::Less);
+    }
+    // -2^63 is -9223372036854775808.0
+    if f < -9223372036854775808.0 {
+        return Some(std::cmp::Ordering::Greater);
+    }
+    let f_floor = f.floor();
+    let f_int = f_floor as i64;
+    match i.cmp(&f_int) {
+        std::cmp::Ordering::Equal => {
+            if f == f_floor {
+                Some(std::cmp::Ordering::Equal)
+            } else {
+                Some(std::cmp::Ordering::Less)
+            }
+        }
+        ord => Some(ord),
+    }
+}
+
+/// Compares a u64 with an f64 with exact mathematical precision.
+#[inline]
+pub fn cmp_u64_f64(u: u64, f: f64) -> Option<std::cmp::Ordering> {
+    if f.is_nan() {
+        return None;
+    }
+    if f < 0.0 {
+        return Some(std::cmp::Ordering::Greater);
+    }
+    // 2^64 is 18446744073709551616.0
+    if f >= 18446744073709551616.0 {
+        return Some(std::cmp::Ordering::Less);
+    }
+    let f_floor = f.floor();
+    let f_int = f_floor as u64;
+    match u.cmp(&f_int) {
+        std::cmp::Ordering::Equal => {
+            if f == f_floor {
+                Some(std::cmp::Ordering::Equal)
+            } else {
+                Some(std::cmp::Ordering::Less)
+            }
+        }
+        ord => Some(ord),
+    }
+}
+
+/// Canonical numeric-aware ordering shared across BusPredicate, SQL WHERE, joins, and aggregates.
+#[inline]
+pub fn compare_values(a: &Value, b: &Value) -> Option<std::cmp::Ordering> {
+    if a.is_number() && b.is_number() {
+        // 0. Fast path: both floats (most common sensor workload)
+        if let (Value::Number(na), Value::Number(nb)) = (a, b) {
+            if na.is_f64() && nb.is_f64() {
+                return na.as_f64()?.partial_cmp(&nb.as_f64()?);
+            }
+        }
+        // 1. Both integers
+        if let (Some(ai), Some(bi)) = (a.as_i64(), b.as_i64()) {
+            return Some(ai.cmp(&bi));
+        }
+        if let (Some(au), Some(bu)) = (a.as_u64(), b.as_u64()) {
+            return Some(au.cmp(&bu));
+        }
+        if let (Some(ai), Some(bu)) = (a.as_i64(), b.as_u64()) {
+            if ai < 0 {
+                return Some(std::cmp::Ordering::Less);
+            }
+            return Some((ai as u64).cmp(&bu));
+        }
+        if let (Some(au), Some(bi)) = (a.as_u64(), b.as_i64()) {
+            if bi < 0 {
+                return Some(std::cmp::Ordering::Greater);
+            }
+            return Some(au.cmp(&(bi as u64)));
+        }
+
+        // 2. Integer vs Float
+        if let (Some(ai), Some(bf)) = (a.as_i64(), b.as_f64()) {
+            return cmp_i64_f64(ai, bf);
+        }
+        if let (Some(af), Some(bi)) = (a.as_f64(), b.as_i64()) {
+            return cmp_i64_f64(bi, af).map(|ord| ord.reverse());
+        }
+        if let (Some(au), Some(bf)) = (a.as_u64(), b.as_f64()) {
+            return cmp_u64_f64(au, bf);
+        }
+        if let (Some(af), Some(bu)) = (a.as_f64(), b.as_u64()) {
+            return cmp_u64_f64(bu, af).map(|ord| ord.reverse());
+        }
+
+        // 3. Both floats
+        if let (Some(af), Some(bf)) = (a.as_f64(), b.as_f64()) {
+            return af.partial_cmp(&bf);
+        }
+        return None;
+    }
+    if let (Some(as_), Some(bs)) = (a.as_str(), b.as_str()) {
+        return Some(as_.cmp(bs));
+    }
+    if let (Some(ab), Some(bb)) = (a.as_bool(), b.as_bool()) {
+        return Some(ab.cmp(&bb));
+    }
+    None
+}
+
+/// Canonical numeric-aware equality: values are equal iff compare_values returns Equal.
+#[inline]
+pub fn values_equal(a: &Value, b: &Value) -> bool {
+    if a.is_null() || b.is_null() {
+        return false;
+    }
+    if a.is_number() && b.is_number() {
+        return compare_values(a, b) == Some(std::cmp::Ordering::Equal);
+    }
+    a == b
 }
 
 /// One declared stream/table column, serialized eKuiper-style as
@@ -737,6 +1164,44 @@ mod tests {
             rec.meta.as_ref().unwrap(),
             hop2.meta.as_ref().unwrap()
         ));
+    }
+
+    #[test]
+    fn test_exact_large_integer_and_mixed_float_comparisons() {
+        let v_9007199254740992 = serde_json::json!(9007199254740992i64);
+        let v_9007199254740993 = serde_json::json!(9007199254740993i64);
+        let f_9007199254740992 = serde_json::json!(9007199254740992.0f64);
+
+        // 1. Integer ordering across IEEE-754 precision boundary (2^53 = 9007199254740992)
+        assert_eq!(
+            compare_values(&v_9007199254740993, &v_9007199254740992),
+            Some(std::cmp::Ordering::Greater)
+        );
+        assert!(!values_equal(&v_9007199254740993, &v_9007199254740992));
+
+        // 2. Mixed integer vs float: distinct values must NOT collapse!
+        assert_eq!(
+            compare_values(&v_9007199254740993, &f_9007199254740992),
+            Some(std::cmp::Ordering::Greater)
+        );
+        assert!(!values_equal(&v_9007199254740993, &f_9007199254740992));
+
+        // 3. Exact float-integer equivalence for representable integers
+        assert_eq!(
+            compare_values(&v_9007199254740992, &f_9007199254740992),
+            Some(std::cmp::Ordering::Equal)
+        );
+        assert!(values_equal(&v_9007199254740992, &f_9007199254740992));
+
+        // 4. Fractions
+        assert_eq!(
+            compare_values(&serde_json::json!(1), &serde_json::json!(1.25)),
+            Some(std::cmp::Ordering::Less)
+        );
+        assert_eq!(
+            compare_values(&serde_json::json!(1), &serde_json::json!(0.75)),
+            Some(std::cmp::Ordering::Greater)
+        );
     }
 
     #[test]

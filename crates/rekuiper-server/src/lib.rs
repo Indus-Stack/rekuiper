@@ -220,7 +220,13 @@ pub async fn start_server_with_options(
                 .unwrap_or_else(|| "IPC-Edge".to_string()),
             version: state.version.clone(),
         };
-        let (_cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
+        let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
+        state
+            .source_cancels
+            .write()
+            .entry("__agent__".to_string())
+            .or_default()
+            .push(cancel_tx);
         agent::spawn_agent_reconnect_loop(url, state.clone(), app.clone(), meta, cancel_rx);
     }
 

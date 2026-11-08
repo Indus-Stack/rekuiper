@@ -609,8 +609,22 @@ pub async fn push_stream_data(
     if records.is_empty() {
         return (StatusCode::OK, "Data ingested successfully.\n").into_response();
     }
-    let _ = sender.send_batch(records).await;
-    (StatusCode::OK, "Data ingested successfully.\n").into_response()
+    match sender.send_batch(records).await {
+        Ok(_) => (StatusCode::OK, "Data ingested successfully.\n").into_response(),
+        Err(rekuiper_core::PublishError::Closed) => (
+            StatusCode::BAD_REQUEST,
+            "Stream has no active subscribers\n",
+        )
+            .into_response(),
+        Err(rekuiper_core::PublishError::Full) => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Stream subscriber queue full\n",
+        )
+            .into_response(),
+        Err(rekuiper_core::PublishError::NoSubscribers) => {
+            (StatusCode::OK, "Data ingested successfully.\n").into_response()
+        }
+    }
 }
 
 pub async fn list_tables(State(state): State<AppState>) -> impl IntoResponse {

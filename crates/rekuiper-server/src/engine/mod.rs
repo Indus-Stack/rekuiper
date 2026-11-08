@@ -30,6 +30,18 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+/// Literal as `f64` only when every integer of that magnitude is exactly
+/// representable (|x| < 2^53); larger literals stay on the exact evaluator path.
+#[inline]
+fn exact_f64_threshold(lit: &Value) -> Option<f64> {
+    let f = lit.as_f64()?;
+    if f.abs() < 9_007_199_254_740_991.0 {
+        Some(f)
+    } else {
+        None
+    }
+}
+
 /// Extract an atomic StreamBus pre-filter from a SQL WHERE expression.
 /// For `A AND B`, even if `B` is a complex function call, extracting `A`
 /// still filters out non-matching events at the StreamBus before waking the rule!
@@ -76,22 +88,30 @@ pub(crate) fn extract_bus_predicate(
                     field: field.clone(),
                     value: lit.clone(),
                 }),
-                BinaryOperator::Gt => lit.as_f64().map(|threshold| BusPredicate::FieldGt {
-                    field: field.clone(),
-                    threshold,
-                }),
-                BinaryOperator::Gte => lit.as_f64().map(|threshold| BusPredicate::FieldGte {
-                    field: field.clone(),
-                    threshold,
-                }),
-                BinaryOperator::Lt => lit.as_f64().map(|threshold| BusPredicate::FieldLt {
-                    field: field.clone(),
-                    threshold,
-                }),
-                BinaryOperator::Lte => lit.as_f64().map(|threshold| BusPredicate::FieldLte {
-                    field: field.clone(),
-                    threshold,
-                }),
+                BinaryOperator::Gt => {
+                    exact_f64_threshold(lit).map(|threshold| BusPredicate::FieldGt {
+                        field: field.clone(),
+                        threshold,
+                    })
+                }
+                BinaryOperator::Gte => {
+                    exact_f64_threshold(lit).map(|threshold| BusPredicate::FieldGte {
+                        field: field.clone(),
+                        threshold,
+                    })
+                }
+                BinaryOperator::Lt => {
+                    exact_f64_threshold(lit).map(|threshold| BusPredicate::FieldLt {
+                        field: field.clone(),
+                        threshold,
+                    })
+                }
+                BinaryOperator::Lte => {
+                    exact_f64_threshold(lit).map(|threshold| BusPredicate::FieldLte {
+                        field: field.clone(),
+                        threshold,
+                    })
+                }
                 _ => None,
             }
         }
@@ -128,7 +148,7 @@ pub(crate) fn is_bus_predicate_exhaustive(expr: &rekuiper_sql::Expr) -> bool {
                 BinaryOperator::Gt
                 | BinaryOperator::Gte
                 | BinaryOperator::Lt
-                | BinaryOperator::Lte => lit.as_f64().is_some(),
+                | BinaryOperator::Lte => exact_f64_threshold(lit).is_some(),
                 _ => false,
             }
         }
@@ -371,7 +391,7 @@ pub(crate) fn spawn_rule_task(
         .iter()
         .zip(&cache_configs)
         .all(|(action, cache_cfg)| matches!(action, PreparedAction::Nop) && cache_cfg.is_none());
-    tokio::spawn(async move {
+    let sink_handle = tokio::spawn(async move {
         use std::collections::HashMap as Map;
         use std::sync::atomic::Ordering::Relaxed;
         let mut files: Map<std::path::PathBuf, FileBatchWriter> = Map::new();
@@ -453,9 +473,25 @@ pub(crate) fn spawn_rule_task(
                         }
                         break;
                     };
+                    let tracing_active = sink_trace_mgr.is_tracing(&sink_rule_id);
+                    if all_nop && !tracing_active {
+                        let mut cur_output = output_record;
+                        cur_output.data.recycle_to_output_pool();
+                        let mut batch_sink_out = 1u64;
+                        while batch_sink_out < 1024 {
+                            match sink_rx.try_recv() {
+                                Ok(mut next) => {
+                                    next.data.recycle_to_output_pool();
+                                    batch_sink_out += 1;
+                                }
+                                Err(_) => break,
+                            }
+                        }
+                        sink_counters.sink_out.fetch_add(batch_sink_out, Relaxed);
+                        continue;
+                    }
                     last_live = tokio::time::Instant::now();
                     let enable_private_net = sink_config.read().basic.enable_private_net;
-                    let tracing_active = sink_trace_mgr.is_tracing(&sink_rule_id);
                     let ctx = SinkContext {
                         rule_id: &sink_rule_id,
                         rule_mgr: &sink_rule_mgr,
@@ -469,14 +505,11 @@ pub(crate) fn spawn_rule_task(
                     let mut drained = 0;
                     let mut batch_sink_out = 0u64;
                     loop {
-                        if tracing_active {
-                            maybe_trace_record(
-                                &sink_trace_mgr,
-                                &sink_rule_id,
-                                &cur_output.data,
-                                Some(&cur_output.data),
-                            );
-                        }
+                        let trace_start = if tracing_active {
+                            Some(chrono::Utc::now())
+                        } else {
+                            None
+                        };
                         if all_nop {
                             batch_sink_out += 1;
                         } else {
@@ -501,8 +534,18 @@ pub(crate) fn spawn_rule_task(
                                 }
                             }
                         }
+                        if tracing_active {
+                            maybe_trace_record(
+                                &sink_trace_mgr,
+                                &sink_rule_id,
+                                &cur_output.data,
+                                Some(&cur_output.data),
+                                trace_start,
+                            );
+                        }
+                        cur_output.data.recycle_to_output_pool();
                         drained += 1;
-                        if drained >= 64 {
+                        if drained >= 1024 {
                             break;
                         }
                         match sink_rx.try_recv() {
@@ -791,6 +834,7 @@ pub(crate) fn spawn_rule_task(
         )),
     };
     rule_manager.set_rule_handle(&rule_id, handle);
+    rule_manager.set_rule_sink_handle(&rule_id, sink_handle);
 }
 
 #[cfg(test)]

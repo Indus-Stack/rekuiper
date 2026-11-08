@@ -1599,3 +1599,25 @@ fn test_rule_context_state_fallback() {
     assert_eq!(res.get("rid"), Some(&json!("rule_alert_42")));
     assert_eq!(res.get("rstart"), Some(&json!(1700000000000i64)));
 }
+
+#[test]
+fn test_exact_large_integer_where_clause_evaluation() {
+    let mut p = Parser::new("SELECT * FROM demo WHERE v > 9007199254740992");
+    let stmt = p.parse_select().expect("parse sql");
+    let where_expr = stmt.where_clause.as_ref().unwrap();
+
+    let mut record = HashMap::new();
+    record.insert("v".to_string(), json!(9007199254740993i64));
+
+    // Verify fast path evaluation evaluates exact integer ordering without IEEE-754 precision loss
+    let passes = Evaluator::eval_bool(where_expr, &record);
+    assert!(passes, "v = 9007199254740993 must be > 9007199254740992");
+
+    // Equal value must NOT pass >
+    record.insert("v".to_string(), json!(9007199254740992i64));
+    let passes_equal = Evaluator::eval_bool(where_expr, &record);
+    assert!(
+        !passes_equal,
+        "v = 9007199254740992 must NOT be > 9007199254740992"
+    );
+}

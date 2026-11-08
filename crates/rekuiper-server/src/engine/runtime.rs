@@ -385,7 +385,7 @@ pub(crate) async fn run_stateless_rule(
             }
         }
     } else {
-        const DRAIN_BATCH_LIMIT: usize = 64;
+        const DRAIN_BATCH_LIMIT: usize = 1024;
         let mut sample_seq = 0u32;
 
         while let Some(mut record) = rx.recv().await {
@@ -456,7 +456,7 @@ pub(crate) async fn run_stateless_rule(
                             batch_filtered += 1;
                             break 'process;
                         };
-                        Evaluator::eval_select_stateless_fast(
+                        Evaluator::eval_select_stateless_fast_shared(
                             &select_stmt,
                             &field_names,
                             has_analytic,
@@ -464,14 +464,14 @@ pub(crate) async fn run_stateless_rule(
                             &rule_state,
                         )
                     } else if where_pre_filtered && !has_analytic {
-                        Evaluator::eval_select_stateful_with_names(
+                        Evaluator::eval_select_stateful_with_names_shared(
                             &select_stmt,
                             &field_names,
                             &record.data,
                             &rule_state,
                         )
                     } else {
-                        Evaluator::eval_select_stateless_fast(
+                        Evaluator::eval_select_stateless_fast_shared(
                             &select_stmt,
                             &field_names,
                             has_analytic,

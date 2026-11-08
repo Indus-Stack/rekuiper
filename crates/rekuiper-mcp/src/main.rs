@@ -15,6 +15,10 @@ struct Args {
     /// Target rekuiper REST endpoint
     #[arg(long, default_value = "http://127.0.0.1:9081")]
     server_url: String,
+
+    /// Bearer authentication token for authenticated rekuiper endpoints
+    #[arg(short = 't', long = "token", env = "REKUIPER_TOKEN")]
+    token: Option<String>,
 }
 
 #[tokio::main]
@@ -34,7 +38,8 @@ async fn main() -> anyhow::Result<()> {
         args.server_url
     );
 
-    let handler = McpHandler::new(args.server_url);
+    let token = args.token.or_else(|| std::env::var("KUIPER_TOKEN").ok());
+    let handler = McpHandler::with_token(args.server_url, token);
 
     let stdin = tokio::io::stdin();
     let mut reader = BufReader::new(stdin);

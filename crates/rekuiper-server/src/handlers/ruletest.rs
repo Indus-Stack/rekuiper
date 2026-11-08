@@ -422,5 +422,54 @@ pub fn test_sse_router(state: AppState) -> axum::Router {
     axum::Router::new()
         .route("/test/:name", get(sse_ruletest))
         .fallback(http_data_push_handler)
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            crate::state::auth_guard,
+        ))
         .with_state(state)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use tower::ServiceExt;
+
+    #[tokio::test]
+    async fn test_sse_router_rejects_unauthenticated_when_auth_enabled() {
+        let mut config = rekuiper_conf::KuiperConfig::default();
+        config.basic.fleet_token = Some("secret-fleet-token-123".to_string());
+        let bus = rekuiper_core::runtime::StreamBus::new();
+        let stream_mgr = rekuiper_core::StreamManager::new();
+        let table_mgr = rekuiper_core::TableManager::new();
+        let rule_mgr = rekuiper_core::RuleManager::new(bus.clone());
+        let state = AppState::new(
+            "1.0.0".to_string(),
+            config,
+            stream_mgr,
+            table_mgr,
+            rule_mgr,
+            bus,
+        );
+
+        let app = test_sse_router(state);
+
+        // Request without token must be rejected with 401 Unauthorized
+        let req = Request::builder()
+            .uri("/test/rule1")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+
+        // Request with valid bearer token is authorized
+        let req_auth = Request::builder()
+            .uri("/test/rule1")
+            .header("Authorization", "Bearer secret-fleet-token-123")
+            .body(Body::empty())
+            .unwrap();
+        let resp_auth = app.oneshot(req_auth).await.unwrap();
+        assert_ne!(resp_auth.status(), StatusCode::UNAUTHORIZED);
+    }
 }

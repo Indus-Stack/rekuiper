@@ -11,6 +11,8 @@ Connectors belong to two categories:
 
 rekuiper provides built-in connectors for common protocols and supports plugin connectors for custom protocols.
 
+> For delivery contracts, transport security, and supported formats across all protocols, see the [Connector Support Matrix](./connectors/matrix.md).
+
 ## Source Connectors
 
 [Source connectors](./sources/overview.md) ingest external data into streams or tables. Sources operate in two modes:

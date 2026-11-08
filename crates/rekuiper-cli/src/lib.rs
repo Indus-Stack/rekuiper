@@ -12,6 +12,10 @@ pub struct Cli {
     #[arg(short, long, default_value = "http://127.0.0.1:9081")]
     pub url: String,
 
+    /// Bearer authentication token for authenticated rekuiper endpoints
+    #[arg(short = 't', long = "token", env = "REKUIPER_TOKEN")]
+    pub token: Option<String>,
+
     #[arg(short = 'o', long = "output", default_value = "text")]
     pub output: String,
 
@@ -277,7 +281,24 @@ async fn run_query(client: &reqwest::Client, base_url: &str, query_sql: &str) ->
 
 pub async fn run_cli() -> Result<()> {
     let cli = Cli::parse();
-    let client = reqwest::Client::new();
+    let token = cli.token.or_else(|| std::env::var("KUIPER_TOKEN").ok());
+    let mut headers = reqwest::header::HeaderMap::new();
+    if let Some(tok) = token {
+        let trimmed = tok.trim();
+        let raw_token = trimmed
+            .strip_prefix("Bearer ")
+            .or_else(|| trimmed.strip_prefix("bearer "))
+            .unwrap_or(trimmed);
+        if !raw_token.is_empty() {
+            let auth_val = reqwest::header::HeaderValue::from_str(raw_token)
+                .context("Invalid characters in authentication token")?;
+            headers.insert(reqwest::header::AUTHORIZATION, auth_val);
+        }
+    }
+    let client = reqwest::Client::builder()
+        .default_headers(headers)
+        .build()
+        .context("Failed to build HTTP client")?;
     let base_url = cli.url.trim_end_matches('/');
     let is_json_output = cli.json || cli.output.eq_ignore_ascii_case("json");
 

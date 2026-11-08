@@ -9,7 +9,17 @@ fn parse(args: &[&str]) -> Cli {
 fn test_cli_ping() {
     let cli = parse(&["kuiper", "ping"]);
     assert_eq!(cli.url, "http://127.0.0.1:9081");
+    assert_eq!(cli.token, None);
     assert!(matches!(cli.command, Commands::Ping));
+}
+
+#[test]
+fn test_cli_token_flag() {
+    let cli = parse(&["kuiper", "--token", "secret123", "ping"]);
+    assert_eq!(cli.token.as_deref(), Some("secret123"));
+
+    let cli_short = parse(&["kuiper", "-t", "shortsecret", "ping"]);
+    assert_eq!(cli_short.token.as_deref(), Some("shortsecret"));
 }
 
 #[test]

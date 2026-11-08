@@ -305,6 +305,7 @@ pub struct OpcUaDataValue {
 pub struct OpcUaClient {
     endpoint: String,
     timeout: Duration,
+    security_policy: String,
     stream: Option<TcpStream>,
     channel_id: u32,
     token_id: u32,
@@ -314,9 +315,14 @@ pub struct OpcUaClient {
 
 impl OpcUaClient {
     pub fn new(endpoint: &str, timeout_ms: u64) -> Self {
+        Self::with_security_policy(endpoint, timeout_ms, "None")
+    }
+
+    pub fn with_security_policy(endpoint: &str, timeout_ms: u64, security_policy: &str) -> Self {
         Self {
             endpoint: endpoint.to_string(),
             timeout: Duration::from_millis(timeout_ms.max(100)),
+            security_policy: security_policy.to_string(),
             stream: None,
             channel_id: 0,
             token_id: 0,
@@ -346,6 +352,17 @@ impl OpcUaClient {
     }
 
     pub async fn ensure_connected(&mut self) -> Result<()> {
+        let sec_str = self.security_policy.trim();
+        if !sec_str.is_empty()
+            && !sec_str.eq_ignore_ascii_case("None")
+            && !sec_str.ends_with("#None")
+        {
+            bail!(
+                "OPC UA security policy '{}' is not supported; only SecurityPolicy#None is currently implemented",
+                self.security_policy
+            );
+        }
+
         if self.stream.is_none() {
             let (host, port) = self.parse_host_port()?;
             let target = format!("{}:{}", host, port);
@@ -387,7 +404,7 @@ impl OpcUaClient {
                 stream.read_exact(&mut ack_body).await?;
             }
 
-            // 2. Send OPN (OpenSecureChannel) message (SecurityPolicy#None)
+            // Send OPN (OpenSecureChannel) message (SecurityPolicy#None)
             let sec_policy = b"http://opcfoundation.org/UA/SecurityPolicy#None";
             let sec_len = sec_policy.len() as u32;
             let req_handle = self.request_handle.fetch_add(1, Ordering::SeqCst);
@@ -1264,7 +1281,11 @@ fn parse_read_response(
 
 /// Reads a one-shot snapshot of all configured OPC UA nodes (for table lookups and point scans).
 pub async fn opcua_read_snapshot(config: &OpcUaConfig) -> Result<HashMap<String, Value>> {
-    let mut client = OpcUaClient::new(config.endpoint(), config.timeout_ms);
+    let mut client = OpcUaClient::with_security_policy(
+        config.endpoint(),
+        config.timeout_ms,
+        &config.security_policy,
+    );
     let values = client.read_nodes(&config.nodes).await?;
 
     let mut record = HashMap::new();
@@ -1317,7 +1338,11 @@ impl OpcUaSource {
 
     pub fn spawn(self, mut cancel_rx: watch::Receiver<bool>) -> tokio::task::JoinHandle<()> {
         tokio::spawn(async move {
-            let mut client = OpcUaClient::new(self.config.endpoint(), self.config.timeout_ms);
+            let mut client = OpcUaClient::with_security_policy(
+                self.config.endpoint(),
+                self.config.timeout_ms,
+                &self.config.security_policy,
+            );
             let mut interval = tokio::time::interval(self.config.polling_interval());
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
@@ -1645,5 +1670,19 @@ mod tests {
         );
         assert_eq!(parsed.get("temp").unwrap().source_timestamp, Some(1000));
         assert_eq!(parsed.get("rpm").unwrap().value, OpcUaVariant::Int32(1500));
+    }
+
+    #[tokio::test]
+    async fn test_opcua_rejects_unsupported_security_policy() {
+        let mut client =
+            OpcUaClient::with_security_policy("opc.tcp://127.0.0.1:4840", 1000, "Basic256Sha256");
+        let res = client.ensure_connected().await;
+        assert!(res.is_err());
+        let err_msg = res.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("Basic256Sha256") && err_msg.contains("not supported"),
+            "Unexpected error: {}",
+            err_msg
+        );
     }
 }

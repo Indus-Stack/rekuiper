@@ -768,6 +768,20 @@ impl IncrementalWindow {
 /// - `COUNT`, `SUM`, `AVG` update in O(1) on both insertion and expiration.
 /// - `MIN` and `MAX` use a monotonic `VecDeque<(i64, f64, Value)>` for O(1) amortized
 ///   sliding extrema without scanning the window buffer.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum CompactSumEntry {
+    Int(i64),
+    Float(f64),
+    Null,
+}
+
+#[derive(Debug, Clone)]
+pub struct CompactExtremeEntry {
+    pub ts: i64,
+    pub f: f64,
+    pub num: serde_json::Number,
+}
+
 #[derive(Debug, Clone)]
 pub enum SlidingAcc {
     Count {
@@ -779,7 +793,7 @@ pub enum SlidingAcc {
         float_sum: f64,
         float_count: usize,
         valid_count: usize,
-        entries: VecDeque<(i64, Option<i64>, Option<f64>)>,
+        entries: VecDeque<(i64, CompactSumEntry)>,
     },
     Avg {
         sum: f64,
@@ -788,13 +802,12 @@ pub enum SlidingAcc {
     },
     Extreme {
         is_max: bool,
-        /// Monotonic queue of `(timestamp_ms, numeric_value, original_json_value)`
-        mono_deque: VecDeque<(i64, f64, Value)>,
+        mono_deque: VecDeque<CompactExtremeEntry>,
     },
 }
 
 impl SlidingAcc {
-    pub fn new(kind: AggKind) -> Self {
+    fn new(kind: AggKind) -> Self {
         match kind {
             AggKind::CountAll | AggKind::Count => SlidingAcc::Count {
                 n: 0,
@@ -827,7 +840,7 @@ impl SlidingAcc {
         }
     }
 
-    pub fn push(&mut self, kind: AggKind, ts: i64, value: Option<&Value>) {
+    fn push(&mut self, kind: AggKind, ts: i64, value: Option<&Value>) {
         match (self, kind) {
             (SlidingAcc::Count { n, entries }, AggKind::CountAll) => {
                 *n += 1;
@@ -856,13 +869,13 @@ impl SlidingAcc {
                     *valid_count += 1;
                     if let Some(i) = v.as_i64() {
                         *int_sum = int_sum.saturating_add(i);
-                        entries.push_back((ts, Some(i), Some(f)));
+                        entries.push_back((ts, CompactSumEntry::Int(i)));
                     } else {
                         *float_count += 1;
-                        entries.push_back((ts, None, Some(f)));
+                        entries.push_back((ts, CompactSumEntry::Float(f)));
                     }
                 } else {
-                    entries.push_back((ts, None, None));
+                    entries.push_back((ts, CompactSumEntry::Null));
                 }
             }
             (SlidingAcc::Avg { sum, n, entries }, _) => {
@@ -876,27 +889,40 @@ impl SlidingAcc {
                 }
             }
             (SlidingAcc::Extreme { is_max, mono_deque }, _) => {
-                if let Some(v) = value.filter(|v| v.is_number()) {
-                    let Some(f) = v.as_f64() else {
-                        return;
-                    };
-                    // Maintain monotonic order: pop back elements dominated by `f`
-                    while let Some(&(_, back_f, _)) = mono_deque.back() {
-                        let dominated = if *is_max { f >= back_f } else { f <= back_f };
-                        if dominated {
-                            mono_deque.pop_back();
-                        } else {
-                            break;
+                if let Some(v) = value {
+                    if let Some(num) = v.as_number() {
+                        let Some(f) = v.as_f64() else {
+                            return;
+                        };
+                        while let Some(back) = mono_deque.back() {
+                            let ord = rekuiper_core::model::compare_values(
+                                v,
+                                &Value::Number(back.num.clone()),
+                            )
+                            .unwrap_or(std::cmp::Ordering::Equal);
+                            let dominated = if *is_max {
+                                ord != std::cmp::Ordering::Less
+                            } else {
+                                ord != std::cmp::Ordering::Greater
+                            };
+                            if dominated {
+                                mono_deque.pop_back();
+                            } else {
+                                break;
+                            }
                         }
+                        mono_deque.push_back(CompactExtremeEntry {
+                            ts,
+                            f,
+                            num: num.clone(),
+                        });
                     }
-                    mono_deque.push_back((ts, f, v.clone()));
                 }
             }
         }
     }
 
-    /// Evict all entries strictly older than `cutoff_ts` in O(1) amortized time.
-    pub fn evict_before(&mut self, cutoff_ts: i64) {
+    fn evict_before(&mut self, cutoff_ts: i64) {
         match self {
             SlidingAcc::Count { n, entries } => {
                 while let Some(&(ts, valid)) = entries.front() {
@@ -917,16 +943,20 @@ impl SlidingAcc {
                 valid_count,
                 entries,
             } => {
-                while let Some(&(ts, opt_i, opt_f)) = entries.front() {
+                while let Some(&(ts, entry)) = entries.front() {
                     if ts < cutoff_ts {
-                        if let Some(f) = opt_f {
-                            *float_sum -= f;
-                            *valid_count = valid_count.saturating_sub(1);
-                            if let Some(i) = opt_i {
+                        match entry {
+                            CompactSumEntry::Int(i) => {
+                                *float_sum -= i as f64;
                                 *int_sum = int_sum.saturating_sub(i);
-                            } else {
-                                *float_count = float_count.saturating_sub(1);
+                                *valid_count = valid_count.saturating_sub(1);
                             }
+                            CompactSumEntry::Float(f) => {
+                                *float_sum -= f;
+                                *float_count = float_count.saturating_sub(1);
+                                *valid_count = valid_count.saturating_sub(1);
+                            }
+                            CompactSumEntry::Null => {}
                         }
                         entries.pop_front();
                     } else {
@@ -956,8 +986,8 @@ impl SlidingAcc {
                 }
             }
             SlidingAcc::Extreme { mono_deque, .. } => {
-                while let Some(&(ts, _, _)) = mono_deque.front() {
-                    if ts < cutoff_ts {
+                while let Some(front) = mono_deque.front() {
+                    if front.ts < cutoff_ts {
                         mono_deque.pop_front();
                     } else {
                         break;
@@ -967,7 +997,7 @@ impl SlidingAcc {
         }
     }
 
-    pub fn current_value(&self) -> Value {
+    fn current_value(&self) -> Value {
         match self {
             SlidingAcc::Count { n, .. } => Value::from(*n),
             SlidingAcc::Sum {
@@ -994,8 +1024,17 @@ impl SlidingAcc {
             }
             SlidingAcc::Extreme { mono_deque, .. } => mono_deque
                 .front()
-                .map(|(_, _, val)| val.clone())
+                .map(|e| Value::Number(e.num.clone()))
                 .unwrap_or(Value::Null),
+        }
+    }
+
+    fn has_active(&self) -> bool {
+        match self {
+            SlidingAcc::Count { n, .. } => *n > 0,
+            SlidingAcc::Sum { valid_count, .. } => *valid_count > 0,
+            SlidingAcc::Avg { n, .. } => *n > 0,
+            SlidingAcc::Extreme { mono_deque, .. } => !mono_deque.is_empty(),
         }
     }
 }
@@ -1018,6 +1057,9 @@ pub struct SlidingIncrementalWindow {
     index: HashMap<String, usize>,
     groups: Vec<SlidingGroup>,
     key: String,
+    /// Optional upper limit on distinct groups in the active window.
+    /// When None, cardinality is unbounded and memory is governed by inactive group reclamation.
+    pub max_groups: Option<usize>,
 }
 
 impl SlidingIncrementalWindow {
@@ -1048,19 +1090,21 @@ impl SlidingIncrementalWindow {
             index: HashMap::new(),
             groups: Vec::new(),
             key: String::new(),
+            max_groups: None,
         })
+    }
+
+    pub fn with_max_groups(mut self, max: usize) -> Self {
+        self.max_groups = Some(max);
+        self
     }
 
     pub fn is_empty(&self) -> bool {
         self.groups.is_empty()
-            || self.groups.iter().all(|g| {
-                g.accs.iter().all(|a| match a {
-                    SlidingAcc::Count { n, .. } => *n == 0,
-                    SlidingAcc::Sum { valid_count, .. } => *valid_count == 0,
-                    SlidingAcc::Avg { n, .. } => *n == 0,
-                    SlidingAcc::Extreme { mono_deque, .. } => mono_deque.is_empty(),
-                })
-            })
+            || self
+                .groups
+                .iter()
+                .all(|g| g.accs.iter().all(|a| !a.has_active()))
     }
 
     pub fn push(&mut self, ts: i64, row: &Row) -> bool {
@@ -1076,6 +1120,45 @@ impl SlidingIncrementalWindow {
         let gi = match self.index.get(self.key.as_str()) {
             Some(&i) => i,
             None => {
+                if let Some(limit) = self.max_groups {
+                    if self.groups.len() >= limit {
+                        // Explicit overflow policy: prune an inactive group if available
+                        if let Some(pos) = self
+                            .groups
+                            .iter()
+                            .position(|g| g.accs.iter().all(|a| !a.has_active()))
+                        {
+                            let removed = self.groups.swap_remove(pos);
+                            if pos < self.groups.len() {
+                                let mut k = String::new();
+                                for v in &self.groups[pos].group_values {
+                                    write_group_key(&mut k, v);
+                                }
+                                self.index.insert(k, pos);
+                            }
+                            let mut k = String::new();
+                            for v in &removed.group_values {
+                                write_group_key(&mut k, v);
+                            }
+                            self.index.remove(k.as_str());
+                        } else {
+                            // All groups currently active: evict oldest group to enforce bounded memory contract
+                            let removed = self.groups.remove(0);
+                            let mut k = String::new();
+                            for v in &removed.group_values {
+                                write_group_key(&mut k, v);
+                            }
+                            self.index.remove(k.as_str());
+                            for (idx, grp) in self.groups.iter().enumerate() {
+                                k.clear();
+                                for v in &grp.group_values {
+                                    write_group_key(&mut k, v);
+                                }
+                                self.index.insert(k.clone(), idx);
+                            }
+                        }
+                    }
+                }
                 let group = SlidingGroup {
                     group_values: self
                         .group_by
@@ -1122,22 +1205,54 @@ impl SlidingIncrementalWindow {
     }
 
     pub fn evict_before(&mut self, cutoff_ts: i64) {
+        let mut any_expired = false;
         for group in &mut self.groups {
             for acc in &mut group.accs {
                 acc.evict_before(cutoff_ts);
             }
+            if !self.group_by.is_empty()
+                && !group.accs.is_empty()
+                && !group.accs.iter().any(|a| a.has_active())
+            {
+                any_expired = true;
+            }
         }
+        // Reclaim inactive groups only when at least one actually expired.
+        if any_expired {
+            let mut i = 0;
+            let mut key = String::new();
+            while i < self.groups.len() {
+                let g = &self.groups[i];
+                if !g.accs.is_empty() && !g.accs.iter().any(|a| a.has_active()) {
+                    let removed = self.groups.swap_remove(i);
+                    key.clear();
+                    for v in &removed.group_values {
+                        write_group_key(&mut key, v);
+                    }
+                    self.index.remove(key.as_str());
+                    if i < self.groups.len() {
+                        key.clear();
+                        for v in &self.groups[i].group_values {
+                            write_group_key(&mut key, v);
+                        }
+                        self.index.insert(key.clone(), i);
+                    }
+                } else {
+                    i += 1;
+                }
+            }
+        }
+    }
+
+    /// Number of groups currently retained in memory.
+    pub fn active_group_count(&self) -> usize {
+        self.groups.len()
     }
 
     pub fn snapshot(&self) -> Vec<Row> {
         let mut out = Vec::with_capacity(self.groups.len());
         for group in &self.groups {
-            let has_active = group.accs.iter().any(|a| match a {
-                SlidingAcc::Count { n, .. } => *n > 0,
-                SlidingAcc::Sum { valid_count, .. } => *valid_count > 0,
-                SlidingAcc::Avg { n, .. } => *n > 0,
-                SlidingAcc::Extreme { mono_deque, .. } => !mono_deque.is_empty(),
-            });
+            let has_active = group.accs.iter().any(|a| a.has_active());
             if !has_active && !group.accs.is_empty() {
                 continue;
             }

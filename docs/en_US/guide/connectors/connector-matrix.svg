@@ -1,0 +1,141 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 860 420" width="100%" height="100%">
+  <defs>
+    <style>
+      .bg { fill: #f8fafc; }
+      .box { fill: #ffffff; stroke: #cbd5e1; stroke-width: 1.5; rx: 8; }
+      .box-blue { fill: #eff6ff; stroke: #3b82f6; stroke-width: 1.5; rx: 8; }
+      .box-green { fill: #ecfdf5; stroke: #10b981; stroke-width: 1.5; rx: 8; }
+      .box-amber { fill: #fffbeb; stroke: #f59e0b; stroke-width: 1.5; rx: 8; }
+      .title { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; font-size: 14px; font-weight: 700; fill: #0f172a; }
+      .subtitle { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; font-size: 11px; font-weight: 500; fill: #64748b; }
+      .badge { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; font-size: 10px; font-weight: 600; fill: #1e293b; }
+      .badge-bg { fill: #e2e8f0; rx: 4; }
+      .badge-ok { fill: #d1fae5; rx: 4; }
+      .badge-ok-txt { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; font-size: 10px; font-weight: 600; fill: #065f46; }
+      .arrow { stroke: #64748b; stroke-width: 1.5; fill: none; stroke-dasharray: 4 2; }
+      .arrow-solid { stroke: #3b82f6; stroke-width: 2; fill: none; marker-end: url(#arrowhead); }
+    </style>
+    <marker id="arrowhead" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#3b82f6" />
+    </marker>
+  </defs>
+
+  <!-- Background Canvas -->
+  <rect width="860" height="420" class="bg" rx="12" />
+
+  <!-- Section 1: Ingestion Sources -->
+  <rect x="25" y="25" width="220" height="370" class="box" />
+  <text x="40" y="55" class="title">1. Ingestion Sources</text>
+  <text x="40" y="73" class="subtitle">Protocols, decoders, and acks</text>
+
+  <!-- Source Cards -->
+  <g transform="translate(40, 90)">
+    <rect width="190" height="50" class="box-blue" />
+    <text x="12" y="24" class="title">MQTT Source</text>
+    <text x="12" y="40" class="subtitle">QoS 0/1/2, TLS, mTLS, wildcards</text>
+  </g>
+
+  <g transform="translate(40, 150)">
+    <rect width="190" height="50" class="box-blue" />
+    <text x="12" y="24" class="title">RabbitMQ Source</text>
+    <text x="12" y="40" class="subtitle">Manual ack (autoAck: false)</text>
+  </g>
+
+  <g transform="translate(40, 210)">
+    <rect width="190" height="50" class="box-blue" />
+    <text x="12" y="24" class="title">Kafka &amp; OPC-UA</text>
+    <text x="12" y="40" class="subtitle">Polled pull, strict security policy</text>
+  </g>
+
+  <g transform="translate(40, 270)">
+    <rect width="190" height="50" class="box-blue" />
+    <text x="12" y="24" class="title">HTTP / REST Push</text>
+    <text x="12" y="40" class="subtitle">Bearer auth, 400/503 error feedback</text>
+  </g>
+
+  <g transform="translate(40, 330)">
+    <rect width="190" height="50" class="box-blue" />
+    <text x="12" y="24" class="title">File &amp; Parquet</text>
+    <text x="12" y="40" class="subtitle">JSON, CSV, TSV, Parquet tables</text>
+  </g>
+
+  <!-- Flow Arrow: Source to Core -->
+  <path d="M 245 210 L 295 210" class="arrow-solid" />
+
+  <!-- Section 2: Engine Core -->
+  <rect x="305" y="25" width="250" height="370" class="box-green" />
+  <text x="320" y="55" class="title">2. Engine &amp; Bounded Bus</text>
+  <text x="320" y="73" class="subtitle">Zero data loss &amp; memory safety</text>
+
+  <!-- Core Components -->
+  <g transform="translate(320, 90)">
+    <rect width="220" height="60" class="box" />
+    <text x="12" y="24" class="title">Dynamic Admission Chunks</text>
+    <text x="12" y="42" class="subtitle">min(batch_len, capacity / 2, 512)</text>
+    <text x="12" y="54" class="subtitle">No spurious queue overflow failures</text>
+  </g>
+
+  <g transform="translate(320, 160)">
+    <rect width="220" height="60" class="box" />
+    <text x="12" y="24" class="title">StreamBus Rete Index</text>
+    <text x="12" y="42" class="subtitle">Canonical numeric comparison (i64/f64)</text>
+    <text x="12" y="54" class="subtitle">Zero-allocation predicate fast-path</text>
+  </g>
+
+  <g transform="translate(320, 230)">
+    <rect width="220" height="60" class="box" />
+    <text x="12" y="24" class="title">Sliding Window Accumulators</text>
+    <text x="12" y="42" class="subtitle">Compact SUM (24B) &amp; MIN/MAX (32B)</text>
+    <text x="12" y="54" class="subtitle">Inactive group pruning &amp; 64k limit</text>
+  </g>
+
+  <g transform="translate(320, 300)">
+    <rect width="220" height="60" class="box" />
+    <text x="12" y="24" class="title">WASM Extension Sandbox</text>
+    <text x="12" y="42" class="subtitle">Max 64 concurrent runtime instances</text>
+    <text x="12" y="54" class="subtitle">1M instruction fuel execution limit</text>
+  </g>
+
+  <!-- Flow Arrow: Core to Sinks -->
+  <path d="M 555 210 L 605 210" class="arrow-solid" />
+
+  <!-- Section 3: Sinks & Dispatch -->
+  <rect x="615" y="25" width="220" height="370" class="box" />
+  <text x="630" y="55" class="title">3. Sinks &amp; Delivery</text>
+  <text x="630" y="73" class="subtitle">Guaranteed delivery contracts</text>
+
+  <!-- Sink Cards -->
+  <g transform="translate(630, 90)">
+    <rect width="190" height="55" class="box-amber" />
+    <text x="12" y="22" class="title">MQTT Sink</text>
+    <text x="12" y="38" class="subtitle">QoS 0/1/2, TLS, mTLS</text>
+    <text x="12" y="50" class="subtitle">Crash-safe ordered cache replay</text>
+  </g>
+
+  <g transform="translate(630, 155)">
+    <rect width="190" height="55" class="box-amber" />
+    <text x="12" y="22" class="title">RabbitMQ Sink</text>
+    <text x="12" y="38" class="subtitle">Publisher Confirms mode</text>
+    <text x="12" y="50" class="subtitle">confirm_select() broker guarantee</text>
+  </g>
+
+  <g transform="translate(630, 220)">
+    <rect width="190" height="55" class="box-amber" />
+    <text x="12" y="22" class="title">Parquet / File Sink</text>
+    <text x="12" y="38" class="subtitle">Safe append with error abort</text>
+    <text x="12" y="50" class="subtitle">Prevents corrupted overwrites</text>
+  </g>
+
+  <g transform="translate(630, 285)">
+    <rect width="190" height="50" class="box-amber" />
+    <text x="12" y="22" class="title">Kafka &amp; Redis Sinks</text>
+    <text x="12" y="38" class="subtitle">Partitioned push, key-value ops</text>
+  </g>
+
+  <g transform="translate(630, 345)">
+    <rect width="190" height="45" class="box-amber" />
+    <text x="12" y="20" class="title">HTTP / REST &amp; SSE</text>
+    <text x="12" y="36" class="subtitle">Authenticated webhooks &amp; streams</text>
+  </g>
+</svg>
+
