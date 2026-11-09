@@ -52,7 +52,16 @@ impl RowLookup for IndexMap<String, Value> {
 
     #[inline(always)]
     fn get(&self, key: &str) -> Option<&Value> {
-        IndexMap::get(self, key)
+        if self.len() <= 8 {
+            for (k, v) in self.iter() {
+                if k == key {
+                    return Some(v);
+                }
+            }
+            None
+        } else {
+            IndexMap::get(self, key)
+        }
     }
 
     #[inline(always)]
@@ -80,7 +89,7 @@ impl RowLookup for rekuiper_core::model::SharedMap {
 
     #[inline(always)]
     fn get(&self, key: &str) -> Option<&Value> {
-        self.0.get(key)
+        self.get(key)
     }
 
     #[inline(always)]
@@ -1377,6 +1386,120 @@ impl Evaluator {
         Ok(Some(output))
     }
 
+    #[inline]
+    pub fn eval_select_stateless_fast_shared<R: RowLookup + ?Sized>(
+        stmt: &SelectStmt,
+        field_names: &[String],
+        has_analytic: bool,
+        record: &R,
+        state: &RuleState,
+    ) -> Result<Option<rekuiper_core::model::SharedMap>, String> {
+        let Some(condition) = &stmt.where_clause else {
+            return Self::eval_select_stateful_with_names_shared(stmt, field_names, record, state);
+        };
+        if !has_analytic {
+            if !Self::eval_bool_stateful_fallible(condition, record, state)? {
+                return Ok(None);
+            }
+            return Self::eval_select_stateful_with_names_shared(stmt, field_names, record, state);
+        }
+        Self::eval_select_stateless_fast(stmt, field_names, has_analytic, record, state)
+            .map(|opt| opt.map(rekuiper_core::model::SharedMap::from))
+    }
+
+    #[inline]
+    pub fn eval_select_stateful_with_names_shared<R: RowLookup + ?Sized>(
+        stmt: &SelectStmt,
+        field_names: &[String],
+        record: &R,
+        state: &RuleState,
+    ) -> Result<Option<rekuiper_core::model::SharedMap>, String> {
+        if stmt.set_op.is_some() || stmt.fields.len() != field_names.len() {
+            return Self::eval_select_stateful_with_names(stmt, field_names, record, state)
+                .map(|opt| opt.map(rekuiper_core::model::SharedMap::from));
+        }
+        let mut arc = rekuiper_core::model::SharedMap::take_output_arc(stmt.fields.len());
+        let output = Arc::make_mut(&mut arc);
+
+        if output.len() == field_names.len() {
+            let mut matched_all = true;
+            for (idx, field) in stmt.fields.iter().enumerate() {
+                let Some((existing_key, _)) = output.get_index(idx) else {
+                    matched_all = false;
+                    break;
+                };
+                if existing_key.as_str() != field_names[idx].as_str() {
+                    matched_all = false;
+                    break;
+                }
+                match field {
+                    Expr::Identifier(name) => {
+                        if let Some(val) = record.get(name) {
+                            let (_, slot) = output.get_index_mut(idx).unwrap();
+                            match (slot, val) {
+                                (Value::String(dst), Value::String(src)) => {
+                                    dst.clear();
+                                    dst.push_str(src);
+                                }
+                                (dst, src) => *dst = src.clone(),
+                            }
+                        } else if name == "window_start" || name == "window_end" {
+                            let internal_key = format!("__{}__", name);
+                            let (_, slot) = output.get_index_mut(idx).unwrap();
+                            *slot = record.get(&internal_key).cloned().unwrap_or(Value::Null);
+                        } else {
+                            let (_, slot) = output.get_index_mut(idx).unwrap();
+                            *slot = Value::Null;
+                        }
+                    }
+                    Expr::Wildcard | Expr::WildcardModified { .. } | Expr::FieldAccess { .. } => {
+                        matched_all = false;
+                        break;
+                    }
+                    Expr::Call { name, .. }
+                        if name.eq_ignore_ascii_case("extract")
+                            || name.eq_ignore_ascii_case("changed_cols") =>
+                    {
+                        matched_all = false;
+                        break;
+                    }
+                    _ => {
+                        let val = if let Some(fast_num) = Self::try_eval_numeric_fast(field, record)
+                        {
+                            fast_num
+                        } else {
+                            let alias = stmt.field_aliases.get(idx).and_then(|a| a.as_deref());
+                            Self::eval_stateful_expr_fallible(field, record, state).map_err(
+                                |err| {
+                                    let expr_str = field.to_ekuiper_string_qualified(&stmt.from);
+                                    if let Some(a) = alias {
+                                        format!(
+                                            "run Select error: alias: {} expr: {} meet error, err:{}",
+                                            a, expr_str, err
+                                        )
+                                    } else {
+                                        format!(
+                                            "run Select error: expr: {} meet error, err:{}",
+                                            expr_str, err
+                                        )
+                                    }
+                                },
+                            )?
+                        };
+                        let (_, slot) = output.get_index_mut(idx).unwrap();
+                        *slot = val;
+                    }
+                }
+            }
+            if matched_all {
+                return Ok(Some(rekuiper_core::model::SharedMap(arc)));
+            }
+        }
+
+        let res = Self::eval_select_stateful_with_names(stmt, field_names, record, state)?;
+        Ok(res.map(rekuiper_core::model::SharedMap::from))
+    }
+
     /// Multi-row stateful projection supporting `unnest(array_expr)`.
     ///
     /// Evaluates fields with [`Self::eval_select_stateful`]; when a top-level
@@ -2104,14 +2227,14 @@ impl Evaluator {
             match (left.as_ref(), right.as_ref()) {
                 (Expr::Identifier(name), Expr::Literal(lit)) => {
                     if let Some(l_val) = record.get(name) {
-                        if let (Some(lf), Some(rf)) = (l_val.as_f64(), lit.as_f64()) {
+                        if let Some(ord) = rekuiper_core::model::compare_values(l_val, lit) {
                             return match op {
-                                BinaryOperator::Gt => Ok(lf > rf),
-                                BinaryOperator::Gte => Ok(lf >= rf),
-                                BinaryOperator::Lt => Ok(lf < rf),
-                                BinaryOperator::Lte => Ok(lf <= rf),
-                                BinaryOperator::Eq => Ok((lf - rf).abs() < f64::EPSILON),
-                                BinaryOperator::Neq => Ok((lf - rf).abs() >= f64::EPSILON),
+                                BinaryOperator::Gt => Ok(ord == std::cmp::Ordering::Greater),
+                                BinaryOperator::Gte => Ok(ord != std::cmp::Ordering::Less),
+                                BinaryOperator::Lt => Ok(ord == std::cmp::Ordering::Less),
+                                BinaryOperator::Lte => Ok(ord != std::cmp::Ordering::Greater),
+                                BinaryOperator::Eq => Ok(ord == std::cmp::Ordering::Equal),
+                                BinaryOperator::Neq => Ok(ord != std::cmp::Ordering::Equal),
                                 _ => match Self::eval_binary_op_fallible(l_val, op, lit) {
                                     Ok(Value::Bool(b)) => Ok(b),
                                     Ok(Value::Null) => Ok(false),
@@ -2136,14 +2259,14 @@ impl Evaluator {
                 }
                 (Expr::Literal(lit), Expr::Identifier(name)) => {
                     if let Some(r_val) = record.get(name) {
-                        if let (Some(lf), Some(rf)) = (lit.as_f64(), r_val.as_f64()) {
+                        if let Some(ord) = rekuiper_core::model::compare_values(lit, r_val) {
                             return match op {
-                                BinaryOperator::Gt => Ok(lf > rf),
-                                BinaryOperator::Gte => Ok(lf >= rf),
-                                BinaryOperator::Lt => Ok(lf < rf),
-                                BinaryOperator::Lte => Ok(lf <= rf),
-                                BinaryOperator::Eq => Ok((lf - rf).abs() < f64::EPSILON),
-                                BinaryOperator::Neq => Ok((lf - rf).abs() >= f64::EPSILON),
+                                BinaryOperator::Gt => Ok(ord == std::cmp::Ordering::Greater),
+                                BinaryOperator::Gte => Ok(ord != std::cmp::Ordering::Less),
+                                BinaryOperator::Lt => Ok(ord == std::cmp::Ordering::Less),
+                                BinaryOperator::Lte => Ok(ord != std::cmp::Ordering::Greater),
+                                BinaryOperator::Eq => Ok(ord == std::cmp::Ordering::Equal),
+                                BinaryOperator::Neq => Ok(ord != std::cmp::Ordering::Equal),
                                 _ => match Self::eval_binary_op_fallible(lit, op, r_val) {
                                     Ok(Value::Bool(b)) => Ok(b),
                                     Ok(Value::Null) => Ok(false),
@@ -2336,33 +2459,29 @@ impl Evaluator {
                 }
             }
             BinaryOperator::Lt | BinaryOperator::Lte | BinaryOperator::Gt | BinaryOperator::Gte => {
-                let ordering = if left.is_number() && right.is_number() {
-                    left.as_f64()
-                        .and_then(|lf| right.as_f64().and_then(|rf| lf.partial_cmp(&rf)))
-                } else if let (Some(ls), Some(rs)) = (left.as_str(), right.as_str()) {
-                    Some(ls.cmp(rs))
-                } else if let (Some(lb), Some(rb)) = (left.as_bool(), right.as_bool()) {
-                    Some(lb.cmp(&rb))
-                } else {
-                    return Err(format!(
-                        "invalid operation {} {} {}",
-                        Self::format_ekuiper_val_type(left),
-                        op_token,
-                        Self::format_ekuiper_val_type(right)
-                    ));
+                let ordering = match rekuiper_core::model::compare_values(left, right) {
+                    Some(ord) => ord,
+                    None => {
+                        return Err(format!(
+                            "invalid operation {} {} {}",
+                            Self::format_ekuiper_val_type(left),
+                            op_token,
+                            Self::format_ekuiper_val_type(right)
+                        ));
+                    }
                 };
 
                 let matched = matches!(
                     (op, ordering),
-                    (BinaryOperator::Lt, Some(std::cmp::Ordering::Less))
+                    (BinaryOperator::Lt, std::cmp::Ordering::Less)
                         | (
                             BinaryOperator::Lte,
-                            Some(std::cmp::Ordering::Less | std::cmp::Ordering::Equal),
+                            std::cmp::Ordering::Less | std::cmp::Ordering::Equal,
                         )
-                        | (BinaryOperator::Gt, Some(std::cmp::Ordering::Greater))
+                        | (BinaryOperator::Gt, std::cmp::Ordering::Greater)
                         | (
                             BinaryOperator::Gte,
-                            Some(std::cmp::Ordering::Greater | std::cmp::Ordering::Equal),
+                            std::cmp::Ordering::Greater | std::cmp::Ordering::Equal,
                         )
                 );
                 Ok(Value::Bool(matched))
@@ -2492,49 +2611,14 @@ impl Evaluator {
     }
 
     /// Numeric-aware equality: 1 == 1.0 is true; otherwise strict Value equality.
+    #[inline]
     pub(crate) fn values_equal(a: &Value, b: &Value) -> bool {
-        if a.is_null() || b.is_null() {
-            // In SQL, NULL = NULL is UNKNOWN (not true). For WHERE filtering,
-            // UNKNOWN is treated as false. But for direct Eq evaluation, follow
-            // eKuiper-ish simple semantics: NULL == NULL -> false? Or true?
-            // Most engines: NULL = NULL is NULL (false in WHERE).
-            // Return false when either is NULL to keep WHERE correct.
-            // However, for IN list with NULL? NULL IN (...) should be false.
-            // So return false if either NULL.
-            return false;
-        }
-        if a.is_number() && b.is_number() {
-            // Compare as f64; handles int/float mixing.
-            // For large ints beyond 2^53, f64 loses precision, so also try exact i64/u64 compare first.
-            if let (Some(ai), Some(bi)) = (a.as_i64(), b.as_i64()) {
-                return ai == bi;
-            }
-            if let (Some(au), Some(bu)) = (a.as_u64(), b.as_u64()) {
-                return au == bu;
-            }
-            // Mixed int/uint/float: compare as f64
-            if let (Some(af), Some(bf)) = (a.as_f64(), b.as_f64()) {
-                return af == bf;
-            }
-            return false;
-        }
-        a == b
+        rekuiper_core::model::values_equal(a, b)
     }
 
+    #[inline]
     pub(crate) fn compare_values(a: &Value, b: &Value) -> Option<std::cmp::Ordering> {
-        if a.is_number() && b.is_number() {
-            let af = a.as_f64()?;
-            let bf = b.as_f64()?;
-            return af.partial_cmp(&bf);
-        }
-        if let (Some(as_), Some(bs)) = (a.as_str(), b.as_str()) {
-            return Some(as_.cmp(bs));
-        }
-        // Booleans? false < true
-        if let (Some(ab), Some(bb)) = (a.as_bool(), b.as_bool()) {
-            return Some(ab.cmp(&bb));
-        }
-        None
+        rekuiper_core::model::compare_values(a, b)
     }
 
     fn eval_between_fallible(

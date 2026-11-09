@@ -1,3 +1,9 @@
+// The musl allocator serializes concurrent allocations behind one lock, which
+// capped multi-core throughput. See docs/en_US/operation/memory_allocator.md.
+#[cfg(unix)]
+#[global_allocator]
+static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
 use anyhow::Result;
 use clap::Parser;
 use rekuiper_conf::PathConfig;

@@ -687,6 +687,10 @@
               "path": "operation/declarative_gitops"
             },
             {
+              "title": "Memory Allocator",
+              "path": "operation/memory_allocator"
+            },
+            {
               "title": "Monitor with Prometheus",
               "path": "operation/usage/monitor_with_prometheus"
             },

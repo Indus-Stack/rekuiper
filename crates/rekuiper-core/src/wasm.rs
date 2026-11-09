@@ -2,11 +2,15 @@ use anyhow::{bail, Context, Result};
 use parking_lot::{Mutex, RwLock};
 use serde_json::Value;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use wasmi::{Config, Engine, Instance, Linker, Module, Store, Val};
 
 /// Default instruction fuel budget per WASM UDF invocation.
 const DEFAULT_WASM_FUEL_BUDGET: u64 = 1_000_000;
+
+/// Maximum concurrent active WASM runtime instances allowed per compiled module.
+pub const MAX_CONCURRENT_WASM_INSTANCES: usize = 64;
 
 struct WasmRuntimeInstance {
     store: Store<()>,
@@ -20,6 +24,7 @@ pub struct WasmModule {
     engine: Engine,
     module: Module,
     runtime_pool: Arc<Mutex<Vec<WasmRuntimeInstance>>>,
+    active_instances: Arc<AtomicUsize>,
 }
 
 impl WasmModule {
@@ -53,11 +58,34 @@ impl WasmModule {
             engine,
             module,
             runtime_pool: Arc::new(Mutex::new(vec![initial_instance])),
+            active_instances: Arc::new(AtomicUsize::new(0)),
         })
+    }
+
+    /// Returns the number of currently executing WASM calls for this module.
+    pub fn active_instances(&self) -> usize {
+        self.active_instances.load(Ordering::Relaxed)
     }
 
     /// Invokes an exported scalar function by name using a pooled instance and bounded fuel.
     pub fn call_function(&self, func_name: &str, args: &[Value]) -> Result<Value> {
+        let prev = self.active_instances.fetch_add(1, Ordering::SeqCst);
+        if prev >= MAX_CONCURRENT_WASM_INSTANCES {
+            self.active_instances.fetch_sub(1, Ordering::SeqCst);
+            bail!(
+                "WASM runtime instance pool exhausted (limit: {} concurrent instances)",
+                MAX_CONCURRENT_WASM_INSTANCES
+            );
+        }
+
+        struct InstanceGuard(Arc<AtomicUsize>);
+        impl Drop for InstanceGuard {
+            fn drop(&mut self) {
+                self.0.fetch_sub(1, Ordering::SeqCst);
+            }
+        }
+        let _guard = InstanceGuard(self.active_instances.clone());
+
         let mut rt = {
             let mut pool = self.runtime_pool.lock();
             pool.pop()
@@ -330,5 +358,37 @@ mod tests {
             "Unexpected error message: {}",
             err
         );
+    }
+
+    #[test]
+    fn test_wasm_concurrency_bounding() {
+        let wasm_binary = vec![
+            0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x01, 0x07, 0x01, 0x60, 0x02, 0x7f,
+            0x7f, 0x01, 0x7f, 0x03, 0x02, 0x01, 0x00, 0x07, 0x07, 0x01, 0x03, 0x61, 0x64, 0x64,
+            0x00, 0x00, 0x0a, 0x09, 0x01, 0x07, 0x00, 0x20, 0x00, 0x20, 0x01, 0x6a, 0x0b,
+        ];
+        let module = WasmModule::from_bytes(&wasm_binary).expect("WASM compilation");
+        assert_eq!(module.active_instances(), 0);
+
+        // Pre-fill active instances to the limit
+        module
+            .active_instances
+            .store(MAX_CONCURRENT_WASM_INSTANCES, Ordering::SeqCst);
+        let err = module
+            .call_function("add", &[serde_json::json!(1), serde_json::json!(2)])
+            .expect_err("Must reject when max concurrent instances reached");
+        assert!(
+            err.to_string().contains("instance pool exhausted"),
+            "Error: {}",
+            err
+        );
+
+        // Reset and verify successful invocation decrements back to 0
+        module.active_instances.store(0, Ordering::SeqCst);
+        let res = module
+            .call_function("add", &[serde_json::json!(1), serde_json::json!(2)])
+            .expect("Call should succeed");
+        assert_eq!(res, serde_json::json!(3));
+        assert_eq!(module.active_instances(), 0);
     }
 }

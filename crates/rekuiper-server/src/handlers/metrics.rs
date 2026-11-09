@@ -60,11 +60,58 @@ pub async fn root_handler(State(state): State<AppState>) -> impl IntoResponse {
     (StatusCode::OK, Json(info))
 }
 
-pub async fn stop_server() -> impl IntoResponse {
-    // Exit after a short grace delay so the HTTP 200 flushes to the client
-    // before the process terminates (baseline eKuiper exits with code 0).
-    tokio::spawn(async {
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+pub async fn stop_server(State(state): State<AppState>) -> impl IntoResponse {
+    // Coordinated graceful shutdown: cancel sources, drain active in-flight records,
+    // and terminate cleanly without mutating persistent rule lifecycle states in KV.
+    tokio::spawn(async move {
+        // 1. Give HTTP layer 50ms to flush the HTTP 200 "stop success" to caller
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        // 2. Signal all stream and table ingestion sources to stop admission
+        for senders in state.source_cancels.write().values() {
+            for tx in senders {
+                let _ = tx.send(true);
+            }
+        }
+        for senders in state.stream_source_cancels.write().values() {
+            for tx in senders {
+                let _ = tx.send(true);
+            }
+        }
+
+        // 3. Await pipeline drain within a bounded 3-second deadline.
+        // DO NOT call stop_rule(), which would persist "stopped" into the KV store
+        // and prevent running rules from automatically resuming on server restart.
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(3);
+        loop {
+            let mut all_drained = true;
+            for rule in state.rule_manager.list_rules() {
+                if let Some(st) = state.rule_manager.get_rule_status(&rule.id) {
+                    if st.status == "running" {
+                        let enqueued = st.sink_records_enqueued_total;
+                        let completed = st
+                            .sink_records_out_total
+                            .saturating_add(st.exceptions_total);
+                        if completed < enqueued {
+                            all_drained = false;
+                            break;
+                        }
+                    }
+                }
+            }
+            if all_drained || tokio::time::Instant::now() >= deadline {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+
+        // 4. Stop rule evaluation in-memory (dropping sink_tx without mutating KV) and
+        // await the sink workers so batches, file writers and SinkCaches flush.
+        let sink_handles = state.rule_manager.shutdown_all_in_memory();
+        for sh in sink_handles {
+            let _ = tokio::time::timeout(std::time::Duration::from_secs(2), sh).await;
+        }
+
         std::process::exit(0);
     });
     (StatusCode::OK, "stop success")

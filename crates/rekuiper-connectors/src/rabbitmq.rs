@@ -40,6 +40,10 @@ pub struct RabbitMqConfig {
     /// Consumer prefetch count (QoS).
     #[serde(default = "default_prefetch")]
     pub prefetch_count: u16,
+    /// Whether messages are automatically acknowledged upon receipt by the broker (AMQP no_ack).
+    /// Defaults to false (manual acknowledgments after pipeline admission for at-least-once reliability).
+    #[serde(default, alias = "autoAck", alias = "no_ack")]
+    pub auto_ack: bool,
     /// Optional username (supports dynamic secrets like `env://` or `vault://`).
     #[serde(default)]
     pub username: Option<String>,
@@ -74,6 +78,7 @@ impl Default for RabbitMqConfig {
             auto_delete: false,
             exclusive: false,
             prefetch_count: 100,
+            auto_ack: false,
             username: None,
             password: None,
             format: PayloadFormat::Json,
@@ -186,12 +191,13 @@ impl RabbitMqSource {
                     .await;
             }
 
+            let auto_ack = self.config.auto_ack;
             let mut consumer = match channel
                 .basic_consume(
                     &queue_name,
                     "rekuiper_consumer",
                     BasicConsumeOptions {
-                        no_ack: true,
+                        no_ack: auto_ack,
                         ..Default::default()
                     },
                     FieldTable::default(),
@@ -214,14 +220,37 @@ impl RabbitMqSource {
                                 let mut records = Vec::new();
                                 match decode_payload_into(&self.config.format, payload, None, &mut records) {
                                     Ok(_) => {
+                                        let mut send_ok = true;
                                         for record in records {
                                             if self.tx.send(record).await.is_err() {
-                                                return;
+                                                send_ok = false;
+                                                break;
+                                            }
+                                        }
+                                        if !send_ok {
+                                            if !auto_ack {
+                                                let _ = delivery
+                                                    .nack(BasicNackOptions {
+                                                        requeue: true,
+                                                        ..Default::default()
+                                                    })
+                                                    .await;
+                                            }
+                                            return;
+                                        }
+                                        if !auto_ack {
+                                            if let Err(e) = delivery.ack(BasicAckOptions::default()).await {
+                                                tracing::warn!("RabbitMQ ack failed: {}", e);
                                             }
                                         }
                                     }
                                     Err(e) => {
                                         tracing::warn!("RabbitMQ payload decoding error: {}", e);
+                                        if !auto_ack {
+                                            let _ = delivery
+                                                .reject(BasicRejectOptions { requeue: false })
+                                                .await;
+                                        }
                                     }
                                 }
                             }
@@ -277,6 +306,11 @@ impl RabbitMqSink {
             .await
             .context("Failed to create RabbitMQ channel")?;
 
+        channel
+            .confirm_select(ConfirmSelectOptions::default())
+            .await
+            .context("Failed to enable publisher confirms on RabbitMQ channel")?;
+
         if !cfg.queue.is_empty() {
             let opts = QueueDeclareOptions {
                 durable: cfg.durable,
@@ -303,7 +337,7 @@ impl RabbitMqSink {
             &self.config.routing_key
         };
 
-        channel
+        let confirmation = channel
             .basic_publish(
                 &self.config.exchange,
                 routing_key,
@@ -315,6 +349,13 @@ impl RabbitMqSink {
             .context("Failed to publish message to RabbitMQ")?
             .await
             .context("Failed to confirm RabbitMQ publish")?;
+
+        if matches!(
+            confirmation,
+            lapin::publisher_confirm::Confirmation::Nack(_)
+        ) {
+            anyhow::bail!("RabbitMQ broker negatively acknowledged (nacked) message publish");
+        }
 
         Ok(())
     }
@@ -348,6 +389,11 @@ mod tests {
         assert_eq!(cfg.routing_key, "sensor.temp");
         assert!(cfg.durable);
         assert_eq!(cfg.prefetch_count, 100);
+        assert!(!cfg.auto_ack);
+
+        let json_auto_ack = r#"{"server": "amqp://127.0.0.1:5672", "autoAck": true}"#;
+        let cfg_auto: RabbitMqConfig = serde_json::from_str(json_auto_ack).expect("deserialize");
+        assert!(cfg_auto.auto_ack);
     }
 
     #[tokio::test]

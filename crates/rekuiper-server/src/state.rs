@@ -137,13 +137,15 @@ pub fn maybe_trace_record<M1: serde::Serialize + ?Sized, M2: serde::Serialize + 
     rule_id: &str,
     input_data: &M1,
     output_data: Option<&M2>,
+    start_dt: Option<chrono::DateTime<chrono::Utc>>,
 ) {
     if !trace_mgr.is_tracing(rule_id) {
         return;
     }
-    let now = chrono::Utc::now();
-    let start_time = now.to_rfc3339();
-    let end_time = (now + chrono::Duration::microseconds(150)).to_rfc3339();
+    let end_dt = chrono::Utc::now();
+    let start_dt = start_dt.unwrap_or(end_dt);
+    let start_time = start_dt.to_rfc3339();
+    let end_time = end_dt.to_rfc3339();
     let trace_id = format!("{:032x}", uuid::Uuid::new_v4().as_u128());
     let root_span_id = format!("{:016x}", uuid::Uuid::new_v4().as_u128() >> 64);
     let decoder_span_id = format!("{:016x}", uuid::Uuid::new_v4().as_u128() >> 64);

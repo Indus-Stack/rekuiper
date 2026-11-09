@@ -52,7 +52,15 @@ pub fn write_records_to_parquet(records: &[StreamRecord], path: &Path) -> Result
                     vec![records_to_record_batch(&all_records)?]
                 }
             }
-            _ => vec![new_batch],
+            Ok(_) => vec![new_batch],
+            Err(e) => {
+                return Err(e).with_context(|| {
+                    format!(
+                        "Failed to read existing Parquet file {:?} before append; aborting write to prevent data loss",
+                        path
+                    )
+                });
+            }
         }
     } else {
         vec![new_batch]
@@ -444,6 +452,35 @@ mod tests {
         );
         assert!(read_back[0].data.get("__meta__").is_none());
         assert!(read_back[0].data.get("__internal_batch__").is_none());
+
+        let _ = std::fs::remove_file(&test_file);
+    }
+
+    #[test]
+    fn test_parquet_append_error_on_corrupt_file() {
+        let temp_dir = std::env::temp_dir();
+        let test_file = temp_dir.join(format!(
+            "test_parquet_corrupt_{}.parquet",
+            uuid::Uuid::new_v4()
+        ));
+
+        // Write junk data to simulate a corrupted parquet file
+        std::fs::write(&test_file, b"corrupted non-parquet header bytes").unwrap();
+
+        let mut rec = HashMap::new();
+        rec.insert("device_id".to_string(), Value::String("turbine-01".into()));
+        let records = vec![StreamRecord::new(rec)];
+
+        // Append must return an error and NOT overwrite the existing file
+        let res = write_records_to_parquet(&records, &test_file);
+        assert!(
+            res.is_err(),
+            "Expected error when appending to corrupt file"
+        );
+
+        // The file must still contain the original corrupted bytes, not be overwritten
+        let contents = std::fs::read(&test_file).unwrap();
+        assert_eq!(contents, b"corrupted non-parquet header bytes");
 
         let _ = std::fs::remove_file(&test_file);
     }

@@ -306,3 +306,87 @@ fn test_sliding_incremental_window_eviction_and_extrema() {
     assert!(sliding.is_empty());
     assert!(sliding.snapshot().is_empty());
 }
+
+#[test]
+fn test_sliding_incremental_window_inactive_group_reclamation() {
+    let stmt = parse(
+        "SELECT dev, count(*) AS c, sum(v) AS s FROM telem GROUP BY dev, SLIDINGWINDOW(ss, 10)",
+    );
+    let mut sliding = SlidingIncrementalWindow::try_new(&stmt).expect("sliding plan");
+
+    // Group dev-1 at t=1000, dev-2 at t=2000
+    sliding.push(1000, &row(json!({"dev": "dev-1", "v": 10})));
+    sliding.push(2000, &row(json!({"dev": "dev-2", "v": 20})));
+
+    assert_eq!(sliding.snapshot().len(), 2);
+
+    // Evict before 1500 -> dev-1 expires, dev-2 remains active
+    sliding.evict_before(1500);
+    assert_eq!(sliding.active_group_count(), 1);
+    let snap = sliding.snapshot();
+    assert_eq!(snap.len(), 1);
+    assert_eq!(snap[0]["dev"], json!("dev-2"));
+
+    // Evict before 3000 -> dev-2 expires, window must be empty and groups reclaimed
+    sliding.evict_before(3000);
+    assert!(sliding.is_empty());
+    assert_eq!(sliding.active_group_count(), 0);
+    assert_eq!(sliding.snapshot().len(), 0);
+
+    // Re-push dev-1 at t=4000 -> starts clean
+    sliding.push(4000, &row(json!({"dev": "dev-1", "v": 99})));
+    let snap2 = sliding.snapshot();
+    assert_eq!(snap2.len(), 1);
+    assert_eq!(snap2[0]["dev"], json!("dev-1"));
+    assert_eq!(snap2[0]["s"], json!(99));
+}
+
+#[test]
+fn test_sliding_incremental_window_u64_extrema_and_sum_saturation() {
+    let stmt = parse(
+        "SELECT min(v) AS mn, max(v) AS mx, sum(v) AS s FROM telem GROUP BY SLIDINGWINDOW(ss, 10)",
+    );
+    let mut sliding = SlidingIncrementalWindow::try_new(&stmt).expect("sliding plan");
+
+    // Push large u64 value: 18446744073709551615 (u64::MAX)
+    let u64_max_json: Value = serde_json::from_str("18446744073709551615").unwrap();
+    sliding.push(1000, &row(json!({"v": u64_max_json})));
+    sliding.push(2000, &row(json!({"v": 100})));
+
+    let snap = sliding.snapshot();
+    assert_eq!(snap.len(), 1);
+    assert_eq!(snap[0]["mn"], json!(100));
+    // Verify exact u64 representation preserved without float truncation
+    assert_eq!(snap[0]["mx"].to_string(), "18446744073709551615");
+
+    // Test SUM saturating at i64::MAX
+    let mut sliding_sum = SlidingIncrementalWindow::try_new(&stmt).expect("sliding plan");
+    sliding_sum.push(1000, &row(json!({"v": i64::MAX - 10})));
+    sliding_sum.push(2000, &row(json!({"v": 50})));
+    let snap_sum = sliding_sum.snapshot();
+    assert_eq!(snap_sum[0]["s"], json!(i64::MAX));
+
+    // Expiration maintains non-crashing decrement: (i64::MAX - (i64::MAX - 10)) = 10
+    sliding_sum.evict_before(1500);
+    let snap_sum2 = sliding_sum.snapshot();
+    assert_eq!(snap_sum2[0]["s"], json!(10));
+}
+
+#[test]
+fn test_sliding_window_high_cardinality_acceptance() {
+    let stmt = parse("SELECT id, count(*) as c FROM demo GROUP BY SlidingWindow(ss, 60), id");
+    let mut sliding = SlidingIncrementalWindow::try_new(&stmt).expect("sliding plan");
+
+    // Ingest 65,537 distinct valid groups: verify none are silently dropped!
+    for i in 0..65_537 {
+        let accepted = sliding.push(1000, &row(json!({"id": format!("dev_{}", i)})));
+        assert!(accepted, "Valid distinct group {} must not be rejected", i);
+    }
+
+    let snap = sliding.snapshot();
+    assert_eq!(
+        snap.len(),
+        65_537,
+        "All 65,537 valid distinct groups must be output"
+    );
+}

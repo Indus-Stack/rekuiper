@@ -413,6 +413,7 @@ pub struct ActiveRule {
     pub def: RuleDefinition,
     pub status: Arc<RwLock<RuleStatus>>,
     pub handle: Option<JoinHandle<()>>,
+    pub sink_handle: Option<JoinHandle<()>>,
     pub counters: Arc<RuleCounters>,
     pub dlq_buffer: Arc<RwLock<VecDeque<DlqEnvelope>>>,
     pub dlq_capacity: usize,
@@ -743,6 +744,7 @@ impl RuleManager {
                 ..RuleStatus::default()
             })),
             handle: None,
+            sink_handle: None,
             counters: Arc::new(RuleCounters::default()),
             dlq_buffer: Arc::new(RwLock::new(VecDeque::with_capacity(dlq_capacity))),
             dlq_capacity,
@@ -992,6 +994,38 @@ impl RuleManager {
         }
     }
 
+    pub fn set_rule_sink_handle(&self, id: &str, handle: JoinHandle<()>) {
+        let map = self.rules.read();
+        if let Some(rule) = map.get(id) {
+            let mut active = rule.write();
+            if active.status.read().status != "running" {
+                // Do not abort: the sink worker exits on its own once its queue closes
+                // and must still flush caches and batches.
+                active.sink_handle = None;
+                return;
+            }
+            active.sink_handle = Some(handle);
+        }
+    }
+
+    /// Stops all in-memory rule evaluation tasks without touching their persisted
+    /// KV state, so running rules resume on restart. Returns the sink worker handles
+    /// so the caller can await final flushes and `SinkCache::close()`.
+    pub fn shutdown_all_in_memory(&self) -> Vec<JoinHandle<()>> {
+        let mut sink_handles = Vec::new();
+        let map = self.rules.read();
+        for rule_arc in map.values() {
+            let mut active = rule_arc.write();
+            if let Some(h) = active.handle.take() {
+                h.abort();
+            }
+            if let Some(sh) = active.sink_handle.take() {
+                sink_handles.push(sh);
+            }
+        }
+        sink_handles
+    }
+
     pub async fn start_rule(&self, id: &str) -> Result<()> {
         let _guard = self.op_lock.lock().await;
         let rule_arc = {
@@ -1116,6 +1150,7 @@ impl RuleManager {
                     ..RuleStatus::default()
                 })),
                 handle: None,
+                sink_handle: None,
                 counters: Arc::new(RuleCounters::default()),
                 dlq_buffer: Arc::new(RwLock::new(VecDeque::with_capacity(dlq_capacity))),
                 dlq_capacity,

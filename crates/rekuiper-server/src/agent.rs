@@ -383,6 +383,7 @@ where
                             "online".to_string()
                         };
 
+                        let (cpu_val, mem_val) = crate::handlers::rules::current_process_stats();
                         let hb = AgentHeartbeat {
                             agent_id: meta_hb.device_id.clone(),
                             name: Some(meta_hb.name.clone()),
@@ -391,8 +392,8 @@ where
                             device_type: Some(meta_hb.device_type.clone()),
                             version: Some(meta_hb.version.clone()),
                             status: Some(status),
-                            cpu_usage: 4.2,
-                            memory_bytes: 32 * 1024 * 1024,
+                            cpu_usage: cpu_val as f32,
+                            memory_bytes: mem_val,
                             rules_count: total_rules,
                             running_rules,
                             dlq_count: dlq_total,
@@ -406,8 +407,8 @@ where
                             break;
                         }
                     }
-                    _ = cancel_hb.changed() => {
-                        if *cancel_hb.borrow() {
+                    res = cancel_hb.changed() => {
+                        if res.is_err() || *cancel_hb.borrow() {
                             break;
                         }
                     }
@@ -460,8 +461,8 @@ where
                             Err(_) => break,
                         }
                     }
-                    _ = cancel_cmd.changed() => {
-                        if *cancel_cmd.borrow() {
+                    res = cancel_cmd.changed() => {
+                        if res.is_err() || *cancel_cmd.borrow() {
                             break;
                         }
                     }
@@ -497,8 +498,8 @@ where
                     None => break,
                 }
             }
-            _ = cancel_rx.changed() => {
-                if *cancel_rx.borrow() {
+            res = cancel_rx.changed() => {
+                if res.is_err() || *cancel_rx.borrow() {
                     break;
                 }
             }

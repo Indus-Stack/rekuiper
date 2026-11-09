@@ -13,8 +13,32 @@ pub struct McpHandler {
 
 impl McpHandler {
     pub fn new(base_url: impl Into<String>) -> Self {
+        let token = std::env::var("REKUIPER_TOKEN")
+            .or_else(|_| std::env::var("KUIPER_TOKEN"))
+            .ok();
+        Self::with_token(base_url, token)
+    }
+
+    pub fn with_token(base_url: impl Into<String>, token: Option<String>) -> Self {
+        let mut headers = reqwest::header::HeaderMap::new();
+        if let Some(tok) = token {
+            let trimmed = tok.trim();
+            let raw_token = trimmed
+                .strip_prefix("Bearer ")
+                .or_else(|| trimmed.strip_prefix("bearer "))
+                .unwrap_or(trimmed);
+            if !raw_token.is_empty() {
+                if let Ok(val) = reqwest::header::HeaderValue::from_str(raw_token) {
+                    headers.insert(reqwest::header::AUTHORIZATION, val);
+                }
+            }
+        }
+        let client = reqwest::Client::builder()
+            .default_headers(headers)
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
         Self {
-            client: reqwest::Client::new(),
+            client,
             base_url: base_url.into(),
         }
     }

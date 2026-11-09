@@ -137,6 +137,12 @@ struct Page {
     count: usize,
 }
 
+#[derive(Debug, Clone)]
+struct CacheEntry {
+    record: StreamRecord,
+    page_seq: Option<u64>,
+}
+
 /// First sequence number for pages written after open; pages that must sort
 /// before existing ones (the memory head at stop) count down from below.
 const SEQ_BASE: u64 = 1 << 40;
@@ -145,11 +151,13 @@ const SEQ_BASE: u64 = 1 << 40;
 pub struct SinkCache {
     cfg: CacheConfig,
     dir: PathBuf,
-    head: VecDeque<StreamRecord>,
+    head: VecDeque<CacheEntry>,
     pages: VecDeque<Page>,
     tail: Vec<StreamRecord>,
     disk_records: usize,
     next_seq: u64,
+    /// Active replaying pages: seq -> remaining unacknowledged records in head.
+    page_refs: std::collections::HashMap<u64, usize>,
     /// Records dropped because memory and disk were full.
     pub dropped: u64,
 }
@@ -165,6 +173,7 @@ impl SinkCache {
             tail: Vec::new(),
             disk_records: 0,
             next_seq: SEQ_BASE,
+            page_refs: std::collections::HashMap::new(),
             dropped: 0,
         };
         cache.adopt_pages();
@@ -218,8 +227,20 @@ impl SinkCache {
             self.disk_records += count;
             self.pages.push_back(Page { seq, count });
         }
+        // Fill the memory head from the oldest pages first, then drop strictly
+        // oldest-first (head front, then page front) to preserve FIFO order.
+        while self.disk_records > self.cfg.max_disk && self.head.len() < self.cfg.memory_threshold {
+            if !self.load_oldest_page() {
+                break;
+            }
+        }
         while self.disk_records > self.cfg.max_disk {
-            if !self.drop_oldest_page() {
+            if let Some(entry) = self.head.pop_front() {
+                self.dropped += 1;
+                if let Some(seq) = entry.page_seq {
+                    self.decrement_page_ref(seq);
+                }
+            } else if !self.drop_oldest_page() {
                 break;
             }
         }
@@ -229,22 +250,43 @@ impl SinkCache {
     pub fn push(&mut self, record: StreamRecord) {
         if !self.disk_enabled() {
             if self.head.len() >= self.cfg.memory_threshold {
-                self.head.pop_front();
-                self.dropped += 1;
+                if let Some(entry) = self.head.pop_front() {
+                    self.dropped += 1;
+                    if let Some(seq) = entry.page_seq {
+                        self.decrement_page_ref(seq);
+                    }
+                }
             }
-            self.head.push_back(record);
+            self.head.push_back(CacheEntry {
+                record,
+                page_seq: None,
+            });
             return;
         }
         if self.pages.is_empty()
             && self.tail.is_empty()
             && self.head.len() < self.cfg.memory_threshold
         {
-            self.head.push_back(record);
+            self.head.push_back(CacheEntry {
+                record,
+                page_seq: None,
+            });
             return;
         }
         self.tail.push(record);
         if self.tail.len() >= self.cfg.page_size {
             self.spill_tail();
+        }
+    }
+
+    fn decrement_page_ref(&mut self, seq: u64) {
+        if let std::collections::hash_map::Entry::Occupied(mut entry) = self.page_refs.entry(seq) {
+            if *entry.get() > 1 {
+                *entry.get_mut() -= 1;
+            } else {
+                entry.remove();
+                let _ = std::fs::remove_file(self.page_path(seq));
+            }
         }
     }
 
@@ -257,8 +299,13 @@ impl SinkCache {
             // eKuiper rotation: the oldest in-memory records are discarded and
             // the oldest disk page moves into memory, freeing its disk budget.
             let n = self.cfg.page_size.min(self.head.len());
-            self.head.drain(..n);
-            self.dropped += n as u64;
+            let drained: Vec<Option<u64>> = self.head.drain(..n).map(|e| e.page_seq).collect();
+            for seq_opt in drained {
+                self.dropped += 1;
+                if let Some(seq) = seq_opt {
+                    self.decrement_page_ref(seq);
+                }
+            }
             if !self.load_oldest_page() {
                 if n == 0 {
                     // Nothing older left to drop: discard the oldest tail records.
@@ -287,9 +334,22 @@ impl SinkCache {
             }
             Err(e) => {
                 // Disk unavailable: keep the records in memory rather than
-                // lose them; the memory head may exceed its threshold.
+                // lose them, but strictly enforce memory_threshold to prevent OOM.
                 tracing::warn!("sink cache page write to {:?} failed: {}", self.dir, e);
-                self.head.extend(records);
+                for r in records {
+                    self.head.push_back(CacheEntry {
+                        record: r,
+                        page_seq: None,
+                    });
+                }
+                while self.head.len() > self.cfg.memory_threshold {
+                    if let Some(entry) = self.head.pop_front() {
+                        self.dropped += 1;
+                        if let Some(seq) = entry.page_seq {
+                            self.decrement_page_ref(seq);
+                        }
+                    }
+                }
             }
         }
     }
@@ -319,6 +379,8 @@ impl SinkCache {
     }
 
     /// Moves the oldest disk page to the back of the memory head.
+    /// Retains the disk file until all its records are popped via `pop_front`,
+    /// guaranteeing crash-safety across process terminations.
     fn load_oldest_page(&mut self) -> bool {
         let Some(page) = self.pages.pop_front() else {
             return false;
@@ -330,7 +392,10 @@ impl SinkCache {
             for line in std::io::BufReader::new(file).lines().map_while(Result::ok) {
                 match serde_json::from_str::<StreamRecord>(&line) {
                     Ok(record) => {
-                        self.head.push_back(record);
+                        self.head.push_back(CacheEntry {
+                            record,
+                            page_seq: Some(page.seq),
+                        });
                         loaded += 1;
                     }
                     Err(e) => tracing::warn!("sink cache: skipping corrupt record: {}", e),
@@ -338,22 +403,35 @@ impl SinkCache {
             }
         }
         self.dropped += page.count.saturating_sub(loaded) as u64;
-        let _ = std::fs::remove_file(path);
+        if loaded > 0 {
+            self.page_refs.insert(page.seq, loaded);
+        } else {
+            let _ = std::fs::remove_file(path);
+        }
         true
     }
 
     /// The oldest cached record (refilling memory from disk if needed).
     pub fn front(&mut self) -> Option<&StreamRecord> {
         if self.head.is_empty() && !self.load_oldest_page() && !self.tail.is_empty() {
-            self.head.extend(self.tail.drain(..));
+            for record in self.tail.drain(..) {
+                self.head.push_back(CacheEntry {
+                    record,
+                    page_seq: None,
+                });
+            }
         }
-        self.head.front()
+        self.head.front().map(|e| &e.record)
     }
 
     /// Removes the oldest record after a successful resend.
     pub fn pop_front(&mut self) -> Option<StreamRecord> {
         self.front()?;
-        self.head.pop_front()
+        let entry = self.head.pop_front()?;
+        if let Some(seq) = entry.page_seq {
+            self.decrement_page_ref(seq);
+        }
+        Some(entry.record)
     }
 
     /// Rule stop: persist everything (or delete it with `cleanCacheAtStop`).
@@ -363,11 +441,17 @@ impl SinkCache {
             return;
         }
         self.spill_tail();
+        // Remove in-flight page files only after spill_tail (which may load pages),
+        // so head records are rewritten exactly once.
+        for seq in self.page_refs.keys() {
+            let _ = std::fs::remove_file(self.page_path(*seq));
+        }
+        self.page_refs.clear();
         if self.head.is_empty() {
             return;
         }
         // The head is older than every page: write it below the first seq.
-        let head: Vec<StreamRecord> = self.head.drain(..).collect();
+        let head: Vec<StreamRecord> = self.head.drain(..).map(|e| e.record).collect();
         let first = self.pages.front().map(|p| p.seq).unwrap_or(self.next_seq);
         let chunks: Vec<&[StreamRecord]> = head.chunks(self.cfg.page_size).collect();
         let base = first.saturating_sub(chunks.len() as u64);
@@ -569,5 +653,67 @@ mod tests {
         assert!(!resend_copy(&c, &r).data.contains_key("resent"));
         c.indicator_field = Some("resent".to_string());
         assert_eq!(resend_copy(&c, &r).data["resent"], json!(true));
+    }
+
+    #[test]
+    fn replay_preserves_page_file_until_all_records_popped() {
+        let dir = temp_dir("replay_crash_safe");
+        let mut cache = SinkCache::open(cfg(2, 1000, 3), dir.clone());
+        for i in 0..6 {
+            cache.push(rec(i));
+        }
+        // Pop head (records 0, 1)
+        assert_eq!(cache.pop_front().unwrap().data["seq"], json!(0));
+        assert_eq!(cache.pop_front().unwrap().data["seq"], json!(1));
+
+        // Peek triggers load_oldest_page into head
+        assert_eq!(cache.front().unwrap().data["seq"], json!(2));
+
+        // Assert that the page file on disk is retained while in-flight!
+        let page_files: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().ends_with(".jsonl"))
+            .collect();
+        assert!(
+            !page_files.is_empty(),
+            "Page file must be retained on disk while records are replaying!"
+        );
+
+        // Pop remaining records of that page
+        assert_eq!(cache.pop_front().unwrap().data["seq"], json!(2));
+        assert_eq!(cache.pop_front().unwrap().data["seq"], json!(3));
+        assert_eq!(cache.pop_front().unwrap().data["seq"], json!(4));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn crash_recovery_does_not_lose_unacknowledged_records() {
+        let dir = temp_dir("adversarial_crash_recovery");
+        // memory threshold 4, disk budget 6, page size 3
+        let mut cache = SinkCache::open(cfg(4, 6, 3), dir.clone());
+        for i in 0..13 {
+            cache.push(rec(i));
+        }
+
+        // Pop until record 5 is acknowledged (record 6 is unacknowledged)
+        while let Some(r) = cache.pop_front() {
+            if r.data["seq"] == json!(5) {
+                break;
+            }
+        }
+
+        // Simulate crash without clean close(): drop the in-memory cache directly!
+        drop(cache);
+
+        // Reopen cache: verify that record 6 is not lost!
+        let mut reopened = SinkCache::open(cfg(4, 6, 3), dir.clone());
+        let recovered = drain(&mut reopened);
+        assert!(
+            recovered.contains(&6),
+            "Unacknowledged record 6 must survive crash recovery! Got: {:?}",
+            recovered
+        );
+        let _ = std::fs::remove_dir_all(dir);
     }
 }

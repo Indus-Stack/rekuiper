@@ -32,12 +32,14 @@ impl BusPredicate {
     #[inline]
     pub fn matches(&self, record: &StreamRecord) -> bool {
         match self {
-            BusPredicate::FieldEq { field, value } => {
-                record.data.get(field).is_some_and(|v| v == value)
-            }
-            BusPredicate::FieldNeq { field, value } => {
-                record.data.get(field).is_some_and(|v| v != value)
-            }
+            BusPredicate::FieldEq { field, value } => record
+                .data
+                .get(field)
+                .is_some_and(|v| crate::model::values_equal(v, value)),
+            BusPredicate::FieldNeq { field, value } => record
+                .data
+                .get(field)
+                .is_some_and(|v| !crate::model::values_equal(v, value)),
             BusPredicate::FieldGt { field, threshold } => record
                 .data
                 .get(field)
@@ -298,9 +300,11 @@ impl StreamBus {
         record: StreamRecord,
     ) -> Result<usize, PublishError> {
         // Lock-free fast path: 1 live subscriber and no batch publisher holding admission gate.
+        let mut record = Some(record);
         if !topic.batch_active.load(Ordering::Relaxed) {
             let mut was_closed = false;
             let mut single_full_tx: Option<RecordTx> = None;
+            let mut should_yield = false;
             {
                 let senders = topic.senders.read();
                 if senders.is_empty() {
@@ -309,14 +313,15 @@ impl StreamBus {
                 if senders.len() == 1 {
                     let (sender, filter) = &senders[0];
                     if let Some(f) = filter {
-                        if !f.check_and_account(&record) {
+                        if !f.check_and_account(record.as_ref().unwrap()) {
                             return Ok(0);
                         }
                     }
                     match sender.try_reserve() {
                         Ok(permit) => {
-                            permit.send(record);
-                            return Ok(1);
+                            let queued = sender.max_capacity().saturating_sub(sender.capacity());
+                            permit.send(record.take().unwrap());
+                            should_yield = (queued & 63) == 63;
                         }
                         Err(mpsc::error::TrySendError::Closed(())) => {
                             was_closed = true;
@@ -326,6 +331,12 @@ impl StreamBus {
                         }
                     }
                 }
+            }
+            if record.is_none() {
+                if should_yield {
+                    tokio::task::yield_now().await;
+                }
+                return Ok(1);
             }
             if was_closed {
                 topic.purge_closed();
@@ -339,10 +350,11 @@ impl StreamBus {
                         return Err(PublishError::Closed);
                     }
                 };
-                permit.send(record);
+                permit.send(record.take().unwrap());
                 return Ok(1);
             }
         }
+        let record = record.unwrap();
 
         let _admission = match topic.gate.try_lock() {
             Ok(guard) => guard,
@@ -512,7 +524,13 @@ impl StreamBus {
         let mut records = records.into_iter();
         let mut committed = false;
         while remaining > 0 {
-            let chunk_size = remaining.min(ADMISSION_CHUNK_RECORDS);
+            let min_sub_cap = selected
+                .iter()
+                .map(|(s, _)| s.max_capacity())
+                .min()
+                .unwrap_or(ADMISSION_CHUNK_RECORDS);
+            let max_chunk = ADMISSION_CHUNK_RECORDS.min(min_sub_cap).max(1);
+            let chunk_size = remaining.min(max_chunk);
             let chunk_records: Vec<StreamRecord> = records.by_ref().take(chunk_size).collect();
 
             // Determine matching record indices for each subscriber
@@ -844,5 +862,72 @@ mod tests {
         let rec = rx.try_recv().unwrap();
         assert_eq!(rec.data.get("city"), Some(&serde_json::json!("Paris")));
         assert!(rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn test_batch_admission_with_small_queue() {
+        let bus = StreamBus::new();
+        // Subscribe with queue capacity of 50 (smaller than ADMISSION_CHUNK_RECORDS = 512)
+        let mut rx = bus.subscribe_with_capacity("small_stream", 50);
+
+        // Publish batch of 120 records
+        let records: Vec<StreamRecord> = (0..120)
+            .map(|i| {
+                let mut d = HashMap::new();
+                d.insert("idx".to_string(), serde_json::json!(i));
+                StreamRecord::new(d)
+            })
+            .collect();
+
+        // Spawn a background consumer that drains the channel as chunks arrive
+        let consumer = tokio::spawn(async move {
+            let mut count = 0;
+            while count < 120 {
+                if rx.recv().await.is_some() {
+                    count += 1;
+                } else {
+                    break;
+                }
+            }
+            count
+        });
+
+        // Publish batch must succeed and not drop the subscriber as "closed"
+        let sender = bus.get_or_create("small_stream");
+        let admitted = sender
+            .send_batch(records)
+            .await
+            .expect("batch admission must succeed");
+        assert_eq!(admitted, 1);
+
+        let consumed = consumer.await.expect("consumer completes");
+        assert_eq!(
+            consumed, 120,
+            "All 120 records must be successfully received"
+        );
+    }
+
+    #[test]
+    fn test_numeric_equality_bus_predicate_and_model() {
+        use crate::model::values_equal;
+
+        // 1 == 1.0 (mixed int and float equivalence)
+        assert!(values_equal(&serde_json::json!(1), &serde_json::json!(1.0)));
+        assert!(values_equal(&serde_json::json!(1.0), &serde_json::json!(1)));
+
+        // Large integer precision (> 2^53) must not collapse
+        let n1 = serde_json::json!(9_007_199_254_740_993i64);
+        let n2 = serde_json::json!(9_007_199_254_740_992i64);
+        assert!(!values_equal(&n1, &n2));
+
+        // BusPredicate with numeric comparison
+        let pred = BusPredicate::FieldEq {
+            field: "val".to_string(),
+            value: serde_json::json!(100),
+        };
+        let mut d = HashMap::new();
+        d.insert("val".to_string(), serde_json::json!(100.0));
+        let rec = StreamRecord::new(d);
+        assert!(pred.matches(&rec), "BusPredicate must match 100 == 100.0");
     }
 }

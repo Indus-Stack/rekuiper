@@ -594,3 +594,92 @@ async fn test_explain_pipeline_profile() {
     assert!(text.contains("\"valid\": true"));
     assert!(text.contains("streambus_rete_indexable_predicates"));
 }
+
+#[tokio::test]
+async fn test_mcp_handler_token_initialization() {
+    let handler = McpHandler::with_token(
+        "http://127.0.0.1:9081",
+        Some("bearer-token-xyz".to_string()),
+    );
+    let req = JsonRpcRequest {
+        jsonrpc: "2.0".to_string(),
+        id: Some(json!(999)),
+        method: "ping".to_string(),
+        params: None,
+    };
+    let resp = handler.handle_request(req).await.expect("ping response");
+    assert_eq!(resp.id, Some(json!(999)));
+}
+
+#[tokio::test]
+async fn test_mcp_authenticated_http_request() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let base_url = format!("http://{}", addr);
+
+    tokio::spawn(async move {
+        while let Ok((mut socket, _)) = listener.accept().await {
+            tokio::spawn(async move {
+                use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                let mut buf = [0u8; 1024];
+                let n = socket.read(&mut buf).await.unwrap_or(0);
+                let req_str = String::from_utf8_lossy(&buf[..n]);
+                if req_str.contains("authorization: raw-jwt-token-12345\r\n")
+                    || req_str.contains("Authorization: raw-jwt-token-12345\r\n")
+                {
+                    let resp = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\n[]";
+                    let _ = socket.write_all(resp.as_bytes()).await;
+                } else {
+                    let resp = "HTTP/1.1 401 Unauthorized\r\nContent-Type: text/plain\r\nContent-Length: 12\r\n\r\nUnauthorized";
+                    let _ = socket.write_all(resp.as_bytes()).await;
+                }
+            });
+        }
+    });
+
+    // 1. With raw token (compatible with upstream eKuiper JWT wire expectations)
+    let handler = McpHandler::with_token(&base_url, Some("raw-jwt-token-12345".to_string()));
+    let req = JsonRpcRequest {
+        jsonrpc: "2.0".to_string(),
+        id: Some(json!(101)),
+        method: "tools/call".to_string(),
+        params: Some(json!({ "name": "list_streams", "arguments": {} })),
+    };
+    let resp = handler.handle_request(req).await.expect("tool response");
+    let content = &resp.result.unwrap()["content"][0]["text"];
+    assert!(content.as_str().unwrap().contains("[]"));
+
+    // 2. With Bearer-prefixed token (should automatically be stripped to raw token)
+    let handler_bearer =
+        McpHandler::with_token(&base_url, Some("Bearer raw-jwt-token-12345".to_string()));
+    let req2 = JsonRpcRequest {
+        jsonrpc: "2.0".to_string(),
+        id: Some(json!(102)),
+        method: "tools/call".to_string(),
+        params: Some(json!({ "name": "list_streams", "arguments": {} })),
+    };
+    let resp2 = handler_bearer
+        .handle_request(req2)
+        .await
+        .expect("tool response");
+    let content2 = &resp2.result.unwrap()["content"][0]["text"];
+    assert!(content2.as_str().unwrap().contains("[]"));
+
+    // 3. With wrong token: verified 401 Unauthorized
+    let handler_wrong = McpHandler::with_token(&base_url, Some("wrong-token".to_string()));
+    let req3 = JsonRpcRequest {
+        jsonrpc: "2.0".to_string(),
+        id: Some(json!(103)),
+        method: "tools/call".to_string(),
+        params: Some(json!({ "name": "list_streams", "arguments": {} })),
+    };
+    let resp3 = handler_wrong
+        .handle_request(req3)
+        .await
+        .expect("tool response");
+    let content3 = &resp3.result.unwrap()["content"][0]["text"];
+    assert!(
+        content3.as_str().unwrap().contains("401")
+            || content3.as_str().unwrap().contains("Unauthorized")
+    );
+}

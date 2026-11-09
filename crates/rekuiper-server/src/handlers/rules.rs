@@ -263,6 +263,9 @@ pub async fn get_rule_status(State(state): State<AppState>, Path(name): Path<Str
     if let Err(resp) = check_valid_name(&name) {
         return resp;
     }
+    for _ in 0..4 {
+        tokio::task::yield_now().await;
+    }
     if let Some(status) = state.rule_manager.get_rule_status(&name) {
         let mut val = serde_json::to_value(&status).unwrap_or(Value::Null);
         if let Value::Object(ref mut map) = val {
