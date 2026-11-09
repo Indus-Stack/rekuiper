@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > See `BENCHMARK-AUDIT.md` and `test/BENCHMARKS.md` for the audited methodology.
 > No latency-histogram p99 is claimed.
 
+## [Unreleased]
+
+### Changed
+- **jemalloc allocator on Unix**: The `kuiperd` library now sets jemalloc as the global allocator on Unix targets. The musl system allocator serializes concurrent allocations behind one lock, which limited multi-core throughput in the Docker image. Windows keeps the system allocator.
+- **Lock-free single-record ingestion**: `POST /streams/{name}/data` with exactly one record now uses the lock-free publish path. Requests with two or more records keep the all-or-nothing batch admission gate.
+
 ## [1.0.0-rc5] - 2026-10-28
 
 ### Added

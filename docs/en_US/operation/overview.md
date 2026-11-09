@@ -11,6 +11,7 @@ This guide describes operational administration, monitoring, maintenance, and vi
 - **[Data Tracing](./usage/trace_data.md):** Guides OpenTelemetry tracing configuration and span inspection.
 - **[Reliability & Stable Scope](../reliability/qualification_and_scope.md):** References MQTT delivery guarantees, broker outage caching, engine recovery, backup, and rollback procedures.
 - **[Declarative GitOps Mode](./declarative_gitops.md):** Details manifest validation (`rekuiper validate`), read-only `--declarative` execution, and live file watching (`--watch`).
+- **[Memory Allocator](./memory_allocator.md):** Describes the jemalloc allocator on Unix and the lock-free path for single-record ingestion requests.
 - **[Fleet Management & Control Plane](./fleet_management.md):** Details outbound WebSocket/Yamux gateway multiplexing, immutable configuration snapshots, and health-gated Canary rollouts.
 - **[Inspection Tools (`GET /ui` & `rekuiper top`)](./observability_ui_top.md):** Details the embedded air-gapped Web Console and terminal live monitor.
 

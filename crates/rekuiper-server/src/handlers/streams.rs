@@ -609,21 +609,40 @@ pub async fn push_stream_data(
     if records.is_empty() {
         return (StatusCode::OK, "Data ingested successfully.\n").into_response();
     }
-    match sender.send_batch(records).await {
-        Ok(_) => (StatusCode::OK, "Data ingested successfully.\n").into_response(),
+    // A single record takes the lock-free path; batches keep the ordered admission gate.
+    let result = if records.len() == 1 {
+        match records.into_iter().next() {
+            Some(record) => sender.send(record).await,
+            None => Ok(0),
+        }
+    } else {
+        sender.send_batch(records).await
+    };
+    match result {
+        Ok(_) => (
+            StatusCode::OK,
+            "Data ingested successfully.
+",
+        )
+            .into_response(),
         Err(rekuiper_core::PublishError::Closed) => (
             StatusCode::BAD_REQUEST,
-            "Stream has no active subscribers\n",
+            "Stream has no active subscribers
+",
         )
             .into_response(),
         Err(rekuiper_core::PublishError::Full) => (
             StatusCode::SERVICE_UNAVAILABLE,
-            "Stream subscriber queue full\n",
+            "Stream subscriber queue full
+",
         )
             .into_response(),
-        Err(rekuiper_core::PublishError::NoSubscribers) => {
-            (StatusCode::OK, "Data ingested successfully.\n").into_response()
-        }
+        Err(rekuiper_core::PublishError::NoSubscribers) => (
+            StatusCode::OK,
+            "Data ingested successfully.
+",
+        )
+            .into_response(),
     }
 }
 

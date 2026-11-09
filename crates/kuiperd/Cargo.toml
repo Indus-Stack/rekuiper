@@ -31,3 +31,6 @@ tracing-subscriber = { workspace = true }
 anyhow = { workspace = true }
 rekuiper-conf = { workspace = true }
 rekuiper-server = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+tikv-jemallocator = { workspace = true }
