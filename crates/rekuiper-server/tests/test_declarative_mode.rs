@@ -246,6 +246,30 @@ rules:
         .unwrap();
     assert_ne!(res.status(), StatusCode::FORBIDDEN);
 
+    let res = client
+        .delete(format!("{}/ruletest/nonexistent_rt", server.base_url))
+        .send()
+        .await
+        .unwrap();
+    assert_ne!(res.status(), StatusCode::FORBIDDEN);
+
+    // Stateless rule validation is allowlisted in declarative mode
+    let res = client
+        .post(format!("{}/rules/validate", server.base_url))
+        .json(&json!({"id": "v1", "sql": "SELECT * FROM demo_stream"}))
+        .send()
+        .await
+        .unwrap();
+    assert_ne!(res.status(), StatusCode::FORBIDDEN);
+
+    // GET /stop must be blocked in declarative mode
+    let res = client
+        .get(format!("{}/stop", server.base_url))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::FORBIDDEN);
+
     // 4. Verify Smart Diffing: update manifest with rule_alpha unchanged and rule_beta added
     let updated_yaml = r#"
 version: "1.0"
