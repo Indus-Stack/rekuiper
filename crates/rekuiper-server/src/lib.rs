@@ -43,6 +43,7 @@ pub struct ServerOptions {
     pub enable_ui: bool,
     pub ui_allow_ip: Option<Vec<String>>,
     pub ui_password: Option<String>,
+    pub etc_dir: Option<std::path::PathBuf>,
 }
 
 pub async fn start_server(config: KuiperConfig, version: String) -> Result<()> {
@@ -128,6 +129,7 @@ pub async fn start_server_with_options(
         comms_hub: comms::CommsHub::default(),
         last_watchdog_rollback: Arc::new(RwLock::new(None)),
         fleet: fleet.clone(),
+        etc_dir: options.etc_dir.clone(),
     };
 
     if let Some(ref d_path) = options.declarative_path {

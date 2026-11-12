@@ -228,6 +228,7 @@ pub async fn sse_ruletest(State(state): State<AppState>, Path(name): Path<String
         replay: Arc<RwLock<RuletestReplay>>,
         cursor: u64,
         pending: VecDeque<String>,
+        sent_initial: bool,
     }
     let stream = futures::stream::unfold(
         SseCursor {
@@ -235,8 +236,16 @@ pub async fn sse_ruletest(State(state): State<AppState>, Path(name): Path<String
             replay,
             cursor: 0,
             pending: VecDeque::new(),
+            sent_initial: false,
         },
         |mut st| async move {
+            if !st.sent_initial {
+                st.sent_initial = true;
+                return Some((
+                    Ok::<_, axum::Error>(Event::default().comment("connected")),
+                    st,
+                ));
+            }
             loop {
                 if let Some(line) = st.pending.pop_front() {
                     return Some((Ok::<_, axum::Error>(Event::default().data(line)), st));
@@ -471,5 +480,47 @@ mod tests {
             .unwrap();
         let resp_auth = app.oneshot(req_auth).await.unwrap();
         assert_ne!(resp_auth.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_sse_ruletest_emits_initial_comment_immediately() {
+        use futures::StreamExt;
+        let bus = rekuiper_core::runtime::StreamBus::new();
+        let state = AppState::new(
+            "1.0.0".to_string(),
+            rekuiper_conf::KuiperConfig::default(),
+            rekuiper_core::StreamManager::new(),
+            rekuiper_core::TableManager::new(),
+            rekuiper_core::RuleManager::new(bus.clone()),
+            bus,
+        );
+        let (output_tx, _) = tokio::sync::broadcast::channel::<String>(16);
+        state.ruletests.write().insert(
+            "rt_init".to_string(),
+            crate::state::RuletestSession {
+                id: "rt_init".to_string(),
+                sql: "SELECT * FROM demo WHERE a > 10".to_string(),
+                mock_source: HashMap::new(),
+                output_tx,
+                replay: Arc::new(RwLock::new(crate::state::RuletestReplay::default())),
+                port: 10081,
+                shutdown: Arc::new(tokio::sync::Notify::new()),
+            },
+        );
+        let app = test_sse_router(state);
+        let req = Request::builder()
+            .uri("/test/rt_init")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let mut body = resp.into_body().into_data_stream();
+        let first = tokio::time::timeout(std::time::Duration::from_secs(1), body.next())
+            .await
+            .expect("SSE stream must emit initial bytes within 1s")
+            .expect("SSE stream must not end immediately")
+            .unwrap();
+        let text = String::from_utf8_lossy(&first);
+        assert!(text.contains(": connected"), "got: {:?}", text);
     }
 }

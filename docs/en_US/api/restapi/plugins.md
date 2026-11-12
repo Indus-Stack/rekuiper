@@ -227,6 +227,29 @@ Content-Type: application/json
 }
 ```
 
+### Test a JavaScript UDF in Isolation
+
+Use this endpoint to test a JavaScript UDF against sample arguments in an isolated, bounded Boa runtime without registering it in the global UDF registry:
+
+```http
+POST http://localhost:9081/plugins/udfs/test
+Content-Type: application/json
+
+{
+  "id": "add_two",
+  "script": "function add_two(a, b) { return a + b; }",
+  "args": [3, 4]
+}
+```
+
+Response sample:
+
+```json
+{
+  "result": 7
+}
+```
+
 ## WebAssembly (Wasm) Plugins
 
 WebAssembly plugins provide sandboxed User-Defined Functions without server restarts.

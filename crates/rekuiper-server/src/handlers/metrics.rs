@@ -47,14 +47,40 @@ pub async fn root_handler(State(state): State<AppState>) -> impl IntoResponse {
         other => other,
     };
 
+    let (operation_mode, deployment_role, ui_enabled) = {
+        let cfg = state.config.read();
+        let mode = if state.declarative_mode {
+            "declarative"
+        } else {
+            "imperative"
+        };
+        let role = if cfg.basic.control_plane_url.is_some() {
+            "agent"
+        } else {
+            "standalone"
+        };
+        (mode, role, cfg.basic.enable_ui)
+    };
+
     let info = json!({
+        "product": "rekuiper",
         "version": state.version,
+        "commit": option_env!("REKUIPER_GIT_COMMIT").unwrap_or("unknown"),
         "os": std::env::consts::OS,
         "arch": arch,
         "upTimeSeconds": uptime,
         "cpuUsage": format!("{:.2}%", cpu_usage),
         "memoryUsed": memory_used.to_string(),
         "memoryTotal": memory_total.to_string(),
+        "operationMode": operation_mode,
+        "deploymentRole": deployment_role,
+        "capabilities": {
+            "declarative": true,
+            "fleet": true,
+            "jsUdf": true,
+            "wireTap": true,
+            "ui": ui_enabled,
+        },
     });
 
     (StatusCode::OK, Json(info))

@@ -187,6 +187,7 @@ pub fn create_router(state: AppState) -> Router {
             "/plugins/udfs",
             get(list_udf_plugins).post(create_udf_plugin),
         )
+        .route("/plugins/udfs/test", post(test_js_udf_handler))
         .route(
             "/plugins/udfs/:name",
             get(get_udf_plugin).delete(delete_udf_plugin),
@@ -284,16 +285,28 @@ pub async fn declarative_mutation_guard(
         let method = req.method();
         let path = req.uri().path();
 
-        // Allow: All GET, HEAD, OPTIONS
-        if method == axum::http::Method::GET
+        // Allow: All GET, HEAD, OPTIONS except mutating/shutdown endpoints like GET /stop
+        if (method == axum::http::Method::GET
             || method == axum::http::Method::HEAD
-            || method == axum::http::Method::OPTIONS
+            || method == axum::http::Method::OPTIONS)
+            && path != "/stop"
+            && path != "/stop/"
         {
             return next.run(req).await;
         }
 
         // Allow: POST /declarative/reload
         if path == "/declarative/reload" || path == "/declarative/reload/" {
+            return next.run(req).await;
+        }
+
+        // Allow: POST /rules/validate and POST /plugins/udfs/test (stateless validation/sandbox)
+        if method == axum::http::Method::POST
+            && (path == "/rules/validate"
+                || path == "/rules/validate/"
+                || path == "/plugins/udfs/test"
+                || path == "/plugins/udfs/test/")
+        {
             return next.run(req).await;
         }
 
@@ -343,8 +356,10 @@ pub async fn declarative_mutation_guard(
             return next.run(req).await;
         }
 
-        // Allow: POST /ruletest* (ephemeral rule testing)
-        if method == axum::http::Method::POST && path.starts_with("/ruletest") {
+        // Allow: POST/DELETE /ruletest* (ephemeral rule testing and cleanup)
+        if (method == axum::http::Method::POST || method == axum::http::Method::DELETE)
+            && (path == "/ruletest" || path.starts_with("/ruletest/"))
+        {
             return next.run(req).await;
         }
 
@@ -624,4 +639,118 @@ pub async fn ui_login(
         })),
     )
         .into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::{HashMap, HashSet};
+
+    #[test]
+    fn test_openapi_spec_is_complete_and_unique() {
+        let openapi_path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../openapi.json");
+        let Ok(raw_openapi) = std::fs::read_to_string(&openapi_path) else {
+            return;
+        };
+        let spec: serde_json::Value =
+            serde_json::from_str(&raw_openapi).expect("valid openapi.json");
+        let paths = spec["paths"].as_object().expect("paths object");
+
+        let mut seen_ids: HashMap<String, String> = HashMap::new();
+        let mut doc_ops: HashSet<(String, String)> = HashSet::new();
+
+        for (path, item) in paths {
+            let Some(methods) = item.as_object() else {
+                continue;
+            };
+            for (method, op) in methods {
+                let m = method.to_ascii_uppercase();
+                if !matches!(m.as_str(), "GET" | "POST" | "PUT" | "DELETE" | "PATCH") {
+                    continue;
+                }
+                doc_ops.insert((m.clone(), path.clone()));
+                let oid = op["operationId"]
+                    .as_str()
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or_else(|| panic!("missing operationId for {} {}", m, path));
+                if let Some(prev) = seen_ids.insert(oid.to_string(), format!("{} {}", m, path)) {
+                    panic!(
+                        "duplicate operationId '{}' on {} {} and {}",
+                        oid, m, path, prev
+                    );
+                }
+            }
+        }
+
+        let schemas = spec["components"]["schemas"]
+            .as_object()
+            .expect("components.schemas object");
+        for name in ["CommsEventEnvelope", "FleetWsMessage", "RuletestSseEvent"] {
+            assert!(
+                schemas.contains_key(name),
+                "missing event schema '{}' in openapi.json",
+                name
+            );
+        }
+
+        for src in [include_str!("routes.rs"), include_str!("fleet.rs")] {
+            let prod_src = src.split("#[cfg(test)]").next().unwrap_or(src);
+            for part in prod_src.split(".route(").skip(1) {
+                let Some(q1) = part.find('"') else { continue };
+                let rest = &part[q1 + 1..];
+                let Some(q2) = rest.find('"') else { continue };
+                let raw_path = &rest[..q2];
+                let norm_path = normalize_axum_path(raw_path);
+                let mut depth = 1i32;
+                let mut end = part.len();
+                for (idx, ch) in part.char_indices() {
+                    match ch {
+                        '(' => depth += 1,
+                        ')' => {
+                            depth -= 1;
+                            if depth == 0 {
+                                end = idx;
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                let start = q1 + 1 + q2 + 1;
+                if end <= start {
+                    continue;
+                }
+                let call_body = &part[start..end];
+                for (meth_token, meth_upper) in [
+                    ("get(", "GET"),
+                    ("post(", "POST"),
+                    ("put(", "PUT"),
+                    ("delete(", "DELETE"),
+                    ("patch(", "PATCH"),
+                ] {
+                    if call_body.contains(meth_token) {
+                        assert!(
+                            doc_ops.contains(&(meth_upper.to_string(), norm_path.clone())),
+                            "registered route {} {} missing from openapi.json",
+                            meth_upper,
+                            norm_path
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    fn normalize_axum_path(raw: &str) -> String {
+        raw.split('/')
+            .map(|seg| {
+                if let Some(name) = seg.strip_prefix(':') {
+                    format!("{{{}}}", name)
+                } else {
+                    seg.to_string()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("/")
+    }
 }

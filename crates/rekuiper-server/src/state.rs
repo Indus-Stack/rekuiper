@@ -392,6 +392,7 @@ pub struct AppState {
     pub comms_hub: CommsHub,
     pub last_watchdog_rollback: Arc<RwLock<Option<String>>>,
     pub fleet: Arc<crate::fleet::FleetManager>,
+    pub etc_dir: Option<std::path::PathBuf>,
 }
 
 pub fn default_import_status() -> Value {
@@ -506,6 +507,7 @@ impl AppState {
             comms_hub: CommsHub::default(),
             last_watchdog_rollback: Arc::new(RwLock::new(None)),
             fleet: Arc::new(crate::fleet::FleetManager::new()),
+            etc_dir: None,
         }
     }
 }
@@ -1001,7 +1003,9 @@ pub fn named_entries(names: &[&str]) -> Value {
 /// manager UI (mirrors eKuiper's validation FVT expectations).
 #[allow(clippy::result_large_err)]
 pub fn check_valid_name(name: &str) -> Result<(), Response> {
-    if name.contains(' ')
+    if name.is_empty()
+        || name.contains("..")
+        || name.contains(' ')
         || name.contains("%20")
         || name.contains(';')
         || name.contains('/')
@@ -1169,10 +1173,60 @@ pub fn compile_and_register_js_udf(udf: &JavascriptUdf) -> Result<(), String> {
     Ok(())
 }
 
+/// Evaluate a candidate JavaScript UDF in a fresh, bounded Boa context without
+/// mutating the global UDF registry.
+pub fn evaluate_js_udf_isolated(id: &str, script: &str, args: &[Value]) -> Result<Value, String> {
+    let script = script.trim();
+    if script.is_empty() {
+        return Err("script cannot be empty".to_string());
+    }
+    let fn_name = id.trim();
+    if !is_valid_js_identifier(fn_name) {
+        return Err(format!(
+            "invalid JavaScript UDF identifier '{}': must match [A-Za-z_$][A-Za-z0-9_$]*",
+            fn_name
+        ));
+    }
+    let mut ctx = new_bounded_boa_context();
+    ctx.eval(boa_engine::Source::from_bytes(script.as_bytes()))
+        .map_err(|e| format!("JavaScript compilation error: {:?}", e))?;
+    let args_json = serde_json::to_string(args).unwrap_or_else(|_| "[]".to_string());
+    let invoke_code = format!(
+        "JSON.stringify((function() {{ let r = {}.apply(null, {}); return r === undefined ? null : r; }})())",
+        fn_name, args_json
+    );
+    let res = ctx
+        .eval(boa_engine::Source::from_bytes(invoke_code.as_bytes()))
+        .map_err(|e| format!("JavaScript execution error: {:?}", e))?;
+    Ok(res
+        .as_string()
+        .and_then(|s| serde_json::from_str(&s.to_std_string_escaped()).ok())
+        .unwrap_or(Value::Null))
+}
+
 pub fn create_default_services() -> Arc<RwLock<HashMap<String, ServiceDetail>>> {
     Arc::new(RwLock::new(HashMap::new()))
 }
 
 pub fn create_default_js_udfs() -> Arc<RwLock<HashMap<String, JavascriptUdf>>> {
     Arc::new(RwLock::new(HashMap::new()))
+}
+
+#[cfg(test)]
+mod js_udf_isolated_tests {
+    use super::*;
+
+    #[test]
+    fn test_evaluate_js_udf_isolated() {
+        let res = evaluate_js_udf_isolated(
+            "add_two",
+            "function add_two(a, b) { return a + b; }",
+            &[json!(3), json!(4)],
+        )
+        .unwrap();
+        assert_eq!(res, json!(7));
+
+        let err = evaluate_js_udf_isolated("bad name", "function x() {}", &[]).unwrap_err();
+        assert!(err.contains("invalid JavaScript UDF identifier"));
+    }
 }
