@@ -47,47 +47,7 @@ pub fn find_etc_file_in(
     candidates.into_iter().find(|p| p.is_file())
 }
 
-fn embedded_etc_file(relative: &str) -> Option<&'static str> {
-    match relative {
-        "mqtt_source.json" => Some(include_str!("../../../../etc/mqtt_source.json")),
-        "mqtt_source.yaml" => Some(include_str!("../../../../etc/mqtt_source.yaml")),
-        "connections/connection.yaml" => {
-            Some(include_str!("../../../../etc/connections/connection.yaml"))
-        }
-        "sources/edgex.json" => Some(include_str!("../../../../etc/sources/edgex.json")),
-        "sources/edgex.yaml" => Some(include_str!("../../../../etc/sources/edgex.yaml")),
-        "sources/file.json" => Some(include_str!("../../../../etc/sources/file.json")),
-        "sources/file.yaml" => Some(include_str!("../../../../etc/sources/file.yaml")),
-        "sources/httppull.json" => Some(include_str!("../../../../etc/sources/httppull.json")),
-        "sources/httppull.yaml" => Some(include_str!("../../../../etc/sources/httppull.yaml")),
-        "sources/httppush.json" => Some(include_str!("../../../../etc/sources/httppush.json")),
-        "sources/httppush.yaml" => Some(include_str!("../../../../etc/sources/httppush.yaml")),
-        "sources/memory.json" => Some(include_str!("../../../../etc/sources/memory.json")),
-        "sources/memory.yaml" => Some(include_str!("../../../../etc/sources/memory.yaml")),
-        "sources/neuron.json" => Some(include_str!("../../../../etc/sources/neuron.json")),
-        "sources/neuron.yaml" => Some(include_str!("../../../../etc/sources/neuron.yaml")),
-        "sources/redis.json" => Some(include_str!("../../../../etc/sources/redis.json")),
-        "sources/redis.yaml" => Some(include_str!("../../../../etc/sources/redis.yaml")),
-        "sources/redisSub.json" => Some(include_str!("../../../../etc/sources/redisSub.json")),
-        "sources/redisSub.yaml" => Some(include_str!("../../../../etc/sources/redisSub.yaml")),
-        "sources/simulator.json" => Some(include_str!("../../../../etc/sources/simulator.json")),
-        "sources/simulator.yaml" => Some(include_str!("../../../../etc/sources/simulator.yaml")),
-        "sources/websocket.json" => Some(include_str!("../../../../etc/sources/websocket.json")),
-        "sources/websocket.yaml" => Some(include_str!("../../../../etc/sources/websocket.yaml")),
-        "sinks/edgex.json" => Some(include_str!("../../../../etc/sinks/edgex.json")),
-        "sinks/file.json" => Some(include_str!("../../../../etc/sinks/file.json")),
-        "sinks/log.json" => Some(include_str!("../../../../etc/sinks/log.json")),
-        "sinks/memory.json" => Some(include_str!("../../../../etc/sinks/memory.json")),
-        "sinks/mqtt.json" => Some(include_str!("../../../../etc/sinks/mqtt.json")),
-        "sinks/neuron.json" => Some(include_str!("../../../../etc/sinks/neuron.json")),
-        "sinks/nop.json" => Some(include_str!("../../../../etc/sinks/nop.json")),
-        "sinks/redis.json" => Some(include_str!("../../../../etc/sinks/redis.json")),
-        "sinks/redisPub.json" => Some(include_str!("../../../../etc/sinks/redisPub.json")),
-        "sinks/rest.json" => Some(include_str!("../../../../etc/sinks/rest.json")),
-        "sinks/websocket.json" => Some(include_str!("../../../../etc/sinks/websocket.json")),
-        _ => None,
-    }
-}
+include!(concat!(env!("OUT_DIR"), "/embedded_etc.rs"));
 
 type EtcCacheKey = (Option<std::path::PathBuf>, String);
 static ETC_FILE_CACHE: parking_lot::RwLock<
