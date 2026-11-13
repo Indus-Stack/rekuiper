@@ -22,7 +22,13 @@ This document describes the core reliable execution contracts, atomic checkpoint
 1. The store enables `PRAGMA journal_mode = WAL`, `PRAGMA synchronous = FULL` (or `EXTRA`), and `PRAGMA foreign_keys = ON`.
 2. The store reads back each PRAGMA setting and fails closed if SQLite does not confirm it.
 3. Commits check `reliable_generations` and reject stale generations before writing.
-4. Legacy `SqliteKvStore` behavior remains unchanged for lightweight rules.
+4. `SqliteOutbox` (`crates/rekuiper-core/src/reliability/outbox.rs`) enqueues outbox entries in the same SQLite transaction, enforces `max_items` and `max_bytes` limits, deduplicates repeated effect IDs, and scopes `claim_pending` by `(rule_id, action_id)`.
+5. Legacy `SqliteKvStore` behavior remains unchanged for lightweight rules.
+
+## Operator State Snapshots
+
+- `crates/rekuiper-server/src/engine/state/analytic_count_tumble.rs` provides `AnalyticStateParticipant`, `CountWindowStateParticipant`, and `TumbleWindowStateParticipant`.
+- Each participant captures an owned, SHA-256 checksummed snapshot between records without touching the lightweight execution hotpath.
 
 ## Ordered Reliable Ingress and Delivery Accounting
 

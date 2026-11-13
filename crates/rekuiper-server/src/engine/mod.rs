@@ -6,6 +6,7 @@ pub mod reliable_input;
 pub mod runtime;
 pub mod sinks;
 pub mod sources;
+pub mod state;
 pub mod windows;
 
 pub use dag::*;

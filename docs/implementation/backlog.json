@@ -516,8 +516,10 @@
       ],
       "integrate_after": [],
       "conditional_dependencies": [],
-      "status": "proposed",
-      "evidence": []
+      "status": "component_done",
+      "evidence": [
+        "docs/implementation/tickets/P03-T05.md"
+      ]
     },
     {
       "id": "P03-T06",
@@ -557,8 +559,10 @@
       ],
       "integrate_after": [],
       "conditional_dependencies": [],
-      "status": "proposed",
-      "evidence": []
+      "status": "component_done",
+      "evidence": [
+        "docs/implementation/tickets/P03-T08.md"
+      ]
     },
     {
       "id": "P03-T09",

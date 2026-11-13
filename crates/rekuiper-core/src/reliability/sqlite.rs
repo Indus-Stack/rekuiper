@@ -153,9 +153,17 @@ impl ReliableSqliteStore {
         &self.verified_durability
     }
 
+    pub(crate) fn pool(&self) -> &SqlitePool {
+        &self.pool
+    }
+
     /// Arms a one-shot failure right before transaction commit to test rollback.
     pub fn arm_commit_failure(&self) {
         self.fail_next_commit.store(true, Ordering::SeqCst);
+    }
+
+    pub(crate) fn take_commit_failure(&self) -> bool {
+        self.fail_next_commit.swap(false, Ordering::SeqCst)
     }
 
     async fn migrate(&self) -> Result<(), CheckpointError> {
@@ -217,6 +225,8 @@ impl ReliableSqliteStore {
                 action_id TEXT NOT NULL,
                 connection_id TEXT,
                 order_key TEXT,
+                payload BLOB NOT NULL DEFAULT X'',
+                claimed_by TEXT,
                 attempt INTEGER NOT NULL,
                 terminal_outcome_json TEXT
             )",
