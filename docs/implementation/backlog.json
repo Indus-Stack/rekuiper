@@ -584,8 +584,10 @@
         "P11-T01"
       ],
       "conditional_dependencies": [],
-      "status": "proposed",
-      "evidence": []
+      "status": "component_done",
+      "evidence": [
+        "docs/implementation/tickets/P03-T09.md"
+      ]
     },
     {
       "id": "P03-T10",

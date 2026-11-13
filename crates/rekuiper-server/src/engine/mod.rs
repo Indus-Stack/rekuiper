@@ -2,6 +2,7 @@ pub mod dag;
 pub mod dlq;
 pub mod joins;
 pub mod operators;
+pub mod outbox_dispatch;
 pub mod reliable_input;
 pub mod retry;
 pub mod runtime;
