@@ -131,10 +131,7 @@ impl SessionWindowStateParticipant {
             Some(max_ms) => gap_deadline.min(session_start_ms.saturating_add(max_ms)),
             None => gap_deadline,
         };
-        LogicalDeadline {
-            at_ms: due_ms,
-            seq: self.next_seq,
-        }
+        LogicalDeadline(due_ms)
     }
 
     /// Baseline boundary rule (matches `engine/windows.rs` SESSIONWINDOW):
@@ -168,7 +165,7 @@ impl SessionWindowStateParticipant {
             let window_end_ms = closed
                 .last_event_ms
                 .saturating_add(self.gap_ms)
-                .min(closed.deadline.at_ms);
+                .min(closed.deadline.0);
             Some(KeyedFiredWindowBatch {
                 partition_key: key.clone(),
                 batch: FiredWindowBatch {
@@ -189,10 +186,7 @@ impl SessionWindowStateParticipant {
                 Some(max_ms) => gap_deadline.min(entry.session_start_ms.saturating_add(max_ms)),
                 None => gap_deadline,
             };
-            entry.deadline = LogicalDeadline {
-                at_ms: due_ms,
-                seq: self.next_seq,
-            };
+            entry.deadline = LogicalDeadline(due_ms);
         } else {
             let deadline = self.compute_deadline(timestamp_ms, timestamp_ms);
             self.sessions.insert(
@@ -224,8 +218,8 @@ impl SessionWindowStateParticipant {
         let mut due_keys: Vec<(i64, String)> = self
             .sessions
             .iter()
-            .filter(|(_, entry)| entry.deadline.at_ms <= now_ms)
-            .map(|(k, entry)| (entry.deadline.at_ms, k.clone()))
+            .filter(|(_, entry)| entry.deadline.0 <= now_ms)
+            .map(|(k, entry)| (entry.deadline.0, k.clone()))
             .collect();
         due_keys.sort();
 
@@ -239,7 +233,7 @@ impl SessionWindowStateParticipant {
                     partition_key: key,
                     batch: FiredWindowBatch {
                         window_start_ms: entry.session_start_ms,
-                        window_end_ms: entry.deadline.at_ms,
+                        window_end_ms: entry.deadline.0,
                         rows: entry.rows.into_iter().map(|r| r.payload).collect(),
                     },
                 });
@@ -270,7 +264,13 @@ impl StateParticipant for SessionWindowStateParticipant {
         SESSION_STATE_VERSION
     }
 
-    fn capture(&self) -> Result<StateSnapshot, StateError> {
+    fn resource_usage(&self) -> StateResourceUsage {
+        let records = self.sessions.values().map(|s| s.rows.len() as u64).sum();
+        let bytes = serde_json::to_vec(&self.sessions).map_or(0, |v| v.len() as u64);
+        StateResourceUsage { records, bytes }
+    }
+
+    fn capture_snapshot(&self) -> Result<StateSnapshot, StateError> {
         let records = self.sessions.values().map(|s| s.rows.len() as u64).sum();
         let payload = SessionSnapshotPayload {
             plan_fingerprint: self.plan_fingerprint.clone(),
@@ -281,7 +281,7 @@ impl StateParticipant for SessionWindowStateParticipant {
         encode_snapshot(&self.operator_id, records, &payload)
     }
 
-    fn restore(&mut self, snapshot: &StateSnapshot) -> Result<(), StateError> {
+    fn restore_snapshot(&mut self, snapshot: &StateSnapshot) -> Result<(), StateError> {
         let payload: SessionSnapshotPayload = decode_snapshot(&self.operator_id, snapshot)?;
         if payload.plan_fingerprint != self.plan_fingerprint
             || payload.gap_ms != self.gap_ms
@@ -448,7 +448,13 @@ impl StateParticipant for StateWindowStateParticipant {
         SESSION_STATE_VERSION
     }
 
-    fn capture(&self) -> Result<StateSnapshot, StateError> {
+    fn resource_usage(&self) -> StateResourceUsage {
+        let records = self.partitions.values().map(|p| p.rows.len() as u64).sum();
+        let bytes = serde_json::to_vec(&self.partitions).map_or(0, |v| v.len() as u64);
+        StateResourceUsage { records, bytes }
+    }
+
+    fn capture_snapshot(&self) -> Result<StateSnapshot, StateError> {
         let records = self.partitions.values().map(|p| p.rows.len() as u64).sum();
         let payload = StateWindowSnapshotPayload {
             plan_fingerprint: self.plan_fingerprint.clone(),
@@ -458,7 +464,7 @@ impl StateParticipant for StateWindowStateParticipant {
         encode_snapshot(&self.operator_id, records, &payload)
     }
 
-    fn restore(&mut self, snapshot: &StateSnapshot) -> Result<(), StateError> {
+    fn restore_snapshot(&mut self, snapshot: &StateSnapshot) -> Result<(), StateError> {
         let payload: StateWindowSnapshotPayload = decode_snapshot(&self.operator_id, snapshot)?;
         if payload.plan_fingerprint != self.plan_fingerprint
             || payload.has_end_condition != self.has_end_condition

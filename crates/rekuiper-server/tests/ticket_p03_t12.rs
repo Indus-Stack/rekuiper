@@ -9,15 +9,16 @@ fn op_id(name: &str) -> OperatorId {
     OperatorId::try_from(name.to_string()).unwrap()
 }
 
-fn fp(tag: &str) -> ContentChecksum {
-    ContentChecksum::try_from(format!("sha256:{tag}")).unwrap()
+fn fp(hex_digit: char) -> ContentChecksum {
+    let hex: String = std::iter::repeat_n(hex_digit, 64).collect();
+    ContentChecksum::try_from(format!("sha256:{hex}")).unwrap()
 }
 
 #[test]
 fn session_window_exact_gap_boundary_and_restart_match_uninterrupted() {
     let mut uninterrupted = SessionWindowStateParticipant::new(
         op_id("session_op"),
-        fp("plan_s1"),
+        fp('1'),
         1_000,
         Some(2_500),
         MissedDeadlinePolicy::FireImmediatelyInOrder,
@@ -26,7 +27,7 @@ fn session_window_exact_gap_boundary_and_restart_match_uninterrupted() {
 
     let mut before = SessionWindowStateParticipant::new(
         op_id("session_op"),
-        fp("plan_s1"),
+        fp('1'),
         1_000,
         Some(2_500),
         MissedDeadlinePolicy::FireImmediatelyInOrder,
@@ -53,21 +54,21 @@ fn session_window_exact_gap_boundary_and_restart_match_uninterrupted() {
 
     assert_eq!(before.open_session_keys(), vec!["A", "B"]);
     assert_eq!(before.open_row_count("A"), 2);
-    assert_eq!(before.open_deadline("A").unwrap().at_ms, 2_100);
+    assert_eq!(before.open_deadline("A").unwrap().0, 2_100);
 
-    let snap = before.capture().unwrap();
+    let snap = before.capture_snapshot().unwrap();
     let mut after = SessionWindowStateParticipant::new(
         op_id("session_op"),
-        fp("plan_s1"),
+        fp('1'),
         1_000,
         Some(2_500),
         MissedDeadlinePolicy::FireImmediatelyInOrder,
     )
     .unwrap();
-    after.restore(&snap).unwrap();
+    after.restore_snapshot(&snap).unwrap();
 
     assert_eq!(after.open_session_keys(), vec!["A", "B"]);
-    assert_eq!(after.open_deadline("A").unwrap().at_ms, 2_100);
+    assert_eq!(after.open_deadline("A").unwrap().0, 2_100);
 
     for (key, ts, val) in [
         ("A", 2_101_i64, json!({"v": 3})), // gap 1001 > 1000 -> closes A[100..2100]
@@ -96,7 +97,7 @@ fn session_window_exact_gap_boundary_and_restart_match_uninterrupted() {
 fn session_window_expired_deadlines_obey_downtime_policy() {
     let mut src = SessionWindowStateParticipant::new(
         op_id("session_policy"),
-        fp("plan_s2"),
+        fp('2'),
         500,
         None,
         MissedDeadlinePolicy::FireImmediatelyInOrder,
@@ -104,17 +105,17 @@ fn session_window_expired_deadlines_obey_downtime_policy() {
     .unwrap();
     src.ingest("k1", 1_000, json!({"x": 1}));
     src.ingest("k2", 2_000, json!({"x": 2}));
-    let snap = src.capture().unwrap();
+    let snap = src.capture_snapshot().unwrap();
 
     let mut fire = SessionWindowStateParticipant::new(
         op_id("session_policy"),
-        fp("plan_s2"),
+        fp('2'),
         500,
         None,
         MissedDeadlinePolicy::FireImmediatelyInOrder,
     )
     .unwrap();
-    fire.restore(&snap).unwrap();
+    fire.restore_snapshot(&snap).unwrap();
     let fired = fire.reconcile_after_restore(2_000);
     assert_eq!(fired.len(), 1);
     assert_eq!(fired[0].partition_key, "k1");
@@ -122,13 +123,13 @@ fn session_window_expired_deadlines_obey_downtime_policy() {
 
     let mut drop_expired = SessionWindowStateParticipant::new(
         op_id("session_policy"),
-        fp("plan_s2"),
+        fp('2'),
         500,
         None,
         MissedDeadlinePolicy::DropExpired,
     )
     .unwrap();
-    drop_expired.restore(&snap).unwrap();
+    drop_expired.restore_snapshot(&snap).unwrap();
     let dropped = drop_expired.reconcile_after_restore(2_000);
     assert!(dropped.is_empty());
     assert_eq!(drop_expired.open_session_keys(), vec!["k2"]);
@@ -136,9 +137,8 @@ fn session_window_expired_deadlines_obey_downtime_policy() {
 
 #[test]
 fn state_window_transition_and_plan_mismatch_check() {
-    let mut uninterrupted =
-        StateWindowStateParticipant::new(op_id("state_op"), fp("plan_st1"), true);
-    let mut before = StateWindowStateParticipant::new(op_id("state_op"), fp("plan_st1"), true);
+    let mut uninterrupted = StateWindowStateParticipant::new(op_id("state_op"), fp('3'), true);
+    let mut before = StateWindowStateParticipant::new(op_id("state_op"), fp('3'), true);
 
     let mut u_out = Vec::new();
     let mut s_out = Vec::new();
@@ -160,9 +160,9 @@ fn state_window_transition_and_plan_mismatch_check() {
     assert!(before.is_open("p1"));
     assert_eq!(before.retained_row_count("p1"), 2);
 
-    let mut snap = before.capture().unwrap();
-    let mut after = StateWindowStateParticipant::new(op_id("state_op"), fp("plan_st1"), true);
-    after.restore(&snap).unwrap();
+    let mut snap = before.capture_snapshot().unwrap();
+    let mut after = StateWindowStateParticipant::new(op_id("state_op"), fp('3'), true);
+    after.restore_snapshot(&snap).unwrap();
     assert!(after.is_open("p1"));
     assert_eq!(after.retained_row_count("p1"), 2);
 
@@ -185,14 +185,14 @@ fn state_window_transition_and_plan_mismatch_check() {
     );
 
     // Reject plan fingerprint mismatch and corrupt payload checksum
-    let mut wrong_plan = StateWindowStateParticipant::new(op_id("state_op"), fp("other"), true);
+    let mut wrong_plan = StateWindowStateParticipant::new(op_id("state_op"), fp('f'), true);
     assert!(matches!(
-        wrong_plan.restore(&snap),
+        wrong_plan.restore_snapshot(&snap),
         Err(StateError::CorruptSnapshot(_))
     ));
     snap.payload[0] ^= 0xFF;
     assert!(matches!(
-        after.restore(&snap),
+        after.restore_snapshot(&snap),
         Err(StateError::CorruptSnapshot(_))
     ));
 }
