@@ -35,7 +35,8 @@ fn sha256_checksum(bytes: &[u8]) -> ContentChecksum {
         msg.push(0);
     }
     msg.extend_from_slice(&bit_len.to_be_bytes());
-    for chunk in msg.chunks_exact(64) {
+    for offset in (0..msg.len()).step_by(64) {
+        let chunk = &msg[offset..offset + 64];
         let mut w = [0u32; 64];
         for i in 0..16 {
             w[i] = u32::from_be_bytes(chunk[4 * i..4 * i + 4].try_into().unwrap());
