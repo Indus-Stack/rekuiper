@@ -641,6 +641,8 @@ pub mod reliable {
     #[derive(Debug)]
     pub enum ReliableRuntimeError {
         UnsupportedShape(&'static str),
+        MissingParticipant(&'static str),
+        IncompleteBarrierActions(String),
         Kafka(KafkaReliableError),
         State(StateError),
         Checkpoint(CheckpointError),
@@ -652,6 +654,12 @@ pub mod reliable {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
             match self {
                 Self::UnsupportedShape(msg) => write!(f, "unsupported reliable plan shape: {msg}"),
+                Self::MissingParticipant(kind) => {
+                    write!(f, "missing required state participant: {kind}")
+                }
+                Self::IncompleteBarrierActions(missing) => {
+                    write!(f, "barrier completion missing actions: {missing}")
+                }
                 Self::Kafka(e) => write!(f, "kafka reliable error: {e}"),
                 Self::State(e) => write!(f, "state error: {e}"),
                 Self::Checkpoint(e) => write!(f, "checkpoint error: {e}"),
@@ -910,6 +918,305 @@ pub mod reliable {
                     Err(ReliableRuntimeError::Coordinator(err))
                 }
             }
+        }
+    }
+
+    /// Required state participant roles derived from a qualified SQL/DAG plan (P03-T15).
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+    pub enum RequiredParticipantKind {
+        Analytic,
+        TumblingWindow,
+        CountWindow,
+        HoppingWindow,
+        SlidingWindow,
+        SessionWindow,
+        StateWindow,
+        JoinBuffer,
+        CepSequence,
+        BarrierAlignment,
+    }
+
+    impl RequiredParticipantKind {
+        pub fn label(self) -> &'static str {
+            match self {
+                Self::Analytic => "analytic",
+                Self::TumblingWindow => "tumbling",
+                Self::CountWindow => "count",
+                Self::HoppingWindow => "hopping",
+                Self::SlidingWindow => "sliding",
+                Self::SessionWindow => "session",
+                Self::StateWindow => "state",
+                Self::JoinBuffer => "join",
+                Self::CepSequence => "cep",
+                Self::BarrierAlignment => "barrier",
+            }
+        }
+
+        fn matches_operator_id(self, op_id: &str) -> bool {
+            let id = op_id.to_ascii_lowercase();
+            match self {
+                Self::Analytic => id.contains("analytic"),
+                Self::TumblingWindow => id.contains("tumbl"),
+                Self::CountWindow => id.contains("count"),
+                Self::HoppingWindow => id.contains("hop"),
+                Self::SlidingWindow => id.contains("slid"),
+                Self::SessionWindow => id.contains("session"),
+                Self::StateWindow => id.contains("state"),
+                Self::JoinBuffer => id.contains("join"),
+                Self::CepSequence => id.contains("cep"),
+                Self::BarrierAlignment => id.contains("barrier") || id.contains("align"),
+            }
+        }
+    }
+
+    fn expr_uses_lead_or_lag(expr: &rekuiper_sql::Expr) -> bool {
+        use rekuiper_sql::Expr;
+        match expr {
+            Expr::Call { name, args } => {
+                name.eq_ignore_ascii_case("lead")
+                    || name.eq_ignore_ascii_case("lag")
+                    || args.iter().any(expr_uses_lead_or_lag)
+            }
+            Expr::Over {
+                call,
+                partition_by,
+                when,
+            } => {
+                expr_uses_lead_or_lag(call)
+                    || partition_by.as_deref().is_some_and(expr_uses_lead_or_lag)
+                    || when.as_deref().is_some_and(expr_uses_lead_or_lag)
+            }
+            Expr::BinaryOp { left, right, .. } => {
+                expr_uses_lead_or_lag(left) || expr_uses_lead_or_lag(right)
+            }
+            Expr::UnaryOp { expr: inner, .. } | Expr::IsNull { expr: inner, .. } => {
+                expr_uses_lead_or_lag(inner)
+            }
+            Expr::Between {
+                expr, low, high, ..
+            } => {
+                expr_uses_lead_or_lag(expr)
+                    || expr_uses_lead_or_lag(low)
+                    || expr_uses_lead_or_lag(high)
+            }
+            Expr::InList { expr, list, .. } => {
+                expr_uses_lead_or_lag(expr) || list.iter().any(expr_uses_lead_or_lag)
+            }
+            Expr::Case {
+                operand,
+                when_clauses,
+                else_clause,
+            } => {
+                operand.as_deref().is_some_and(expr_uses_lead_or_lag)
+                    || when_clauses
+                        .iter()
+                        .any(|(w, t)| expr_uses_lead_or_lag(w) || expr_uses_lead_or_lag(t))
+                    || else_clause.as_deref().is_some_and(expr_uses_lead_or_lag)
+            }
+            Expr::FieldAccess { parent, .. } => expr_uses_lead_or_lag(parent),
+            Expr::Index { base, index } => {
+                expr_uses_lead_or_lag(base) || expr_uses_lead_or_lag(index)
+            }
+            Expr::Slice { base, lo, hi } => {
+                expr_uses_lead_or_lag(base)
+                    || lo.as_deref().is_some_and(expr_uses_lead_or_lag)
+                    || hi.as_deref().is_some_and(expr_uses_lead_or_lag)
+            }
+            Expr::WildcardModified { replace, .. } => {
+                replace.iter().any(|(e, _)| expr_uses_lead_or_lag(e))
+            }
+            Expr::Wildcard | Expr::Identifier(_) | Expr::Literal(_) => false,
+        }
+    }
+
+    /// Returns true if any SQL clause invokes `LEAD` or `LAG` (deferred until P04-T06).
+    pub fn stmt_uses_lead_or_lag(stmt: &SelectStmt) -> bool {
+        stmt.fields.iter().any(expr_uses_lead_or_lag)
+            || stmt
+                .where_clause
+                .as_ref()
+                .is_some_and(expr_uses_lead_or_lag)
+            || stmt.group_by.iter().any(expr_uses_lead_or_lag)
+            || stmt.having.as_ref().is_some_and(expr_uses_lead_or_lag)
+    }
+
+    /// Computes required qualified state participants for a plan, rejecting `LEAD`/`LAG`
+    /// and unqualified set-op shapes.
+    pub fn required_participants_for_plan(
+        stmt: &SelectStmt,
+        has_cep: bool,
+        input_edge_count: usize,
+    ) -> Result<Vec<RequiredParticipantKind>, ReliableRuntimeError> {
+        if stmt.set_op.is_some() {
+            return Err(ReliableRuntimeError::UnsupportedShape(
+                "UNION/set-op plans are not supported in qualified reliable mode",
+            ));
+        }
+        if stmt_uses_lead_or_lag(stmt) {
+            return Err(ReliableRuntimeError::UnsupportedShape(
+                "LEAD/LAG state adapter is not yet integrated (pending P04-T06)",
+            ));
+        }
+
+        let mut req = Vec::new();
+        match crate::engine::windows::classify_window_participant(stmt.window.as_ref()) {
+            crate::engine::windows::QualifiedWindowKind::None => {
+                if !has_cep && stmt.joins.is_empty() {
+                    req.push(RequiredParticipantKind::Analytic);
+                }
+            }
+            crate::engine::windows::QualifiedWindowKind::Tumbling => {
+                req.push(RequiredParticipantKind::TumblingWindow)
+            }
+            crate::engine::windows::QualifiedWindowKind::Count => {
+                req.push(RequiredParticipantKind::CountWindow)
+            }
+            crate::engine::windows::QualifiedWindowKind::Hopping => {
+                req.push(RequiredParticipantKind::HoppingWindow)
+            }
+            crate::engine::windows::QualifiedWindowKind::Sliding => {
+                req.push(RequiredParticipantKind::SlidingWindow)
+            }
+            crate::engine::windows::QualifiedWindowKind::Session => {
+                req.push(RequiredParticipantKind::SessionWindow)
+            }
+            crate::engine::windows::QualifiedWindowKind::State => {
+                req.push(RequiredParticipantKind::StateWindow)
+            }
+        }
+        if !stmt.joins.is_empty() {
+            req.push(RequiredParticipantKind::JoinBuffer);
+        }
+        if has_cep {
+            req.push(RequiredParticipantKind::CepSequence);
+        }
+        if input_edge_count > 1 || !stmt.joins.is_empty() {
+            req.push(RequiredParticipantKind::BarrierAlignment);
+        }
+        Ok(req)
+    }
+
+    /// Ensures every required state participant role is covered by the registered participants.
+    pub fn validate_participant_coverage(
+        required: &[RequiredParticipantKind],
+        participants: &[&dyn StateParticipant],
+    ) -> Result<(), ReliableRuntimeError> {
+        for kind in required {
+            let covered = participants
+                .iter()
+                .any(|p| kind.matches_operator_id(p.operator_id().as_str()));
+            if !covered {
+                return Err(ReliableRuntimeError::MissingParticipant(kind.label()));
+            }
+        }
+        Ok(())
+    }
+
+    /// Coordinates restore-before-intake and barrier-complete checkpoint commits across all
+    /// qualified window, join, CEP, and multi-input alignment participants (P03-T15).
+    pub struct QualifiedPlanRunner {
+        identity: PlanIdentity,
+        required_participants: Vec<RequiredParticipantKind>,
+        expected_actions: std::collections::BTreeSet<String>,
+        coordinator: CheckpointCoordinator,
+        next_checkpoint_id: u64,
+        status: ReliableCheckpointStatus,
+    }
+
+    impl QualifiedPlanRunner {
+        pub fn new(
+            identity: PlanIdentity,
+            stmt: &SelectStmt,
+            has_cep: bool,
+            input_edge_count: usize,
+            expected_actions: std::collections::BTreeSet<String>,
+            participants: &[&dyn StateParticipant],
+        ) -> Result<Self, ReliableRuntimeError> {
+            let required_participants =
+                required_participants_for_plan(stmt, has_cep, input_edge_count)?;
+            validate_participant_coverage(&required_participants, participants)?;
+            let coordinator = CheckpointCoordinator::new(identity.clone());
+            Ok(Self {
+                identity,
+                required_participants,
+                expected_actions,
+                coordinator,
+                next_checkpoint_id: 1,
+                status: ReliableCheckpointStatus::new(ReliableDeliveryGuarantee::AtLeastOnce),
+            })
+        }
+
+        pub fn required_participants(&self) -> &[RequiredParticipantKind] {
+            &self.required_participants
+        }
+
+        pub fn status(&self) -> &ReliableCheckpointStatus {
+            &self.status
+        }
+
+        pub async fn restore_before_intake(
+            &mut self,
+            store: &dyn CheckpointStore,
+            participants: &mut [&mut dyn StateParticipant],
+        ) -> Result<Vec<rekuiper_core::contracts::SourcePosition>, ReliableRuntimeError> {
+            let refs: Vec<&dyn StateParticipant> = participants.iter().map(|p| &**p).collect();
+            validate_participant_coverage(&self.required_participants, &refs)?;
+            let Some(envelope) = store.load_latest(&self.identity.rule_id).await? else {
+                return Ok(Vec::new());
+            };
+            for participant in participants.iter_mut() {
+                let op_id = participant.operator_id().clone();
+                if let Some(snapshot) = envelope.payloads.get(&op_id) {
+                    participant.restore_snapshot(snapshot)?;
+                }
+            }
+            self.next_checkpoint_id = envelope.metadata.checkpoint_id.0.saturating_add(1);
+            self.status.last_checkpoint_id = Some(envelope.metadata.checkpoint_id);
+            self.status.last_checkpoint_wall_millis = Some(envelope.metadata.created_wall_millis);
+            Ok(envelope.metadata.source_positions)
+        }
+
+        pub async fn commit_checkpoint(
+            &mut self,
+            store: &dyn CheckpointStore,
+            participants: &[&dyn StateParticipant],
+            source_positions: Vec<rekuiper_core::contracts::SourcePosition>,
+            acked_actions: &std::collections::BTreeSet<String>,
+            clock: &dyn Clock,
+            cancellation: &DeadlineCancellation,
+        ) -> Result<CheckpointId, ReliableRuntimeError> {
+            validate_participant_coverage(&self.required_participants, participants)?;
+            let missing_actions: Vec<String> = self
+                .expected_actions
+                .difference(acked_actions)
+                .cloned()
+                .collect();
+            if !missing_actions.is_empty() {
+                return Err(ReliableRuntimeError::IncompleteBarrierActions(
+                    missing_actions.join(", "),
+                ));
+            }
+            let cp_id = CheckpointId(self.next_checkpoint_id);
+            let envelope = self
+                .coordinator
+                .run_checkpoint(
+                    cp_id,
+                    self.identity.generation,
+                    participants,
+                    source_positions,
+                    OutboxBoundary::default(),
+                    clock,
+                    Duration::from_secs(30),
+                    cancellation,
+                    || async { Ok(()) },
+                    store,
+                )
+                .await?;
+            self.next_checkpoint_id = self.next_checkpoint_id.saturating_add(1);
+            self.status.last_checkpoint_id = Some(envelope.metadata.checkpoint_id);
+            self.status.last_checkpoint_wall_millis = Some(envelope.metadata.created_wall_millis);
+            self.status.last_failure = None;
+            Ok(envelope.metadata.checkpoint_id)
         }
     }
 }

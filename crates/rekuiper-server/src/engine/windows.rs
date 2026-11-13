@@ -1534,3 +1534,31 @@ pub(crate) async fn run_state_window_rule(
         }
     }
 }
+
+/// Qualified window state participant classification for opt-in reliable execution.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QualifiedWindowKind {
+    None,
+    Tumbling,
+    Count,
+    Hopping,
+    Sliding,
+    Session,
+    State,
+}
+
+/// Maps an AST `WindowDef` to its qualified state participant kind without affecting
+/// the default lightweight `run_window_loop` execution path.
+pub fn classify_window_participant(
+    win: Option<&rekuiper_sql::ast::WindowDef>,
+) -> QualifiedWindowKind {
+    match win {
+        None => QualifiedWindowKind::None,
+        Some(rekuiper_sql::ast::WindowDef::TumblingTime { .. }) => QualifiedWindowKind::Tumbling,
+        Some(rekuiper_sql::ast::WindowDef::Count { .. }) => QualifiedWindowKind::Count,
+        Some(rekuiper_sql::ast::WindowDef::HoppingTime { .. }) => QualifiedWindowKind::Hopping,
+        Some(rekuiper_sql::ast::WindowDef::SlidingTime { .. }) => QualifiedWindowKind::Sliding,
+        Some(rekuiper_sql::ast::WindowDef::Session { .. }) => QualifiedWindowKind::Session,
+        Some(rekuiper_sql::ast::WindowDef::State { .. }) => QualifiedWindowKind::State,
+    }
+}

@@ -501,6 +501,59 @@ pub(crate) fn spawn_graph_rule_task(
     rule_manager.set_rule_handle(&rule_id, handle);
 }
 
+/// Validates that a DAG graph is eligible for opt-in reliable execution:
+/// - Rejects feedback cycles via [`crate::engine::barrier_alignment::validate_acyclic_reliable_graph`]
+/// - Rejects unqualified stateful DAG operator node types (`watchdog`, `window`, `join`, `cep`)
+///   unless a matching state participant is explicitly registered.
+/// - Preserves the default lightweight `run_dag_rule` path untouched.
+pub fn validate_reliable_dag_shape(
+    graph: &GraphDefinition,
+    registered_participants: &[&str],
+) -> Result<(), String> {
+    let mut nodes: Vec<String> = graph.nodes.keys().cloned().collect();
+    let mut edge_pairs: Vec<(String, String)> = Vec::new();
+    for (src, targets) in &graph.topo.edges {
+        if !nodes.contains(src) {
+            nodes.push(src.clone());
+        }
+        for port in 0..8 {
+            for t in targets.targets_for_port(port) {
+                if !nodes.contains(t) {
+                    nodes.push(t.clone());
+                }
+                let pair = (src.clone(), t.clone());
+                if !edge_pairs.contains(&pair) {
+                    edge_pairs.push(pair);
+                }
+            }
+        }
+    }
+    crate::engine::barrier_alignment::validate_acyclic_reliable_graph(&nodes, &edge_pairs)
+        .map_err(|e| e.to_string())?;
+
+    for (node_id, node) in &graph.nodes {
+        let nt = node.node_type.to_ascii_lowercase();
+        let requires_participant = matches!(nt.as_str(), "window" | "join" | "cep");
+        if requires_participant
+            && !registered_participants
+                .iter()
+                .any(|p| p.eq_ignore_ascii_case(node_id) || p.to_ascii_lowercase().contains(&nt))
+        {
+            return Err(format!(
+                "unqualified or unregistered stateful DAG node '{}' (type '{}')",
+                node_id, node.node_type
+            ));
+        }
+        if nt == "watchdog" {
+            return Err(format!(
+                "unqualified DAG node '{}' of type 'watchdog' is not supported in reliable mode",
+                node_id
+            ));
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

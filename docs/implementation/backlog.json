@@ -704,8 +704,15 @@
         "P04-T06"
       ],
       "conditional_dependencies": [],
-      "status": "proposed",
-      "evidence": []
+      "status": "component_done",
+      "evidence": [
+        "crates/rekuiper-server/src/engine/runtime.rs",
+        "crates/rekuiper-server/src/engine/windows.rs",
+        "crates/rekuiper-server/src/engine/dag.rs",
+        "crates/rekuiper-server/tests/ticket_p03_t15.rs",
+        "docs/implementation/tickets/P03-T15.md",
+        "docs/en_US/reliability/durable_execution.md"
+      ]
     },
     {
       "id": "P03-T16",
