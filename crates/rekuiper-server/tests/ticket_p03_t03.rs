@@ -8,7 +8,7 @@ use rekuiper_server::engine::reliable_input::{
     reliable_input_channel, ReliableIngressError, ReliableInputItem,
 };
 use serde_json::json;
-use std::sync::Arc;
+use std::collections::HashMap;
 
 fn pos(gen: u64, offset: i64) -> SourcePosition {
     SourcePosition {
@@ -28,8 +28,8 @@ async fn data_precedes_barrier_and_eof_and_multirow_is_one_position() {
     let cancel = DeadlineCancellation::default();
 
     let p1 = pos(2, 1);
-    let row_a = StreamRecord::new(Arc::new(json!({"id": 1})));
-    let row_b = StreamRecord::new(Arc::new(json!({"id": 2})));
+    let row_a = StreamRecord::new(HashMap::from([("id".to_owned(), json!(1))]));
+    let row_b = StreamRecord::new(HashMap::from([("id".to_owned(), json!(2))]));
     tx.admit_data(
         ReliableInputItem {
             position: p1.clone(),

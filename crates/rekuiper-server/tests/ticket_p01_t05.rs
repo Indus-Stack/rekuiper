@@ -71,7 +71,7 @@ fn build_state(kv: Arc<FailingKv>) -> AppState {
         RuleManager::new(stream_bus.clone()),
         stream_bus,
     );
-    state.schema_manager = Arc::new(SchemaManager::with_kv(kv));
+    state.schema_manager = SchemaManager::new_with_kv(kv);
     state
 }
 
