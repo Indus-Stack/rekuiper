@@ -1,3 +1,4 @@
+pub mod barrier_alignment;
 pub mod batching;
 pub mod dag;
 pub mod dlq;
