@@ -11,6 +11,7 @@ pub mod runtime;
 pub mod sinks;
 pub mod sources;
 pub mod state;
+pub mod time;
 pub mod windows;
 
 pub use dag::*;

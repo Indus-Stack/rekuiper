@@ -893,8 +893,11 @@
       ],
       "integrate_after": [],
       "conditional_dependencies": [],
-      "status": "proposed",
-      "evidence": []
+      "status": "component_done",
+      "evidence": [
+        "docs/implementation/tickets/P05-T01.md",
+        "crates/rekuiper-server/tests/ticket_p05_t01.rs"
+      ]
     },
     {
       "id": "P05-T02",
