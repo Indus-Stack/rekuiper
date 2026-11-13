@@ -11,7 +11,8 @@ use tokio::sync::mpsc::{channel, Receiver, Sender};
 
 use crate::comms::CommsHub;
 use crate::engine::is_rule_running;
-use crate::engine::operators::{RateLimitNode, SwitchNode, WatchdogNode};
+use crate::engine::operators::{RateLimitEnqueueOutcome, RateLimitNode, SwitchNode, WatchdogNode};
+use rekuiper_core::contracts::clock::DeadlineCancellation;
 
 /// Spawns a native DAG rule execution pipeline.
 /// Each node in `graph.nodes` runs as a decoupled async actor connected by bounded MPSC channels.
@@ -137,27 +138,121 @@ pub async fn run_graph_rule(
                             }
                         }
                         "rate_limit" => {
-                            let limiter = RateLimitNode::from_props(&node.props);
-                            while let Some(record) = rx.recv().await {
+                            let limiter = match RateLimitNode::try_from_props(&node.props) {
+                                Ok(l) => l,
+                                Err(err) => {
+                                    tracing::error!(
+                                        rule_id = %rule_id_clone,
+                                        node_id = %node_id_clone,
+                                        error = %err,
+                                        "Invalid rate_limit configuration"
+                                    );
+                                    counters.inc_exceptions(1);
+                                    return;
+                                }
+                            };
+                            let budget = limiter.default_budget();
+                            let mut buffer = limiter.into_buffer::<StreamRecord>(budget);
+                            let cancellation = DeadlineCancellation::default();
+                            loop {
                                 if !is_rule_running(&running) {
+                                    cancellation.cancel();
+                                    buffer.clear();
                                     break;
                                 }
-                                if limiter.acquire().await {
-                                    comms_hub.maybe_sample(
-                                        &rule_id_clone,
-                                        &node_id_clone,
-                                        &record.data,
-                                        record.timestamp,
-                                    );
-                                    send_to_port_targets(
-                                        &senders,
-                                        &edges,
-                                        &node_id_clone,
-                                        0,
-                                        record,
-                                    );
-                                } else {
-                                    counters.inc_filtered(1);
+                                let has_pending = !buffer.is_empty();
+                                tokio::select! {
+                                    biased;
+                                    () = cancellation.cancelled() => {
+                                        buffer.clear();
+                                        break;
+                                    }
+                                    res = buffer.wait_next_token(&cancellation), if has_pending => {
+                                        if res.is_err() {
+                                            buffer.clear();
+                                            break;
+                                        }
+                                        for record in buffer.drain_ready() {
+                                            comms_hub.maybe_sample(
+                                                &rule_id_clone,
+                                                &node_id_clone,
+                                                &record.data,
+                                                record.timestamp,
+                                            );
+                                            send_to_port_targets(
+                                                &senders,
+                                                &edges,
+                                                &node_id_clone,
+                                                0,
+                                                record,
+                                            );
+                                        }
+                                    }
+                                    rec = rx.recv() => {
+                                        let Some(record) = rec else {
+                                            while !buffer.is_empty() && is_rule_running(&running) {
+                                                if buffer.wait_next_token(&cancellation).await.is_err() {
+                                                    break;
+                                                }
+                                                for record in buffer.drain_ready() {
+                                                    comms_hub.maybe_sample(
+                                                        &rule_id_clone,
+                                                        &node_id_clone,
+                                                        &record.data,
+                                                        record.timestamp,
+                                                    );
+                                                    send_to_port_targets(
+                                                        &senders,
+                                                        &edges,
+                                                        &node_id_clone,
+                                                        0,
+                                                        record,
+                                                    );
+                                                }
+                                            }
+                                            buffer.clear();
+                                            break;
+                                        };
+                                        if !is_rule_running(&running) {
+                                            cancellation.cancel();
+                                            buffer.clear();
+                                            break;
+                                        }
+                                        let est_bytes = (record.data.len() as u64)
+                                            .saturating_mul(64)
+                                            .max(64);
+                                        match buffer.enqueue(record, est_bytes) {
+                                            RateLimitEnqueueOutcome::AdmitNow(record) => {
+                                                comms_hub.maybe_sample(
+                                                    &rule_id_clone,
+                                                    &node_id_clone,
+                                                    &record.data,
+                                                    record.timestamp,
+                                                );
+                                                send_to_port_targets(
+                                                    &senders,
+                                                    &edges,
+                                                    &node_id_clone,
+                                                    0,
+                                                    record,
+                                                );
+                                            }
+                                            RateLimitEnqueueOutcome::Buffered { .. } => {}
+                                            RateLimitEnqueueOutcome::Dropped => {
+                                                counters.inc_filtered(1);
+                                            }
+                                            RateLimitEnqueueOutcome::OverflowError(msg) => {
+                                                tracing::warn!(
+                                                    rule_id = %rule_id_clone,
+                                                    node_id = %node_id_clone,
+                                                    error = %msg,
+                                                    "rate_limit buffer overflow"
+                                                );
+                                                counters.inc_exceptions(1);
+                                                counters.inc_filtered(1);
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }

@@ -411,8 +411,14 @@
       ],
       "integrate_after": [],
       "conditional_dependencies": [],
-      "status": "proposed",
-      "evidence": []
+      "status": "component_done",
+      "evidence": [
+        "crates/rekuiper-server/src/engine/operators.rs",
+        "crates/rekuiper-server/src/engine/dag.rs",
+        "crates/rekuiper-server/tests/ticket_p02_t04.rs",
+        "docs/implementation/tickets/P02-T04.md",
+        "docs/en_US/reliability/durable_execution.md"
+      ]
     },
     {
       "id": "P02-T05",
