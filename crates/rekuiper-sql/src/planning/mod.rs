@@ -3,6 +3,8 @@
 //! Legacy schemaless execution in [`crate::eval`] remains untouched; planning
 //! types are opt-in and enforce conservative defaults for unknown functions.
 
+pub mod capabilities;
 pub mod types;
 
+pub use capabilities::*;
 pub use types::*;

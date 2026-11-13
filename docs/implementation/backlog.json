@@ -229,8 +229,10 @@
       ],
       "integrate_after": [],
       "conditional_dependencies": [],
-      "status": "proposed",
-      "evidence": []
+      "status": "component_done",
+      "evidence": [
+        "docs/implementation/tickets/P01-T03.md"
+      ]
     },
     {
       "id": "P01-T04",
