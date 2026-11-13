@@ -180,7 +180,8 @@ impl ReliableSqliteStore {
             "INSERT OR IGNORE INTO reliable_schema_meta (version) VALUES (1)",
             "CREATE TABLE IF NOT EXISTS reliable_generations (
                 rule_id TEXT PRIMARY KEY,
-                generation INTEGER NOT NULL
+                generation INTEGER NOT NULL,
+                revoked INTEGER NOT NULL DEFAULT 0
             )",
             "CREATE TABLE IF NOT EXISTS reliable_checkpoints (
                 rule_id TEXT NOT NULL,
@@ -265,27 +266,30 @@ impl ReliableSqliteStore {
         let gen_i64 = i64::try_from(incoming_gen.0)
             .map_err(|_| CheckpointError::StorageFailure("generation overflow".to_owned()))?;
 
-        let existing: Option<(i64,)> =
-            sqlx::query_as("SELECT generation FROM reliable_generations WHERE rule_id = ?")
-                .bind(&rule_id)
-                .fetch_optional(&mut *tx)
-                .await
-                .map_err(|e| CheckpointError::StorageFailure(e.to_string()))?;
+        let existing: Option<(i64, i64)> = sqlx::query_as(
+            "SELECT generation, revoked FROM reliable_generations WHERE rule_id = ?",
+        )
+        .bind(&rule_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|e| CheckpointError::StorageFailure(e.to_string()))?;
 
-        if let Some((existing_gen,)) = existing {
+        if let Some((existing_gen, revoked)) = existing {
             let existing_gen_u64 = u64::try_from(existing_gen)
                 .map_err(|_| CheckpointError::StorageFailure("corrupt generation".to_owned()))?;
-            if incoming_gen.0 < existing_gen_u64 {
+            if incoming_gen.0 < existing_gen_u64
+                || (revoked != 0 && incoming_gen.0 == existing_gen_u64)
+            {
                 return Err(CheckpointError::GenerationMismatch {
-                    expected: Generation(existing_gen_u64),
+                    expected: Generation(existing_gen_u64.saturating_add(u64::from(revoked != 0))),
                     actual: incoming_gen,
                 });
             }
         }
 
         sqlx::query(
-            "INSERT INTO reliable_generations (rule_id, generation) VALUES (?, ?)
-             ON CONFLICT(rule_id) DO UPDATE SET generation = excluded.generation",
+            "INSERT INTO reliable_generations (rule_id, generation, revoked) VALUES (?, ?, 0)
+             ON CONFLICT(rule_id) DO UPDATE SET generation = excluded.generation, revoked = 0",
         )
         .bind(&rule_id)
         .bind(gen_i64)

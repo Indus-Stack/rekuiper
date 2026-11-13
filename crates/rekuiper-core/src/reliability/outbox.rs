@@ -129,18 +129,19 @@ impl<'a> SqliteOutbox<'a> {
             .map_err(|_| OutboxError::Storage("generation overflow".to_owned()))?;
 
         // 1. Generation fencing.
-        let existing_gen: Option<(i64,)> =
-            sqlx::query_as("SELECT generation FROM reliable_generations WHERE rule_id = ?")
-                .bind(&rule_id)
-                .fetch_optional(&mut *tx)
-                .await
-                .map_err(|e| OutboxError::Storage(e.to_string()))?;
-        if let Some((g,)) = existing_gen {
+        let existing_gen: Option<(i64, i64)> = sqlx::query_as(
+            "SELECT generation, revoked FROM reliable_generations WHERE rule_id = ?",
+        )
+        .bind(&rule_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|e| OutboxError::Storage(e.to_string()))?;
+        if let Some((g, revoked)) = existing_gen {
             let g_u64 = u64::try_from(g).unwrap_or(0);
-            if incoming_gen.0 < g_u64 {
+            if incoming_gen.0 < g_u64 || (revoked != 0 && incoming_gen.0 == g_u64) {
                 return Err(OutboxError::Checkpoint(
                     CheckpointError::GenerationMismatch {
-                        expected: Generation(g_u64),
+                        expected: Generation(g_u64.saturating_add(u64::from(revoked != 0))),
                         actual: incoming_gen,
                     },
                 ));
@@ -181,8 +182,8 @@ impl<'a> SqliteOutbox<'a> {
 
         // 3. Persist generation, checkpoint metadata, positions, and participant state.
         sqlx::query(
-            "INSERT INTO reliable_generations (rule_id, generation) VALUES (?, ?)
-             ON CONFLICT(rule_id) DO UPDATE SET generation = excluded.generation",
+            "INSERT INTO reliable_generations (rule_id, generation, revoked) VALUES (?, ?, 0)
+             ON CONFLICT(rule_id) DO UPDATE SET generation = excluded.generation, revoked = 0",
         )
         .bind(&rule_id)
         .bind(gen_i64)
