@@ -6345,7 +6345,9 @@ async fn test_rule_input_validation() {
         .unwrap();
     assert_eq!(resp.status(), reqwest::StatusCode::OK);
     let valid: serde_json::Value = resp.json().await.unwrap();
-    assert_eq!(valid, json!({"sources": ["vstream"], "valid": true}));
+    assert_eq!(valid["valid"], json!(true));
+    assert_eq!(valid["sources"], json!(["vstream"]));
+    assert_eq!(valid["effective_guarantees"]["delivery"], json!("best_effort"));
 
     // T20: simulations without (parseable) SELECT SQL are rejected.
     for body in [
