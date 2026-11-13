@@ -98,4 +98,3 @@ async fn cancellation_oversize_shared_bytes_and_double_release_are_safe() {
     assert_eq!(final_usage.total_logical_bytes(), 0);
     assert_eq!(final_usage.observed_physical_bytes, 0);
 }
-

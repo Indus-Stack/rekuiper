@@ -118,7 +118,10 @@ async fn outbox_dispatch_preserves_order_resends_on_restart_and_handles_dlq() {
         payloads: BTreeMap::new(),
     };
     outbox
-        .commit_state_and_enqueue(envelope, vec![e1.clone(), e2.clone(), e3.clone(), e4.clone()])
+        .commit_state_and_enqueue(
+            envelope,
+            vec![e1.clone(), e2.clone(), e3.clone(), e4.clone()],
+        )
         .await
         .expect("enqueue batch");
 

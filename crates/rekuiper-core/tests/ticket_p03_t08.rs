@@ -148,4 +148,3 @@ async fn transactional_outbox_deduplicates_enforces_capacity_and_preserves_actio
     assert_eq!(rep2.inserted, 0);
     assert_eq!(rep2.deduplicated, 1);
 }
-

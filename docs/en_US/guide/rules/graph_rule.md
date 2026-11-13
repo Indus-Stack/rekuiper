@@ -426,3 +426,32 @@ When `isAgg` is `false`, the node accepts a single record and returns a single r
    }
    ```
 
+#### rate_limit
+
+Limits record throughput with a token bucket and optional bounded FIFO buffering.
+
+Properties:
+- `rate` (or `limit`, `rate_limit`): Allowed emission rate in records per second. Must be finite and greater than `0` (default `100.0`).
+- `burst`: Maximum token bucket burst capacity. Must be finite and at least `1.0` (default `max(rate, 1.0)`).
+- `strategy`: Action when no token is available: `drop` (default) drops excess records, and `buffer` queues them in a bounded FIFO buffer.
+- `max_buffer` (or `maxBuffer`): Maximum queued record count when `strategy` is `buffer`. Must be at least `1` (default `1024`).
+- `max_buffer_bytes` (or `maxBufferBytes`): Maximum queued payload bytes when `strategy` is `buffer`. Must be at least `1` (default `max_buffer * 65536`).
+- `overflow_policy` (or `overflowPolicy`): Action when the buffer or memory budget is full: `drop_newest` (default, or `dropNewest`), `drop_oldest` (`dropOldest`), or `fail` (`error`, `reject`).
+
+Example bounded FIFO rate limiter:
+
+```json
+{
+  "type": "operator",
+  "nodeType": "rate_limit",
+  "props": {
+    "rate": 50.0,
+    "burst": 10.0,
+    "strategy": "buffer",
+    "max_buffer": 256,
+    "overflow_policy": "drop_oldest"
+  }
+}
+```
+
+

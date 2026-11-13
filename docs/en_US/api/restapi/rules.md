@@ -20,7 +20,7 @@ The rekuiper REST API manages rule lifecycles. You can create, inspect, validate
 
 ## Create a Rule
 
-Use this endpoint to create and start a rule from a JSON definition:
+Use this endpoint to create and start a rule from a JSON definition. The server runs typed-plan preflight checks before starting rule operators and returns `400 Bad Request` with `diagnostics` and `limiting_component` if reliable options conflict with source or action capabilities:
 
 ```http
 POST http://localhost:9081/rules
@@ -273,9 +273,11 @@ Request payload:
 ```
 
 HTTP status codes:
-- `200 OK`: Rule definition is valid.
-- `400 Bad Request`: Request body format is invalid.
-- `422 Unprocessable Entity`: Rule validation failed.
+- `200 OK`: Rule definition is valid. Returns `valid`, `sources`, and for SQL rules returns the redacted `plan` (`TypedPlanReport`), `effective_guarantees`, `limiting_component`, and `diagnostics`.
+- `400 Bad Request`: Request body, SQL syntax, graph definition, or typed capability plan is invalid. Typed plan failures include `error`, `message`, `diagnostics`, `effective_guarantees`, and `limiting_component`.
+- `422 Unprocessable Entity`: Rule validation failed because required actions or definitions are missing.
+
+![Shared Typed Plan Validation and Secret Redaction](/diagrams/typed_plan_validation.svg)
 
 ## Query Rule Execution Plan
 
@@ -432,23 +434,45 @@ Response sample (HTTP 200 OK):
 
 ```json
 {
-  "ruleId": "rule1",
+  "rule": "rule1",
+  "source": "demo",
+  "projection": ["device_id", "temperature", "humidity"],
+  "filter": "temperature > 20.0",
+  "window": null,
+  "groupBy": [],
+  "having": null,
+  "actions": ["mqtt"],
   "plan": {
-    "source": {
-      "type": "mqtt",
-      "topic": "demo"
-    },
-    "filter": "temperature > 20.0",
-    "projection": ["device_id", "temperature", "humidity"],
-    "window": null,
-    "sinks": [
+    "rule_id": "rule1",
+    "valid": true,
+    "profile": "lightweight",
+    "sources": ["demo"],
+    "actions": ["mqtt"],
+    "redacted_options": {},
+    "redacted_actions": [
       {
-        "type": "log"
+        "mqtt": {
+          "server": "tcp://[REDACTED]@broker:1883",
+          "topic": "sensors/temp",
+          "password": "[REDACTED]"
+        }
       }
-    ]
-  }
+    ],
+    "effective_guarantees": {
+      "delivery": "best_effort",
+      "limiting_component": "source:demo",
+      "lossy_inputs": [],
+      "stateful": false
+    },
+    "diagnostics": []
+  },
+  "limiting_component": "source:demo",
+  "diagnostics": []
 }
 ```
+
+> [!NOTE]
+> Credentials in `options` and `actions` (such as passwords, tokens, API keys, and URL userinfo) are replaced with `[REDACTED]` in `plan.redacted_options` and `plan.redacted_actions`.
 
 > [!NOTE]
 > **Compatibility Note: Structured Execution Plan vs Raw ASCII Dump**
