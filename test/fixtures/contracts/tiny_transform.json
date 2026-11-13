@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "name": "tiny_transform",
+  "description": "Stateless filter and projection with preserved OTLP nanosecond precision",
+  "initial_wall_millis": 1700000000000,
+  "catalog": {
+    "streams": [
+      {
+        "id": "sensors",
+        "ddl": "CREATE STREAM sensors (device STRING, temp FLOAT) WITH (TYPE=\"mqtt\")"
+      }
+    ],
+    "rules": [
+      {
+        "id": "hot_alert",
+        "sql": "SELECT device, temp * 1.8 + 32.0 AS temp_f FROM sensors WHERE temp > 30.0",
+        "actions": ["capture_sink"]
+      }
+    ]
+  },
+  "steps": [
+    {
+      "kind": "input",
+      "source_id": "sensors",
+      "partition_id": "p0",
+      "event_time": { "unit": "otlp_nanos", "value": 1700000000123456789 },
+      "metadata": { "topic": "factory/line1" },
+      "payload": { "device": "d1", "temp": 25.0 }
+    },
+    {
+      "kind": "input",
+      "source_id": "sensors",
+      "partition_id": "p0",
+      "event_time": { "unit": "otlp_nanos", "value": 1700000001987654321 },
+      "metadata": { "topic": "factory/line1" },
+      "payload": { "device": "d2", "temp": 35.0 }
+    },
+    {
+      "kind": "end_of_input",
+      "edge": 0
+    }
+  ],
+  "expected": {
+    "rows": [
+      {
+        "rule_id": "hot_alert",
+        "payload": { "device": "d2", "temp_f": 95.0 }
+      }
+    ],
+    "effects": [
+      {
+        "rule_id": "hot_alert",
+        "action_id": "capture_sink",
+        "payload": { "device": "d2", "temp_f": 95.0 }
+      }
+    ]
+  }
+}
+

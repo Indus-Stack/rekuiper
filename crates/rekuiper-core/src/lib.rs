@@ -3,7 +3,9 @@ pub mod kv;
 pub mod manager;
 pub mod model;
 pub mod plugin;
+pub mod reliability;
 pub mod runtime;
+pub mod testing;
 pub mod wasm;
 
 pub use contracts::*;

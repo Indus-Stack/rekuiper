@@ -48,8 +48,10 @@
       ],
       "integrate_after": [],
       "conditional_dependencies": [],
-      "status": "proposed",
-      "evidence": []
+      "status": "component_done",
+      "evidence": [
+        "docs/implementation/tickets/C04.md"
+      ]
     },
     {
       "id": "C05",
@@ -60,8 +62,10 @@
       ],
       "integrate_after": [],
       "conditional_dependencies": [],
-      "status": "proposed",
-      "evidence": []
+      "status": "component_done",
+      "evidence": [
+        "docs/implementation/tickets/C05.md"
+      ]
     },
     {
       "id": "C06",
@@ -81,8 +85,10 @@
       ],
       "integrate_after": [],
       "conditional_dependencies": [],
-      "status": "proposed",
-      "evidence": []
+      "status": "component_done",
+      "evidence": [
+        "docs/implementation/tickets/C07.md"
+      ]
     },
     {
       "id": "C08",
@@ -453,8 +459,10 @@
       ],
       "integrate_after": [],
       "conditional_dependencies": [],
-      "status": "proposed",
-      "evidence": []
+      "status": "component_done",
+      "evidence": [
+        "docs/implementation/tickets/P03-T01.md"
+      ]
     },
     {
       "id": "P03-T02",
@@ -464,8 +472,10 @@
       ],
       "integrate_after": [],
       "conditional_dependencies": [],
-      "status": "proposed",
-      "evidence": []
+      "status": "component_done",
+      "evidence": [
+        "docs/implementation/tickets/P03-T02.md"
+      ]
     },
     {
       "id": "P03-T03",
@@ -489,8 +499,10 @@
       ],
       "integrate_after": [],
       "conditional_dependencies": [],
-      "status": "proposed",
-      "evidence": []
+      "status": "component_done",
+      "evidence": [
+        "docs/implementation/tickets/P03-T04.md"
+      ]
     },
     {
       "id": "P03-T05",

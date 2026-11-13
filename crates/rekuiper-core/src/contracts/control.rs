@@ -1,14 +1,17 @@
 //! Data and controls that share the reliable execution queue.
 
 use super::identity::{CheckpointId, Generation};
+use serde::{Deserialize, Serialize};
 
 /// Identity assigned to a directed edge within one plan.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
 pub struct EdgeId(pub u64);
 
 /// Unix event time with its declared precision. OTLP's unsigned nanoseconds
 /// remain distinct from milliseconds and retain their full range.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "unit", content = "value", rename_all = "snake_case")]
 pub enum EventTimestamp {
     Seconds(i64),
     Millis(i64),
