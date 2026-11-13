@@ -77,7 +77,7 @@ impl WatermarkStateMachine {
             .active_inputs
             .iter()
             .filter(|s| !self.closed_inputs.contains(*s))
-            .all(|s| self.stream_max_ts.contains_key(*s));
+            .all(|s| self.stream_max_ts.contains_key(s));
 
         if !all_active_seen {
             return None;

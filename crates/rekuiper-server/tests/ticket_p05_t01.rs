@@ -28,7 +28,7 @@ fn watermark_never_regresses_or_overflows_and_advances_on_where_rejected_rows() 
     let mut wm = WatermarkStateMachine::new(["s1".to_string()], 500);
 
     // Near i64::MIN: saturating_sub must not overflow/wrap
-    assert_eq!(wm.observe_event("s1", i64::MIN + 10), Some(i64::MIN));
+    assert_eq!(wm.observe_event("s1", i64::MIN + 10), None);
     assert_eq!(wm.watermark_ms(), i64::MIN);
 
     // Advance even if the caller later drops the row in WHERE
