@@ -106,6 +106,43 @@ impl SubscriberFilter {
 /// applies beyond this; records are never silently overwritten.
 pub const STREAM_QUEUE_CAPACITY: usize = 4096;
 
+/// Admission policy when a stream subscriber's bounded buffer is full.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BufferFullPolicy {
+    #[default]
+    Block,
+    DropOldest,
+}
+
+/// Resolves `BUFFER_FULL_POLICY` once from stream/DDL options.
+/// Missing policy defaults to `BufferFullPolicy::Block`.
+pub fn resolve_buffer_full_policy(
+    options: &std::collections::HashMap<String, String>,
+) -> Result<BufferFullPolicy, String> {
+    for (k, v) in options {
+        if k.eq_ignore_ascii_case("buffer_full_policy") {
+            if v.eq_ignore_ascii_case("block") {
+                return Ok(BufferFullPolicy::Block);
+            }
+            if v.eq_ignore_ascii_case("dropOldest") {
+                return Ok(BufferFullPolicy::DropOldest);
+            }
+            return Err(format!(
+                "Invalid buffer_full_policy: '{}', must be 'block' or 'dropOldest'",
+                v
+            ));
+        }
+    }
+    Ok(BufferFullPolicy::Block)
+}
+
+/// Low-cardinality per-stream buffer depth and drop counters.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct StreamBufferMetrics {
+    pub depth: usize,
+    pub dropped: u64,
+}
+
 /// Upper bound on records accepted in one HTTP ingestion request.
 pub const MAX_HTTP_BATCH_RECORDS: usize = 10_000;
 
@@ -362,6 +399,11 @@ impl StreamBus {
         topic.lossy_senders.write().push((tx, Some(filter)));
         topic.has_lossy.store(true, Ordering::Release);
         rx
+    }
+
+    /// Returns low-cardinality depth and drop counts for `stream_name`.
+    pub fn stream_buffer_metrics(&self, stream_name: &str) -> StreamBufferMetrics {
+        self.get_or_create(stream_name).buffer_metrics()
     }
 
     /// Records not delivered because their subscriber closed after the
@@ -865,6 +907,28 @@ impl StreamSender {
             .map(|(s, _)| STREAM_QUEUE_CAPACITY.saturating_sub(s.capacity()))
             .max()
             .unwrap_or(0)
+    }
+
+    pub fn buffer_metrics(&self) -> StreamBufferMetrics {
+        let block_depth = self.backlog_hint();
+        if !self.topic_ref.has_lossy.load(Ordering::Acquire) {
+            return StreamBufferMetrics {
+                depth: block_depth,
+                dropped: 0,
+            };
+        }
+        let lossy = self.topic_ref.lossy_senders.read();
+        let mut lossy_depth = 0usize;
+        let mut dropped = 0u64;
+        for (sender, _) in lossy.iter() {
+            let m = sender.metrics();
+            lossy_depth = lossy_depth.max(m.len);
+            dropped = dropped.saturating_add(m.evicted_total);
+        }
+        StreamBufferMetrics {
+            depth: block_depth.max(lossy_depth),
+            dropped,
+        }
     }
 }
 

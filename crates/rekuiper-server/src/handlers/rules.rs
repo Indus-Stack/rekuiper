@@ -882,34 +882,77 @@ pub fn reject_invalid_rule(
         }
     }
     // Check multi-stream BUFFER_FULL_POLICY consistency across joined streams
-    let mut stream_policies: Vec<(&str, String)> = Vec::new();
-    let get_policy = |stream: &rekuiper_core::model::StreamDefinition| -> Option<String> {
-        stream.options.iter().find_map(|(k, v)| {
+    // and reject lossy policies when the rule opts into reliable execution.
+    let mut stream_policies: Vec<(&str, rekuiper_core::BufferFullPolicy, String)> = Vec::new();
+    let get_policy = |stream: &rekuiper_core::model::StreamDefinition| -> Option<(rekuiper_core::BufferFullPolicy, String)> {
+        let raw = stream.options.iter().find_map(|(k, v)| {
             if k.eq_ignore_ascii_case("buffer_full_policy") {
                 Some(v.clone())
             } else {
                 None
             }
+        });
+        raw.map(|v| {
+            let parsed = rekuiper_core::resolve_buffer_full_policy(&stream.options)
+                .unwrap_or(rekuiper_core::BufferFullPolicy::Block);
+            (parsed, v)
         })
     };
 
     if let Some(s) = state.stream_manager.get_stream(&stmt.from) {
-        if let Some(pol) = get_policy(&s) {
-            stream_policies.push((&stmt.from, pol));
+        if let Some((pol, raw)) = get_policy(&s) {
+            stream_policies.push((&stmt.from, pol, raw));
         }
     }
     for j in &stmt.joins {
         if let Some(s) = state.stream_manager.get_stream(&j.target) {
-            if let Some(pol) = get_policy(&s) {
-                stream_policies.push((&j.target, pol));
+            if let Some((pol, raw)) = get_policy(&s) {
+                stream_policies.push((&j.target, pol, raw));
             }
         }
     }
 
+    let is_reliable_plan = options.is_some_and(|opts| {
+        opts.iter().any(|(k, v)| {
+            ((k.eq_ignore_ascii_case("deliveryGuarantee")
+                || k.eq_ignore_ascii_case("delivery_guarantee")
+                || k.eq_ignore_ascii_case("reliability"))
+                && matches!(
+                    v.as_str().map(|s| s.to_ascii_lowercase()).as_deref(),
+                    Some("at_least_once" | "durable" | "reliable")
+                ))
+                || ((k.eq_ignore_ascii_case("checkpointEnabled")
+                    || k.eq_ignore_ascii_case("checkpoint_enabled"))
+                    && (v.as_bool() == Some(true)
+                        || v.as_str().is_some_and(|s| s.eq_ignore_ascii_case("true"))))
+        })
+    });
+
+    if is_reliable_plan {
+        if let Some((stream_name, _, _)) = stream_policies
+            .iter()
+            .find(|(_, pol, _)| *pol == rekuiper_core::BufferFullPolicy::DropOldest)
+        {
+            return Some(
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({
+                        "error": 1000,
+                        "message": format!(
+                            "reliable plan cannot use lossy BUFFER_FULL_POLICY 'dropOldest' on stream '{}'",
+                            stream_name
+                        )
+                    })),
+                )
+                    .into_response(),
+            );
+        }
+    }
+
     if stream_policies.len() > 1 {
-        let (first_name, ref first_policy) = stream_policies[0];
-        for (stream_name, policy) in &stream_policies[1..] {
-            if !policy.eq_ignore_ascii_case(first_policy) {
+        let (first_name, first_policy, ref first_raw) = stream_policies[0];
+        for (stream_name, policy, raw) in &stream_policies[1..] {
+            if *policy != first_policy {
                 return Some(
                     (
                         StatusCode::BAD_REQUEST,
@@ -917,7 +960,7 @@ pub fn reject_invalid_rule(
                             "error": 1000,
                             "message": format!(
                                 "conflicting BUFFER_FULL_POLICY in joined streams: stream '{}' uses '{}', but stream '{}' uses '{}'",
-                                first_name, first_policy, stream_name, policy
+                                first_name, first_raw, stream_name, raw
                             )
                         })),
                     )

@@ -523,6 +523,17 @@ pub async fn prometheus_metrics_handler(State(state): State<AppState>) -> impl I
     out.push_str(&src_exceptions_buf);
     out.push_str(&src_buffer_len_buf);
     out.push_str(&src_conn_status_buf);
+    for src in &known_sources {
+        let bm = state.stream_bus.stream_buffer_metrics(src);
+        out.push_str(&format!(
+            "kuiper_stream_buffer_depth{{stream=\"{}\"}} {}\n",
+            src, bm.depth
+        ));
+        out.push_str(&format!(
+            "kuiper_stream_buffer_dropped_total{{stream=\"{}\"}} {}\n",
+            src, bm.dropped
+        ));
+    }
     out.push_str(&src_latency_buf);
     out.push_str(&src_latency_hist_buf);
 

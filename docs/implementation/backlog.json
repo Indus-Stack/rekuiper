@@ -396,8 +396,11 @@
       ],
       "integrate_after": [],
       "conditional_dependencies": [],
-      "status": "proposed",
-      "evidence": []
+      "status": "component_done",
+      "evidence": [
+        "docs/implementation/tickets/P02-T03.md",
+        "crates/rekuiper-server/tests/ticket_p02_t03.rs"
+      ]
     },
     {
       "id": "P02-T04",
