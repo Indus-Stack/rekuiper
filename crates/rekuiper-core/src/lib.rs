@@ -4,6 +4,7 @@ pub mod manager;
 pub mod model;
 pub mod plugin;
 pub mod reliability;
+pub mod resources;
 pub mod runtime;
 pub mod testing;
 pub mod wasm;
