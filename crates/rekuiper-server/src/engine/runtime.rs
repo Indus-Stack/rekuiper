@@ -609,3 +609,307 @@ pub(crate) async fn run_stateless_rule(
         }
     }
 }
+
+/// Opt-in reliable single-source SQL checkpoint recovery (P03-T07).
+///
+/// Kept completely separate from the default `run_rule_loop` hotpath so
+/// non-reliable rules incur zero overhead.
+pub mod reliable {
+    use crate::engine::batching::{ActionBatchAssembler, BatchConfig, BatchItem, ItemOutcome};
+    use crate::engine::retry::{execute_with_retry, RetryPolicy};
+    use rekuiper_connectors::kafka::{
+        KafkaPositionCodec, KafkaPreparedMessage, KafkaReliableError, KafkaReliablePartitionReader,
+    };
+    use rekuiper_core::contracts::{
+        CheckpointError, CheckpointId, CheckpointStore, Clock, DeadlineCancellation, EffectOutcome,
+        OutboxBoundary, PlanIdentity, SourcePartition, StateError, StateParticipant,
+    };
+    use rekuiper_core::model::StreamRecord;
+    use rekuiper_core::reliability::{CheckpointCoordinator, CoordinatorError};
+    use rekuiper_sql::ast::WindowDef;
+    use rekuiper_sql::{Evaluator, SelectStmt};
+    use serde_json::Value;
+    use std::time::Duration;
+
+    /// Exact delivery guarantee exposed by the single-source reliable engine.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum ReliableDeliveryGuarantee {
+        AtLeastOnce,
+    }
+
+    /// Errors returned during reliable plan validation, restore, or checkpointing.
+    #[derive(Debug)]
+    pub enum ReliableRuntimeError {
+        UnsupportedShape(&'static str),
+        Kafka(KafkaReliableError),
+        State(StateError),
+        Checkpoint(CheckpointError),
+        Coordinator(CoordinatorError),
+        SinkRejected(String),
+    }
+
+    impl std::fmt::Display for ReliableRuntimeError {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            match self {
+                Self::UnsupportedShape(msg) => write!(f, "unsupported reliable plan shape: {msg}"),
+                Self::Kafka(e) => write!(f, "kafka reliable error: {e}"),
+                Self::State(e) => write!(f, "state error: {e}"),
+                Self::Checkpoint(e) => write!(f, "checkpoint error: {e}"),
+                Self::Coordinator(e) => write!(f, "coordinator error: {e}"),
+                Self::SinkRejected(msg) => write!(f, "sink rejected output: {msg}"),
+            }
+        }
+    }
+
+    impl std::error::Error for ReliableRuntimeError {}
+
+    impl From<KafkaReliableError> for ReliableRuntimeError {
+        fn from(v: KafkaReliableError) -> Self {
+            Self::Kafka(v)
+        }
+    }
+
+    impl From<StateError> for ReliableRuntimeError {
+        fn from(v: StateError) -> Self {
+            Self::State(v)
+        }
+    }
+
+    impl From<CheckpointError> for ReliableRuntimeError {
+        fn from(v: CheckpointError) -> Self {
+            Self::Checkpoint(v)
+        }
+    }
+
+    impl From<CoordinatorError> for ReliableRuntimeError {
+        fn from(v: CoordinatorError) -> Self {
+            Self::Coordinator(v)
+        }
+    }
+
+    /// Validates that `stmt` is eligible for single-source reliable execution
+    /// (single Kafka partition source; analytic, count, or tumbling window only;
+    /// no joins or set operations).
+    pub fn validate_reliable_single_source_plan(
+        stmt: &SelectStmt,
+    ) -> Result<ReliableDeliveryGuarantee, ReliableRuntimeError> {
+        if !stmt.joins.is_empty() {
+            return Err(ReliableRuntimeError::UnsupportedShape(
+                "JOIN plans are not supported in single-source reliable mode",
+            ));
+        }
+        if stmt.set_op.is_some() {
+            return Err(ReliableRuntimeError::UnsupportedShape(
+                "UNION/set-op plans are not supported in single-source reliable mode",
+            ));
+        }
+        if let Some(ref win) = stmt.window {
+            match win {
+                WindowDef::TumblingTime { .. } | WindowDef::Count { .. } => {}
+                _ => {
+                    return Err(ReliableRuntimeError::UnsupportedShape(
+                        "only tumbling, count, or analytic (windowless) plans are supported",
+                    ));
+                }
+            }
+        }
+        Ok(ReliableDeliveryGuarantee::AtLeastOnce)
+    }
+
+    /// Observable checkpoint health and guarantee status for a reliable rule.
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct ReliableCheckpointStatus {
+        pub guarantee: ReliableDeliveryGuarantee,
+        pub last_checkpoint_id: Option<CheckpointId>,
+        pub last_checkpoint_wall_millis: Option<i64>,
+        pub last_failure: Option<String>,
+        pub restored_next_offset: Option<i64>,
+    }
+
+    impl ReliableCheckpointStatus {
+        pub fn new(guarantee: ReliableDeliveryGuarantee) -> Self {
+            Self {
+                guarantee,
+                last_checkpoint_id: None,
+                last_checkpoint_wall_millis: None,
+                last_failure: None,
+                restored_next_offset: None,
+            }
+        }
+
+        pub fn checkpoint_age_ms(&self, now_wall_millis: i64) -> Option<u64> {
+            self.last_checkpoint_wall_millis
+                .map(|ts| u64::try_from(now_wall_millis.saturating_sub(ts)).unwrap_or(0))
+        }
+    }
+
+    /// Sink adapter used by [`ReliableSingleSourceRunner`] to deliver flushed
+    /// output batches before checkpoint commit.
+    #[allow(async_fn_in_trait)]
+    pub trait ReliableSinkAdapter: Send + Sync {
+        async fn deliver_batch(&self, records: &[Value]) -> EffectOutcome;
+    }
+
+    /// Coordinates restore-before-intake, evaluation, output flush, and
+    /// checkpoint commit for a single Kafka partition + SQL plan.
+    pub struct ReliableSingleSourceRunner {
+        identity: PlanIdentity,
+        partition: SourcePartition,
+        stmt: SelectStmt,
+        coordinator: CheckpointCoordinator,
+        next_checkpoint_id: u64,
+        status: ReliableCheckpointStatus,
+        retry_policy: RetryPolicy,
+    }
+
+    impl ReliableSingleSourceRunner {
+        pub fn new(
+            identity: PlanIdentity,
+            partition: SourcePartition,
+            stmt: SelectStmt,
+            retry_policy: RetryPolicy,
+        ) -> Result<Self, ReliableRuntimeError> {
+            let guarantee = validate_reliable_single_source_plan(&stmt)?;
+            let coordinator = CheckpointCoordinator::new(identity.clone());
+            Ok(Self {
+                identity,
+                partition,
+                stmt,
+                coordinator,
+                next_checkpoint_id: 1,
+                status: ReliableCheckpointStatus::new(guarantee),
+                retry_policy,
+            })
+        }
+
+        pub fn status(&self) -> &ReliableCheckpointStatus {
+            &self.status
+        }
+
+        /// Restores participant state and Kafka next-offset BEFORE intake begins.
+        pub async fn restore_before_intake(
+            &mut self,
+            store: &dyn CheckpointStore,
+            participants: &mut [&mut dyn StateParticipant],
+        ) -> Result<Option<i64>, ReliableRuntimeError> {
+            let Some(envelope) = store.load_latest(&self.identity.rule_id).await? else {
+                return Ok(None);
+            };
+            for participant in participants.iter_mut() {
+                let op_id = participant.operator_id().clone();
+                if let Some(snapshot) = envelope.payloads.get(&op_id) {
+                    participant.restore_snapshot(snapshot)?;
+                }
+            }
+            let mut restored_offset = None;
+            for pos in &envelope.metadata.source_positions {
+                if pos.partition == self.partition {
+                    restored_offset = Some(KafkaPositionCodec::decode_next_offset(&pos.cursor)?);
+                }
+            }
+            self.next_checkpoint_id = envelope.metadata.checkpoint_id.0.saturating_add(1);
+            self.status.last_checkpoint_id = Some(envelope.metadata.checkpoint_id);
+            self.status.last_checkpoint_wall_millis = Some(envelope.metadata.created_wall_millis);
+            self.status.restored_next_offset = restored_offset;
+            Ok(restored_offset)
+        }
+
+        /// Processes one prepared Kafka message (single or multirecord JSON array),
+        /// flushes output through `sink` BEFORE committing the checkpoint, and
+        /// advances `reader` only after `store` commit succeeds.
+        #[allow(clippy::too_many_arguments)]
+        pub async fn process_and_checkpoint<S: ReliableSinkAdapter>(
+            &mut self,
+            reader: &mut KafkaReliablePartitionReader,
+            prepared: &KafkaPreparedMessage,
+            participants: &[&dyn StateParticipant],
+            sink: &S,
+            store: &dyn CheckpointStore,
+            clock: &dyn Clock,
+            cancellation: &DeadlineCancellation,
+        ) -> Result<CheckpointId, ReliableRuntimeError> {
+            let records: Vec<StreamRecord> = prepared.decode(reader.tombstone_policy())?;
+            let mut assembler = ActionBatchAssembler::new(BatchConfig::legacy(1024, None));
+            let now_elapsed = clock.now().elapsed;
+
+            for (idx, rec) in records.into_iter().enumerate() {
+                if let Some(projected) = Evaluator::eval_select(&self.stmt, &rec.data) {
+                    let val = Value::Object(projected.into_iter().collect());
+                    let bytes = serde_json::to_vec(&val).map(|b| b.len()).unwrap_or(0);
+                    let _ = assembler.try_push(
+                        BatchItem::new(idx as u64, bytes, val),
+                        now_elapsed,
+                        None,
+                    );
+                }
+            }
+
+            let cp_id = CheckpointId(self.next_checkpoint_id);
+            let source_positions = vec![prepared.position.clone()];
+            let retry_policy = self.retry_policy.clone();
+
+            let commit_res = self
+                .coordinator
+                .run_checkpoint(
+                    cp_id,
+                    self.identity.generation,
+                    participants,
+                    source_positions,
+                    OutboxBoundary::default(),
+                    clock,
+                    Duration::from_secs(30),
+                    cancellation,
+                    || async {
+                        if !assembler.is_empty() {
+                            let batch = assembler.take_batch();
+                            let payloads: Vec<Value> =
+                                batch.iter().map(|item| item.payload.clone()).collect();
+                            let report = execute_with_retry(
+                                &retry_policy,
+                                clock,
+                                cancellation,
+                                None,
+                                |_| sink.deliver_batch(&payloads),
+                            )
+                            .await;
+                            match report.outcome {
+                                EffectOutcome::Delivered => {
+                                    let outcomes = vec![ItemOutcome::Delivered; batch.len()];
+                                    assembler.apply_outcomes(batch, &outcomes, clock.now().elapsed);
+                                }
+                                EffectOutcome::PermanentFailure { error } => {
+                                    return Err(CoordinatorError::CheckpointFailed(
+                                        CheckpointError::StorageFailure(error.to_string()),
+                                    ));
+                                }
+                                EffectOutcome::Retryable { .. }
+                                | EffectOutcome::Ambiguous { .. } => {
+                                    return Err(CoordinatorError::TimedOut);
+                                }
+                            }
+                        }
+                        Ok(())
+                    },
+                    store,
+                )
+                .await;
+
+            match commit_res {
+                Ok(envelope) => {
+                    reader.commit_message(prepared)?;
+                    self.next_checkpoint_id = self.next_checkpoint_id.saturating_add(1);
+                    self.status.last_checkpoint_id = Some(envelope.metadata.checkpoint_id);
+                    self.status.last_checkpoint_wall_millis =
+                        Some(envelope.metadata.created_wall_millis);
+                    self.status.last_failure = None;
+                    Ok(envelope.metadata.checkpoint_id)
+                }
+                Err(err) => {
+                    let msg = err.to_string();
+                    self.status.last_failure = Some(msg);
+                    Err(ReliableRuntimeError::Coordinator(err))
+                }
+            }
+        }
+    }
+}
