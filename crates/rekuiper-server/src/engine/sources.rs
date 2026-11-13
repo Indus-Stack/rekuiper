@@ -1509,6 +1509,7 @@ pub(crate) fn resolve_kafka_source(
         partition: 0,
         key: None,
         offset_reset: "latest".to_string(),
+        next_offset: None,
     };
     if let Some(key) = def.options.get("CONF_KEY") {
         if !key.is_empty() {

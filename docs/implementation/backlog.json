@@ -430,8 +430,10 @@
       ],
       "integrate_after": [],
       "conditional_dependencies": [],
-      "status": "proposed",
-      "evidence": []
+      "status": "component_done",
+      "evidence": [
+        "docs/implementation/tickets/P02-T06.md"
+      ]
     },
     {
       "id": "P02-T07",
