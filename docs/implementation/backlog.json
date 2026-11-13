@@ -761,8 +761,12 @@
           ]
         }
       ],
-      "status": "proposed",
-      "evidence": []
+      "status": "component_done",
+      "evidence": [
+        "docs/implementation/tickets/P03-T20.md",
+        "crates/rekuiper-server/tests/qualification_harness.rs",
+        "crates/rekuiper-server/tests/ticket_p03_t20.rs"
+      ]
     },
     {
       "id": "P03-T21",
