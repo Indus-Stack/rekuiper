@@ -2,6 +2,7 @@ pub mod dag;
 pub mod dlq;
 pub mod joins;
 pub mod operators;
+pub mod reliable_input;
 pub mod runtime;
 pub mod sinks;
 pub mod sources;

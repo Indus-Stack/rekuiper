@@ -324,6 +324,16 @@ pub async fn delete_javascript_udf(
 
 // ---------------------------------------------------------------------------
 // Schema registry (`/schemas/:kind[/:name]`).
+
+fn schema_persistence_error(action: &str, err: anyhow::Error) -> Response {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(json!({
+            "message": format!("Failed to {} schema: {}", action, err)
+        })),
+    )
+        .into_response()
+}
 // ---------------------------------------------------------------------------
 
 /// Payload for registering or updating a schema; the kind always comes from
@@ -388,7 +398,9 @@ pub async fn create_schema(
         file: payload.file,
     };
     let created = def.name.clone();
-    let _ = state.schema_manager.register_schema(def).await;
+    if let Err(err) = state.schema_manager.register_schema(def).await {
+        return schema_persistence_error("persist", err);
+    }
     (
         StatusCode::CREATED,
         format!("Schema {} is created.\n", created),
@@ -462,7 +474,9 @@ pub async fn update_schema(
     if payload.file.is_some() {
         def.file = payload.file;
     }
-    let _ = state.schema_manager.register_schema(def).await;
+    if let Err(err) = state.schema_manager.register_schema(def).await {
+        return schema_persistence_error("persist", err);
+    }
     (
         StatusCode::OK,
         format!("Schema {}/{} is updated.\n", kind, name),
@@ -538,7 +552,7 @@ pub async fn upload_schema(
     } else {
         String::from_utf8_lossy(&body).into_owned()
     };
-    let _ = state
+    if let Err(err) = state
         .schema_manager
         .register_schema(SchemaDefinition {
             name: name.clone(),
@@ -546,7 +560,10 @@ pub async fn upload_schema(
             content: Some(content),
             file: None,
         })
-        .await;
+        .await
+    {
+        return schema_persistence_error("persist", err);
+    }
     (StatusCode::OK, Json(json!({ "type": kind, "name": name }))).into_response()
 }
 
@@ -569,7 +586,9 @@ pub async fn delete_schema(
         )
             .into_response();
     }
-    let _ = state.schema_manager.delete_schema(&kind, &name).await;
+    if let Err(err) = state.schema_manager.delete_schema(&kind, &name).await {
+        return schema_persistence_error("delete", err);
+    }
     (
         StatusCode::OK,
         format!("Schema {}/{} is dropped.\n", kind, name),
