@@ -62,4 +62,11 @@ Schema endpoints (`POST /schemas/:kind`, `PUT /schemas/:kind/:name`, `PUT /schem
 ## Typed SQL Planning Descriptors
 
 - **Typed Planning (`sql/planning/types.rs`, `sql/functions.rs`)**: `type_check_expr` and `FunctionDescriptorRegistry` validate known schema fields, arity, nullability, determinism, side effects, and statefulness. Unknown functions receive conservative descriptors that block unsafe rewrites and durable replay, while legacy schemaless runtime evaluation remains unchanged.
+- **Capability-Aware Plan Validation (`sql/planning/capabilities.rs`)**: `validate_plan_capabilities` checks `PlanExecutionProfile` requirements against source replay/offset, sink idempotency, state-snapshot, and ordered-barrier capabilities. Strict reliable or durable profiles fail before execution with structured `PlanDiagnosticKind` diagnostics, while default best-effort plans continue unchanged.
+
+## Opt-In Lossy Subscriber Queues and Window Snapshots
+
+- **Opt-In Lossy Subscriber FIFO (`core/resources/lossy_queue.rs`, `core/runtime.rs`)**: `lossy_channel` provides a bounded `dropOldest` ring queue for non-reliable subscribers via `subscribe_lossy` and `subscribe_lossy_filtered`. The default blocking `mpsc` fast path has zero hotpath overhead (`has_lossy: AtomicBool` guard), and `push_reliable_control` rejects control barriers and watermarks on lossy queues.
+- **Hopping and Sliding Window Snapshots (`server/engine/state/hop_slide.rs`)**: `HoppingWindowStateParticipant` and `SlidingWindowStateParticipant` capture overlapping buckets, pending triggers, watermarks, and logical deadlines with SHA-256 checksums and plan-fingerprint validation, applying `MissedDeadlinePolicy` (`FireImmediatelyInOrder` or `DropExpired`) on recovery.
+- **Session and State Window Snapshots (`server/engine/state/session_state.rs`)**: `SessionWindowStateParticipant` and `StateWindowStateParticipant` persist per-key open sessions, gap and max-duration boundaries, `on_begin` state flags, and logical deadlines without serializing `Instant` or re-evaluating historical nondeterministic predicates.
 
