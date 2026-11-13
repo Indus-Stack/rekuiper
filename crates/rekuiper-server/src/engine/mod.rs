@@ -1,3 +1,4 @@
+pub mod batching;
 pub mod dag;
 pub mod dlq;
 pub mod joins;
