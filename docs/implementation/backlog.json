@@ -242,8 +242,17 @@
       ],
       "integrate_after": [],
       "conditional_dependencies": [],
-      "status": "proposed",
-      "evidence": []
+      "status": "component_done",
+      "evidence": [
+        "crates/rekuiper-sql/src/planning/adapter.rs",
+        "crates/rekuiper-sql/src/planning/mod.rs",
+        "crates/rekuiper-server/src/handlers/rules.rs",
+        "crates/rekuiper-cli/src/lib.rs",
+        "crates/rekuiper-server/tests/ticket_p01_t04.rs",
+        "crates/rekuiper-cli/tests/ticket_p01_t04.rs",
+        "docs/implementation/tickets/P01-T04.md",
+        "docs/en_US/reliability/durable_execution.md"
+      ]
     },
     {
       "id": "P01-T05",

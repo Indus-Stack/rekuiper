@@ -194,6 +194,9 @@ pub async fn create_rule(
     if let Some(resp) = reject_invalid_rule(&state, &select_stmt, rule.options.as_ref(), false) {
         return resp;
     }
+    if let Some(resp) = reject_invalid_typed_plan(&state, &rule, &select_stmt) {
+        return resp;
+    }
 
     let rule_id = rule.id.clone();
 
@@ -1011,6 +1014,103 @@ pub fn reject_invalid_rule(
     None
 }
 
+fn stream_catalog_entry(
+    stream: &rekuiper_core::model::StreamDefinition,
+) -> rekuiper_sql::planning::StreamCatalogEntry {
+    use rekuiper_core::contracts::QualificationLevel;
+    use rekuiper_sql::planning::{ExprType, StreamCatalogEntry};
+
+    let source_type = stream
+        .options
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("type"))
+        .map(|(_, v)| v.clone());
+    let lossy_queue = rekuiper_core::resolve_buffer_full_policy(&stream.options)
+        .is_ok_and(|p| p == rekuiper_core::BufferFullPolicy::DropOldest);
+    let replayable = source_type
+        .as_deref()
+        .is_some_and(|t| t.eq_ignore_ascii_case("kafka"))
+        || stream
+            .options
+            .iter()
+            .any(|(k, v)| k.eq_ignore_ascii_case("replayable") && v.eq_ignore_ascii_case("true"));
+    let schema = stream
+        .stream_fields
+        .iter()
+        .map(|f| {
+            let ty = match f.field_type.to_ascii_lowercase().as_str() {
+                "bigint" | "int" | "integer" | "long" => ExprType::Integer,
+                "float" | "double" | "number" => ExprType::Float,
+                "string" | "varchar" | "text" => ExprType::String,
+                "boolean" | "bool" => ExprType::Boolean,
+                _ => ExprType::Any,
+            };
+            (f.name.clone(), ty)
+        })
+        .collect();
+
+    StreamCatalogEntry {
+        name: stream.name.clone(),
+        source_type,
+        lossy_queue,
+        replayable,
+        qualification: QualificationLevel::ComponentTested,
+        schema,
+    }
+}
+
+fn build_rule_typed_plan(
+    state: &AppState,
+    rule: &RuleDefinition,
+    stmt: &rekuiper_sql::SelectStmt,
+) -> rekuiper_sql::planning::TypedPlanReport {
+    let mut streams = Vec::new();
+    if let Some(s) = state.stream_manager.get_stream(&stmt.from) {
+        streams.push(stream_catalog_entry(&s));
+    }
+    for j in &stmt.joins {
+        if let Some(s) = state.stream_manager.get_stream(&j.target) {
+            streams.push(stream_catalog_entry(&s));
+        }
+    }
+    rekuiper_sql::planning::build_typed_plan_report(&rekuiper_sql::planning::PlanCatalogInput {
+        rule_id: rule.id.clone(),
+        sql: rule.sql.clone(),
+        options: rule.options.clone(),
+        actions: rule.actions.clone(),
+        streams,
+    })
+}
+
+fn reject_invalid_typed_plan(
+    state: &AppState,
+    rule: &RuleDefinition,
+    stmt: &rekuiper_sql::SelectStmt,
+) -> Option<Response> {
+    let report = build_rule_typed_plan(state, rule, stmt);
+    if report.valid {
+        return None;
+    }
+    let first_msg = report
+        .diagnostics
+        .first()
+        .map(|d| d.message.clone())
+        .unwrap_or_else(|| "typed plan validation failed".to_string());
+    Some(
+        (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "error": 1000,
+                "message": first_msg,
+                "diagnostics": report.diagnostics,
+                "effective_guarantees": report.effective_guarantees,
+                "limiting_component": report.effective_guarantees.limiting_component,
+            })),
+        )
+            .into_response(),
+    )
+}
+
 pub async fn validate_rule(
     State(state): State<AppState>,
     Json(rule): Json<RuleDefinition>,
@@ -1092,13 +1192,37 @@ pub async fn validate_rule(
             if let Some(resp) = reject_invalid_rule(&state, &stmt, rule.options.as_ref(), true) {
                 return resp;
             }
-            check_rule_functions(&state, &stmt).unwrap_or_else(|| {
-                Json(json!({
-                    "sources": [stmt.from],
-                    "valid": true
-                }))
-                .into_response()
-            })
+            if let Some(resp) = check_rule_functions(&state, &stmt) {
+                return resp;
+            }
+            let report = build_rule_typed_plan(&state, &rule, &stmt);
+            if !report.valid {
+                let first_msg = report
+                    .diagnostics
+                    .first()
+                    .map(|d| d.message.clone())
+                    .unwrap_or_else(|| "typed plan validation failed".to_string());
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({
+                        "error": 1000,
+                        "message": first_msg,
+                        "diagnostics": report.diagnostics,
+                        "effective_guarantees": report.effective_guarantees,
+                        "limiting_component": report.effective_guarantees.limiting_component,
+                    })),
+                )
+                    .into_response();
+            }
+            Json(json!({
+                "sources": [stmt.from],
+                "valid": true,
+                "plan": report,
+                "effective_guarantees": report.effective_guarantees,
+                "limiting_component": report.effective_guarantees.limiting_component,
+                "diagnostics": report.diagnostics,
+            }))
+            .into_response()
         }
         Err(e) => (
             StatusCode::BAD_REQUEST,
@@ -1168,6 +1292,7 @@ pub async fn get_rule_explain(State(state): State<AppState>, Path(name): Path<St
         .iter()
         .flat_map(|a| a.keys().cloned())
         .collect();
+    let report = build_rule_typed_plan(&state, &rule, &select_stmt);
     Json(json!({
         "rule": name,
         "source": select_stmt.from,
@@ -1177,6 +1302,10 @@ pub async fn get_rule_explain(State(state): State<AppState>, Path(name): Path<St
         "groupBy": select_stmt.group_by.iter().map(expr_to_string).collect::<Vec<_>>(),
         "having": select_stmt.having.as_ref().map(expr_to_string),
         "actions": action_kinds,
+        "plan": report,
+        "effective_guarantees": report.effective_guarantees,
+        "limiting_component": report.effective_guarantees.limiting_component,
+        "diagnostics": report.diagnostics,
     }))
     .into_response()
 }
