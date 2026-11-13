@@ -363,6 +363,7 @@ pub async fn run_daemon() -> Result<()> {
         enable_ui: args.enable_ui,
         ui_allow_ip: ui_allow_ip_vec,
         ui_password: args.ui_password,
+        etc_dir: Some(paths.etc_dir.clone()),
     };
     rekuiper_server::start_server_with_options(config, version, options).await?;
 

@@ -206,12 +206,52 @@ impl PathConfig {
         let content = std::fs::read_to_string(&conf_file)
             .with_context(|| format!("Failed to read configuration file: {:?}", conf_file))?;
 
+        validate_top_level_keys(&content, &conf_file)?;
+
         let mut config: KuiperConfig = serde_yaml::from_str(&content)
             .with_context(|| format!("Failed to parse YAML from {:?}", conf_file))?;
 
+        tracing::info!("Loaded configuration from {:?}", conf_file);
         apply_env_overrides(&mut config);
         Ok(config)
     }
+}
+
+/// Reject `BasicConfig` keys placed at the YAML root instead of under `basic:`.
+fn validate_top_level_keys(content: &str, conf_file: &std::path::Path) -> Result<()> {
+    const BASIC_KEYS: &[&str] = &[
+        "ip",
+        "port",
+        "restIp",
+        "restPort",
+        "logLevel",
+        "debug",
+        "consoleLog",
+        "fileLog",
+        "authentication",
+        "timezone",
+        "prometheus",
+        "prometheusPort",
+        "httpServerIp",
+        "httpServerPort",
+        "enablePrivateNet",
+    ];
+    let raw: serde_yaml::Value = serde_yaml::from_str(content)
+        .with_context(|| format!("Failed to parse YAML from {:?}", conf_file))?;
+    if let Some(map) = raw.as_mapping() {
+        for key in map.keys() {
+            if let Some(k) = key.as_str() {
+                if BASIC_KEYS.contains(&k) {
+                    anyhow::bail!(
+                        "Invalid configuration in {:?}: top-level key '{}' must be nested under 'basic:'",
+                        conf_file,
+                        k
+                    );
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 fn parse_env_bool(val: &str) -> Option<bool> {
@@ -456,5 +496,27 @@ mod tests {
         assert_eq!(config.basic.http_server_ip, "127.0.0.1");
         assert_eq!(config.basic.rest_port, 9081);
         assert!(!config.basic.enable_private_net);
+    }
+
+    #[test]
+    fn load_config_honors_custom_etc_and_rejects_misnested_ports() {
+        let dir = std::env::temp_dir().join(format!("rekuiper_conf_test_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let yaml_path = dir.join("kuiper.yaml");
+
+        std::fs::write(&yaml_path, "basic:\n  port: 29498\n  restPort: 19081\n").unwrap();
+        let cfg = PathConfig::new(Some(dir.to_str().unwrap()), None, None)
+            .load_config()
+            .unwrap();
+        assert_eq!(cfg.basic.port, 29498);
+        assert_eq!(cfg.basic.rest_port, 19081);
+
+        std::fs::write(&yaml_path, "port: 29498\nrestPort: 19081\n").unwrap();
+        let err = PathConfig::new(Some(dir.to_str().unwrap()), None, None)
+            .load_config()
+            .unwrap_err();
+        assert!(err.to_string().contains("basic:"));
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

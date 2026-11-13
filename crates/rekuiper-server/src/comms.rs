@@ -1,7 +1,7 @@
 use parking_lot::{Mutex, RwLock};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
@@ -107,6 +107,7 @@ impl Default for WireTapProbe {
 pub struct CommsHub {
     tx: tokio::sync::broadcast::Sender<CommsEvent>,
     taps: Arc<RwLock<HashMap<String, Arc<WireTapProbe>>>>,
+    tap_leases: Arc<RwLock<HashMap<String, HashSet<String>>>>,
 }
 
 impl Default for CommsHub {
@@ -121,6 +122,7 @@ impl CommsHub {
         Self {
             tx,
             taps: Arc::new(RwLock::new(HashMap::new())),
+            tap_leases: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -199,8 +201,74 @@ impl CommsHub {
     /// Disable wire-tap sampling for a given rule and node.
     pub fn disable_tap(&self, rule_id: &str, node_id: &str) {
         let key = format!("{}:{}", rule_id, node_id);
+        self.tap_leases.write().remove(&key);
         if let Some(probe) = self.taps.read().get(&key) {
             probe.active.store(false, Ordering::Release);
+        }
+    }
+
+    /// Enable wire-tap sampling scoped to a specific client/session lease.
+    pub fn enable_tap_for_session(
+        &self,
+        session_id: &str,
+        rule_id: &str,
+        node_id: &str,
+    ) -> Arc<WireTapProbe> {
+        let key = format!("{}:{}", rule_id, node_id);
+        self.tap_leases
+            .write()
+            .entry(key)
+            .or_default()
+            .insert(session_id.to_string());
+        self.enable_tap(rule_id, node_id)
+    }
+
+    /// Release a session's lease on a wire tap; disables the probe only when no leases remain.
+    pub fn disable_tap_for_session(&self, session_id: &str, rule_id: &str, node_id: &str) {
+        let key = format!("{}:{}", rule_id, node_id);
+        let should_disable = {
+            let mut leases = self.tap_leases.write();
+            if let Some(owners) = leases.get_mut(&key) {
+                owners.remove(session_id);
+                if owners.is_empty() {
+                    leases.remove(&key);
+                    true
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        };
+        if should_disable {
+            if let Some(probe) = self.taps.read().get(&key) {
+                probe.active.store(false, Ordering::Release);
+            }
+        }
+    }
+
+    /// Release all wire-tap leases held by a disconnected session.
+    pub fn release_session(&self, session_id: &str) {
+        let mut to_disable = Vec::new();
+        {
+            let mut leases = self.tap_leases.write();
+            let keys: Vec<String> = leases.keys().cloned().collect();
+            for key in keys {
+                if let Some(owners) = leases.get_mut(&key) {
+                    if owners.remove(session_id) && owners.is_empty() {
+                        leases.remove(&key);
+                        to_disable.push(key);
+                    }
+                }
+            }
+        }
+        if !to_disable.is_empty() {
+            let taps = self.taps.read();
+            for key in to_disable {
+                if let Some(probe) = taps.get(&key) {
+                    probe.active.store(false, Ordering::Release);
+                }
+            }
         }
     }
 
@@ -308,5 +376,19 @@ mod tests {
             }
             other => panic!("Unexpected event: {:?}", other),
         }
+    }
+
+    #[test]
+    fn test_comms_hub_session_scoped_tap_leases() {
+        let hub = CommsHub::new(64);
+        hub.enable_tap_for_session("s1", "r1", "n1");
+        hub.enable_tap_for_session("s2", "r1", "n1");
+        assert!(hub.is_tap_active("r1", "n1"));
+
+        hub.disable_tap_for_session("s1", "r1", "n1");
+        assert!(hub.is_tap_active("r1", "n1"));
+
+        hub.release_session("s2");
+        assert!(!hub.is_tap_active("r1", "n1"));
     }
 }

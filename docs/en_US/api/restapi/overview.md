@@ -2,7 +2,7 @@
 
 rekuiper provides a comprehensive REST API to manage streams, tables, rules, and system extensions.
 
-By default, the REST API listens on HTTP port `9081`. You can configure the port number using the `restPort` property in `etc/kuiper.yaml`.
+By default, the REST API listens on HTTP port `9081`. You can configure the port number under the `basic:` section (`basic.restPort`) in `etc/kuiper.yaml`.
 
 ::: tip Interactive OpenAPI & Web Management Console
 Explore the public [Interactive OpenAPI / Swagger UI](../swagger.md) directly in your browser:
@@ -15,7 +15,7 @@ See the complete guide and walkthrough in [Management with the Interactive OpenA
 
 ## System Information
 
-Use this endpoint to retrieve the version string, host operating system, and process uptime.
+Use this endpoint to retrieve the product identity, version string, host operating system, process uptime, operation mode, and runtime capabilities.
 
 ```http
 GET http://localhost:9081/
@@ -25,9 +25,24 @@ Example response:
 
 ```json
 {
-  "version": "1.0.1-22-g119ee91",
-  "os": "darwin",
-  "upTimeSeconds": 14
+  "product": "rekuiper",
+  "version": "1.0.0-rc5",
+  "commit": "unknown",
+  "os": "linux",
+  "arch": "amd64",
+  "upTimeSeconds": 14,
+  "cpuUsage": "0.50%",
+  "memoryUsed": "12582912",
+  "memoryTotal": "16777216000",
+  "operationMode": "imperative",
+  "deploymentRole": "standalone",
+  "capabilities": {
+    "declarative": true,
+    "fleet": true,
+    "jsUdf": true,
+    "wireTap": true,
+    "ui": false
+  }
 }
 ```
 

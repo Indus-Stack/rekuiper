@@ -10,11 +10,20 @@ use serde_json::{json, Value};
 use std::collections::HashSet;
 
 pub fn find_etc_file(relative: &str) -> Option<std::path::PathBuf> {
-    let mut candidates = vec![
-        std::path::PathBuf::from("etc").join(relative),
-        std::path::PathBuf::from("../etc").join(relative),
-        std::path::PathBuf::from("../../etc").join(relative),
-    ];
+    find_etc_file_in(None, relative)
+}
+
+pub fn find_etc_file_in(
+    etc_dir: Option<&std::path::Path>,
+    relative: &str,
+) -> Option<std::path::PathBuf> {
+    let mut candidates = Vec::new();
+    if let Some(dir) = etc_dir {
+        candidates.push(dir.join(relative));
+    }
+    candidates.push(std::path::PathBuf::from("etc").join(relative));
+    candidates.push(std::path::PathBuf::from("../etc").join(relative));
+    candidates.push(std::path::PathBuf::from("../../etc").join(relative));
     if let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {
         candidates.push(
             std::path::Path::new(&manifest_dir)
@@ -38,21 +47,32 @@ pub fn find_etc_file(relative: &str) -> Option<std::path::PathBuf> {
     candidates.into_iter().find(|p| p.is_file())
 }
 
+include!(concat!(env!("OUT_DIR"), "/embedded_etc.rs"));
+
+type EtcCacheKey = (Option<std::path::PathBuf>, String);
 static ETC_FILE_CACHE: parking_lot::RwLock<
-    Option<std::collections::HashMap<String, Option<String>>>,
+    Option<std::collections::HashMap<EtcCacheKey, Option<String>>>,
 > = parking_lot::RwLock::new(None);
 
 /// Read an etc file with in-memory caching to avoid filesystem access on hot paths.
 pub fn read_etc_cached(relative: &str) -> Option<String> {
+    read_etc_cached_in(None, relative)
+}
+
+/// Read an etc file from `etc_dir` (if given), repo `etc/`, or compile-time embedded defaults.
+pub fn read_etc_cached_in(etc_dir: Option<&std::path::Path>, relative: &str) -> Option<String> {
+    let key = (etc_dir.map(|p| p.to_path_buf()), relative.to_string());
     if let Some(map) = ETC_FILE_CACHE.read().as_ref() {
-        if let Some(cached) = map.get(relative) {
+        if let Some(cached) = map.get(&key) {
             return cached.clone();
         }
     }
-    let content = find_etc_file(relative).and_then(|p| std::fs::read_to_string(p).ok());
+    let content = find_etc_file_in(etc_dir, relative)
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .or_else(|| embedded_etc_file(relative).map(str::to_string));
     let mut guard = ETC_FILE_CACHE.write();
     let map = guard.get_or_insert_with(std::collections::HashMap::new);
-    map.insert(relative.to_string(), content.clone());
+    map.insert(key, content.clone());
     content
 }
 
@@ -666,6 +686,21 @@ pub async fn get_palette_metadata() -> impl IntoResponse {
             }
         ]
     });
+    let mut palette = palette;
+    if let Some(nodes) = palette.get_mut("nodes").and_then(|v| v.as_array_mut()) {
+        for node in nodes {
+            if let Some(obj) = node.as_object_mut() {
+                let category = obj.get("category").and_then(|v| v.as_str()).unwrap_or("");
+                let node_type = obj.get("type").and_then(|v| v.as_str()).unwrap_or("");
+                let available = if category == "source" || category == "sink" {
+                    rekuiper_connectors::is_connector_compiled(node_type)
+                } else {
+                    true
+                };
+                obj.insert("available".to_string(), json!(available));
+            }
+        }
+    }
     Json(palette)
 }
 
@@ -697,7 +732,10 @@ pub async fn get_connection_metadata(
     if let Some(conn) = state.connections.read().get(&name).cloned() {
         return Json(conn).into_response();
     }
-    if let Some(content) = read_etc_cached(&format!("connections/{}.json", name)) {
+    if let Some(content) = read_etc_cached_in(
+        state.etc_dir.as_deref(),
+        &format!("connections/{}.json", name),
+    ) {
         if let Ok(val) = serde_json::from_str::<Value>(&content) {
             return Json(val).into_response();
         }
@@ -740,8 +778,9 @@ pub async fn get_connection_yaml(
     if let Err(resp) = check_valid_name(&name) {
         return resp;
     }
-    let found = read_etc_cached(&format!("connections/{}.yaml", name))
-        .or_else(|| read_etc_cached("connections/connection.yaml"));
+    let etc_dir = state.etc_dir.as_deref();
+    let found = read_etc_cached_in(etc_dir, &format!("connections/{}.yaml", name))
+        .or_else(|| read_etc_cached_in(etc_dir, "connections/connection.yaml"));
 
     let mut result_map: serde_json::Map<String, Value> = serde_json::Map::new();
     let mut raw_content = String::new();
@@ -801,16 +840,22 @@ pub async fn get_connection_yaml(
     Json(final_val).into_response()
 }
 
-pub async fn get_source_metadata(Path(name): Path<String>) -> Response {
+pub async fn get_source_metadata(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> Response {
     if let Err(resp) = check_valid_name(&name) {
         return resp;
     }
+    let etc_dir = state.etc_dir.as_deref();
     let found = if name == "mqtt" {
-        read_etc_cached("mqtt_source.json").or_else(|| read_etc_cached("sources/mqtt.json"))
+        read_etc_cached_in(etc_dir, "mqtt_source.json")
+            .or_else(|| read_etc_cached_in(etc_dir, "sources/mqtt.json"))
     } else if name == "http" {
-        read_etc_cached("sources/http.json").or_else(|| read_etc_cached("sources/httppull.json"))
+        read_etc_cached_in(etc_dir, "sources/http.json")
+            .or_else(|| read_etc_cached_in(etc_dir, "sources/httppull.json"))
     } else {
-        read_etc_cached(&format!("sources/{}.json", name))
+        read_etc_cached_in(etc_dir, &format!("sources/{}.json", name))
     };
 
     if let Some(content) = found {
@@ -828,16 +873,21 @@ pub async fn get_source_metadata(Path(name): Path<String>) -> Response {
         .into_response()
 }
 
-pub async fn get_sink_metadata(Path(name): Path<String>) -> Response {
+pub async fn get_sink_metadata(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> Response {
     if let Err(resp) = check_valid_name(&name) {
         return resp;
     }
+    let etc_dir = state.etc_dir.as_deref();
     let found = if name == "mqtt" {
-        read_etc_cached("sinks/mqtt.json")
+        read_etc_cached_in(etc_dir, "sinks/mqtt.json")
     } else if name == "http" {
-        read_etc_cached("sinks/rest.json").or_else(|| read_etc_cached("sinks/http.json"))
+        read_etc_cached_in(etc_dir, "sinks/rest.json")
+            .or_else(|| read_etc_cached_in(etc_dir, "sinks/http.json"))
     } else {
-        read_etc_cached(&format!("sinks/{}.json", name))
+        read_etc_cached_in(etc_dir, &format!("sinks/{}.json", name))
     };
 
     if let Some(content) = found {
@@ -1001,12 +1051,15 @@ pub async fn get_source_yaml(State(state): State<AppState>, Path(name): Path<Str
     if let Err(resp) = check_valid_name(&name) {
         return resp;
     }
+    let etc_dir = state.etc_dir.as_deref();
     let found = if name == "mqtt" {
-        read_etc_cached("mqtt_source.yaml").or_else(|| read_etc_cached("sources/mqtt.yaml"))
+        read_etc_cached_in(etc_dir, "mqtt_source.yaml")
+            .or_else(|| read_etc_cached_in(etc_dir, "sources/mqtt.yaml"))
     } else if name == "http" {
-        read_etc_cached("sources/httppull.yaml").or_else(|| read_etc_cached("sources/http.yaml"))
+        read_etc_cached_in(etc_dir, "sources/httppull.yaml")
+            .or_else(|| read_etc_cached_in(etc_dir, "sources/http.yaml"))
     } else {
-        read_etc_cached(&format!("sources/{}.yaml", name))
+        read_etc_cached_in(etc_dir, &format!("sources/{}.yaml", name))
     };
 
     let mut result_map: serde_json::Map<String, Value> = serde_json::Map::new();
@@ -1066,12 +1119,15 @@ pub async fn get_sink_yaml(State(state): State<AppState>, Path(name): Path<Strin
     if let Err(resp) = check_valid_name(&name) {
         return resp;
     }
+    let etc_dir = state.etc_dir.as_deref();
     let found = if name == "mqtt" {
-        read_etc_cached("sinks/mqtt.yaml").or_else(|| read_etc_cached("mqtt_sink.yaml"))
+        read_etc_cached_in(etc_dir, "sinks/mqtt.yaml")
+            .or_else(|| read_etc_cached_in(etc_dir, "mqtt_sink.yaml"))
     } else if name == "http" {
-        read_etc_cached("sinks/rest.yaml").or_else(|| read_etc_cached("sinks/http.yaml"))
+        read_etc_cached_in(etc_dir, "sinks/rest.yaml")
+            .or_else(|| read_etc_cached_in(etc_dir, "sinks/http.yaml"))
     } else {
-        read_etc_cached(&format!("sinks/{}.yaml", name))
+        read_etc_cached_in(etc_dir, &format!("sinks/{}.yaml", name))
     };
 
     let mut result_map: serde_json::Map<String, Value> = serde_json::Map::new();
@@ -1108,6 +1164,9 @@ pub async fn get_sink_yaml(State(state): State<AppState>, Path(name): Path<Strin
             raw_content =
                 "default:\n  server: \"tcp://127.0.0.1:1883\"\n  protocolVersion: \"3.1.1\"\n"
                     .to_string();
+        } else if name == "log" || name == "file" {
+            result_map.insert("default".to_string(), json!({}));
+            raw_content = "default: {}\n".to_string();
         } else {
             return (StatusCode::NOT_FOUND, format!("sink {} not found\n", name)).into_response();
         }
@@ -1156,5 +1215,32 @@ mod tests {
             assert!(meta.get("about").is_some());
             assert!(meta.get("properties").is_some());
         }
+    }
+
+    #[test]
+    fn test_embedded_and_custom_etc_metadata_resolution() {
+        assert!(read_etc_cached_in(None, "mqtt_source.json").is_some());
+        assert!(read_etc_cached_in(None, "sinks/log.json").is_some());
+        assert!(read_etc_cached_in(None, "sinks/file.json").is_some());
+
+        let dir = std::env::temp_dir().join(format!("rekuiper_meta_etc_{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("sinks")).unwrap();
+        std::fs::write(dir.join("sinks/custom_test.json"), r#"{"custom":true}"#).unwrap();
+        let content = read_etc_cached_in(Some(&dir), "sinks/custom_test.json").unwrap();
+        assert!(content.contains("\"custom\":true"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn test_palette_annotates_compiled_availability() {
+        let resp = get_palette_metadata().await.into_response();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(resp.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let val: Value = serde_json::from_slice(&bytes).unwrap();
+        let nodes = val["nodes"].as_array().unwrap();
+        assert!(!nodes.is_empty());
+        assert!(nodes.iter().all(|n| n.get("available").is_some()));
     }
 }

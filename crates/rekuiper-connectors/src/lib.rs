@@ -8,6 +8,16 @@ pub type ConnectorStatusCallback =
 
 pub const META_KEY: &str = "__meta__";
 
+/// Returns whether a connector runtime is compiled into this binary.
+pub fn is_connector_compiled(kind: &str) -> bool {
+    match kind.to_ascii_lowercase().as_str() {
+        "modbus" => cfg!(feature = "modbus"),
+        "opcua" => cfg!(feature = "opcua"),
+        "otlp" => cfg!(feature = "otlp"),
+        _ => true,
+    }
+}
+
 pub mod codec;
 pub use codec::*;
 

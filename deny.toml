@@ -23,4 +23,9 @@ ignore = [
     { id = "RUSTSEC-2026-0391", reason = "Transitive via rskafka 0.6.0 -> zstd 0.13.3; custom SeekTable allocations not used in Kafka record framing" },
     { id = "RUSTSEC-2026-0398", reason = "Transitive via rskafka 0.6.0 -> zstd 0.13.3 -> zstd-safe 7.3.0; multi-threaded zstd compression dictionary sharing not used" },
     { id = "RUSTSEC-2026-0403", reason = "Transitive via rskafka 0.6.0 -> zstd 0.13.3 -> zstd-safe 7.3.0; CStream/DStream custom frame parameters not used" },
+
+    # Transitive via sqlx 0.8.6 -> sqlx-sqlite 0.8.6 -> libsqlite3-sys 0.30.1 (even sqlx-sqlite 0.9.0 caps libsqlite3-sys at <0.38.0).
+    # Only exposed when opening an untrusted DB with a crafted sibling -wal file; rekuiper only opens its own local state DBs.
+    # Remove once upstream sqlx-sqlite supports libsqlite3-sys >= 0.39.0 (SQLite >= 3.54.0).
+    { id = "RUSTSEC-2026-0459", reason = "Transitive via sqlx-sqlite 0.8.6 -> libsqlite3-sys 0.30.1; no sqlx-sqlite release supports >=0.39.0 yet and rekuiper does not open untrusted DB/-wal pairs" },
 ]

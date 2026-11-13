@@ -86,6 +86,14 @@
     {
       "name": "Metadata",
       "description": "UI metadata, configuration keys, resources, and connectivity tests; available in non-core/ui builds."
+    },
+    {
+      "name": "Fleet",
+      "description": "Fleet control plane and edge device management"
+    },
+    {
+      "name": "UI",
+      "description": "Embedded web console and authentication endpoints"
     }
   ],
   "paths": {
@@ -2885,6 +2893,25 @@
             "$ref": "#/components/responses/Unauthorized"
           }
         }
+      },
+      "get": {
+        "tags": [
+          "Ruleset"
+        ],
+        "summary": "Export full ruleset bundle",
+        "operationId": "getRulesetExport",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/config/uploads": {
@@ -3500,6 +3527,25 @@
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Data"
+        ],
+        "summary": "Selective data export (v2)",
+        "operationId": "exportDataV2",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
           }
         }
       }
@@ -5513,6 +5559,25 @@
             "$ref": "#/components/responses/Unauthorized"
           }
         }
+      },
+      "post": {
+        "tags": [
+          "UDF"
+        ],
+        "summary": "Register a JavaScript UDF",
+        "operationId": "createJsUdf",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/plugins/udfs/{name}": {
@@ -5562,6 +5627,35 @@
             "$ref": "#/components/responses/NotFound"
           }
         }
+      },
+      "delete": {
+        "tags": [
+          "UDF"
+        ],
+        "summary": "Delete a JavaScript UDF",
+        "operationId": "deleteJsUdf",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
       }
     },
     "/plugins/functions/{name}/register": {
@@ -7419,7 +7513,8 @@
           "200": {
             "description": "Data ingested successfully"
           }
-        }
+        },
+        "operationId": "pushStreamData"
       }
     },
     "/tables/{name}/data": {
@@ -7439,7 +7534,8 @@
           "200": {
             "description": "Table data ingested successfully"
           }
-        }
+        },
+        "operationId": "pushTableData"
       }
     },
     "/rules/{name}/errors": {
@@ -7459,7 +7555,8 @@
           "200": {
             "description": "DLQ statistics and recent error envelopes"
           }
-        }
+        },
+        "operationId": "getRuleErrors"
       },
       "delete": {
         "summary": "Clear buffered dead-letter queue (DLQ) error records for a rule",
@@ -7477,7 +7574,8 @@
           "200": {
             "description": "DLQ errors cleared"
           }
-        }
+        },
+        "operationId": "clearRuleErrors"
       }
     },
     "/rules/{name}/dlq": {
@@ -7497,7 +7595,8 @@
           "200": {
             "description": "DLQ statistics and recent error envelopes"
           }
-        }
+        },
+        "operationId": "getRuleDlq"
       },
       "delete": {
         "summary": "Alias of DELETE /rules/{name}/errors",
@@ -7515,7 +7614,8 @@
           "200": {
             "description": "DLQ errors cleared"
           }
-        }
+        },
+        "operationId": "clearRuleDlq"
       }
     },
     "/declarative/reload": {
@@ -7528,7 +7628,8 @@
           "400": {
             "description": "Validation or mode error"
           }
-        }
+        },
+        "operationId": "reloadDeclarative"
       }
     },
     "/v1/metrics": {
@@ -7538,7 +7639,8 @@
           "200": {
             "description": "OTLP partialSuccess response"
           }
-        }
+        },
+        "operationId": "ingestOtlpV1Metrics"
       }
     },
     "/v1/logs": {
@@ -7548,7 +7650,8 @@
           "200": {
             "description": "OTLP partialSuccess response"
           }
-        }
+        },
+        "operationId": "ingestOtlpV1Logs"
       }
     },
     "/v1/traces": {
@@ -7558,7 +7661,8 @@
           "200": {
             "description": "OTLP partialSuccess response"
           }
-        }
+        },
+        "operationId": "ingestOtlpV1Traces"
       }
     },
     "/ui": {
@@ -7568,7 +7672,8 @@
           "200": {
             "description": "HTML web console"
           }
-        }
+        },
+        "operationId": "getUiConsole"
       }
     },
     "/plugins/wasm": {
@@ -7578,7 +7683,8 @@
           "200": {
             "description": "Array of WASM module names"
           }
-        }
+        },
+        "operationId": "listWasmPlugins"
       },
       "post": {
         "summary": "Register a WebAssembly plugin module from file or base64 bytecode",
@@ -7586,7 +7692,8 @@
           "201": {
             "description": "Registered WASM module and exported UDFs"
           }
-        }
+        },
+        "operationId": "createWasmPlugin"
       }
     },
     "/plugins/wasm/{name}": {
@@ -7606,7 +7713,8 @@
           "200": {
             "description": "Module unregistered"
           }
-        }
+        },
+        "operationId": "deleteWasmPlugin"
       }
     },
     "/config": {
@@ -7643,7 +7751,7 @@
           "System"
         ],
         "summary": "Dynamically reload supported configuration",
-        "operationId": "patchConfigs",
+        "operationId": "patchConfig",
         "x-ekuiper-source": [
           "https://github.com/lf-edge/ekuiper/blob/v2.4.1/internal/server/rest.go",
           "https://github.com/lf-edge/ekuiper/blob/v2.4.1/internal/server/import_export.go",
@@ -7680,6 +7788,1570 @@
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/version": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Get engine version",
+        "operationId": "getVersion",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/metrics": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Get Prometheus metrics",
+        "operationId": "getPrometheusMetrics",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/ui/auth-status": {
+      "get": {
+        "tags": [
+          "UI"
+        ],
+        "summary": "Get UI authentication status",
+        "operationId": "getUiAuthStatus",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/ui/login": {
+      "post": {
+        "tags": [
+          "UI"
+        ],
+        "summary": "Authenticate to embedded web console",
+        "operationId": "postUiLogin",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ui/": {
+      "get": {
+        "tags": [
+          "UI"
+        ],
+        "summary": "Serve embedded web console",
+        "operationId": "getUiConsoleSlash",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/metadata/palette": {
+      "get": {
+        "tags": [
+          "Metadata"
+        ],
+        "summary": "Get node palette metadata",
+        "operationId": "getMetadataPalette",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/palette": {
+      "get": {
+        "tags": [
+          "Metadata"
+        ],
+        "summary": "Get node palette metadata (v1)",
+        "operationId": "getApiV1Palette",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/rules/{id}/cpu": {
+      "get": {
+        "tags": [
+          "Rules"
+        ],
+        "summary": "Get rule CPU profiling stats",
+        "operationId": "getRuleCpu",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/rules/{name}/scantables": {
+      "get": {
+        "tags": [
+          "Rules"
+        ],
+        "summary": "Get scan tables referenced by a rule",
+        "operationId": "getRuleScanTables",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/rules/{id}/tap/{node_id}/enable": {
+      "post": {
+        "tags": [
+          "Tracing"
+        ],
+        "summary": "Enable wire tap on a rule node",
+        "operationId": "enableRuleNodeTap",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "node_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/rules/{id}/tap/{node_id}/disable": {
+      "post": {
+        "tags": [
+          "Tracing"
+        ],
+        "summary": "Disable wire tap on a rule node",
+        "operationId": "disableRuleNodeTap",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "node_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/rules/{id}/tap/{node_id}/status": {
+      "get": {
+        "tags": [
+          "Tracing"
+        ],
+        "summary": "Get wire tap status for a rule node",
+        "operationId": "getRuleNodeTapStatus",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "node_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/trace/rule/{rule_id}": {
+      "get": {
+        "tags": [
+          "Tracing"
+        ],
+        "summary": "Get distributed traces for a rule",
+        "operationId": "getRuleTrace",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "rule_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/comms": {
+      "get": {
+        "tags": [
+          "Tracing"
+        ],
+        "summary": "WebSocket stream for live tap and rule events",
+        "operationId": "connectCommsWs",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommsEventEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/test/{name}": {
+      "get": {
+        "tags": [
+          "Rule Test"
+        ],
+        "summary": "SSE stream for interactive rule test output",
+        "operationId": "streamRuletestSse",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/RuletestSseEvent"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/otlp/v1/metrics": {
+      "post": {
+        "tags": [
+          "Data"
+        ],
+        "summary": "Ingest OTLP metrics",
+        "operationId": "ingestOtlpMetrics",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/otlp/v1/logs": {
+      "post": {
+        "tags": [
+          "Data"
+        ],
+        "summary": "Ingest OTLP logs",
+        "operationId": "ingestOtlpLogs",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/otlp/v1/traces": {
+      "post": {
+        "tags": [
+          "Data"
+        ],
+        "summary": "Ingest OTLP traces",
+        "operationId": "ingestOtlpTraces",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/schemas/{kind}": {
+      "get": {
+        "tags": [
+          "Schemas"
+        ],
+        "summary": "List schemas by kind",
+        "operationId": "listSchemasByKind",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "Schemas"
+        ],
+        "summary": "Create schema under kind",
+        "operationId": "createSchemaByKind",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/schemas/{kind}/{name}": {
+      "get": {
+        "tags": [
+          "Schemas"
+        ],
+        "summary": "Get schema by kind and name",
+        "operationId": "getSchemaByKindAndName",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "Schemas"
+        ],
+        "summary": "Update schema by kind and name",
+        "operationId": "updateSchemaByKindAndName",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "Schemas"
+        ],
+        "summary": "Delete schema by kind and name",
+        "operationId": "deleteSchemaByKindAndName",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/schemas/{kind}/{name}/upload": {
+      "put": {
+        "tags": [
+          "Schemas"
+        ],
+        "summary": "Upload schema file by kind and name",
+        "operationId": "uploadSchemaByKindAndName",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/metadata/sources/{name}/confKeys/{conf_key}": {
+      "get": {
+        "tags": [
+          "Metadata"
+        ],
+        "summary": "Get source confKey configuration",
+        "operationId": "getSourceConfKey",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "conf_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "Metadata"
+        ],
+        "summary": "Create source confKey configuration",
+        "operationId": "createSourceConfKey",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "conf_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "Metadata"
+        ],
+        "summary": "Update source confKey configuration",
+        "operationId": "updateSourceConfKey",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "conf_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "Metadata"
+        ],
+        "summary": "Delete source confKey configuration",
+        "operationId": "deleteSourceConfKey",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "conf_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/metadata/sinks/{name}/confKeys/{conf_key}": {
+      "get": {
+        "tags": [
+          "Metadata"
+        ],
+        "summary": "Get sink confKey configuration",
+        "operationId": "getSinkConfKey",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "conf_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "Metadata"
+        ],
+        "summary": "Create sink confKey configuration",
+        "operationId": "createSinkConfKey",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "conf_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "Metadata"
+        ],
+        "summary": "Update sink confKey configuration",
+        "operationId": "updateSinkConfKey",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "conf_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "Metadata"
+        ],
+        "summary": "Delete sink confKey configuration",
+        "operationId": "deleteSinkConfKey",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "conf_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/metadata/connections/{name}/confKeys/{conf_key}": {
+      "get": {
+        "tags": [
+          "Metadata"
+        ],
+        "summary": "Get connection confKey configuration",
+        "operationId": "getConnectionConfKey",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "conf_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "Metadata"
+        ],
+        "summary": "Create connection confKey configuration",
+        "operationId": "createConnectionConfKey",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "conf_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "Metadata"
+        ],
+        "summary": "Update connection confKey configuration",
+        "operationId": "updateConnectionConfKey",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "conf_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "Metadata"
+        ],
+        "summary": "Delete connection confKey configuration",
+        "operationId": "deleteConnectionConfKey",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "conf_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/fleet/ws": {
+      "get": {
+        "tags": [
+          "Fleet"
+        ],
+        "summary": "Fleet control plane WebSocket endpoint",
+        "operationId": "connectFleetWs",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FleetWsMessage"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/fleet/devices": {
+      "get": {
+        "tags": [
+          "Fleet"
+        ],
+        "summary": "List registered fleet devices",
+        "operationId": "listFleetDevices",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Fleet"
+        ],
+        "summary": "Register a fleet device",
+        "operationId": "registerFleetDevice",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/fleet/devices/{id}": {
+      "get": {
+        "tags": [
+          "Fleet"
+        ],
+        "summary": "Get fleet device details",
+        "operationId": "getFleetDevice",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "Fleet"
+        ],
+        "summary": "Deregister a fleet device",
+        "operationId": "deleteFleetDevice",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/fleet/groups": {
+      "get": {
+        "tags": [
+          "Fleet"
+        ],
+        "summary": "List fleet device groups",
+        "operationId": "listFleetGroups",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/fleet/snapshots": {
+      "get": {
+        "tags": [
+          "Fleet"
+        ],
+        "summary": "List fleet configuration snapshots",
+        "operationId": "listFleetSnapshots",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Fleet"
+        ],
+        "summary": "Create a fleet configuration snapshot",
+        "operationId": "createFleetSnapshot",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/fleet/snapshots/{id}": {
+      "get": {
+        "tags": [
+          "Fleet"
+        ],
+        "summary": "Get a fleet configuration snapshot",
+        "operationId": "getFleetSnapshot",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/fleet/rollouts": {
+      "get": {
+        "tags": [
+          "Fleet"
+        ],
+        "summary": "List fleet rollouts",
+        "operationId": "listFleetRollouts",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Fleet"
+        ],
+        "summary": "Start a fleet rollout",
+        "operationId": "createFleetRollout",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/fleet/rollouts/{id}": {
+      "get": {
+        "tags": [
+          "Fleet"
+        ],
+        "summary": "Get fleet rollout status",
+        "operationId": "getFleetRollout",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/fleet/rollouts/{id}/promote": {
+      "post": {
+        "tags": [
+          "Fleet"
+        ],
+        "summary": "Promote a canary fleet rollout",
+        "operationId": "promoteFleetRollout",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/fleet/rollouts/{id}/rollback": {
+      "post": {
+        "tags": [
+          "Fleet"
+        ],
+        "summary": "Rollback a fleet rollout",
+        "operationId": "rollbackFleetRollout",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/fleet/audit": {
+      "get": {
+        "tags": [
+          "Fleet"
+        ],
+        "summary": "List fleet audit log entries",
+        "operationId": "listFleetAudit",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/fleet/metrics": {
+      "get": {
+        "tags": [
+          "Fleet"
+        ],
+        "summary": "Get fleet-wide aggregated metrics",
+        "operationId": "getFleetMetrics",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/fleet/dlq": {
+      "get": {
+        "tags": [
+          "Fleet"
+        ],
+        "summary": "List fleet dead-letter queue entries",
+        "operationId": "listFleetDlq",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/plugins/udfs/test": {
+      "post": {
+        "tags": [
+          "UDF"
+        ],
+        "summary": "Test a JavaScript UDF in an isolated Boa runtime",
+        "operationId": "testJsUdf",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
           }
         }
       }
@@ -9482,6 +11154,58 @@
           }
         },
         "additionalProperties": false
+      },
+      "CommsEventEnvelope": {
+        "type": "object",
+        "description": "WebSocket event envelope emitted on /comms",
+        "properties": {
+          "type": {
+            "type": "string"
+          },
+          "ruleId": {
+            "type": "string"
+          },
+          "nodeId": {
+            "type": "string"
+          },
+          "timestamp": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "payload": {
+            "type": "object"
+          }
+        },
+        "required": [
+          "type",
+          "payload"
+        ]
+      },
+      "FleetWsMessage": {
+        "type": "object",
+        "description": "WebSocket protocol message exchanged on /fleet/ws",
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "deviceId": {
+            "type": "string"
+          },
+          "correlationId": {
+            "type": "string"
+          },
+          "payload": {
+            "type": "object"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "RuletestSseEvent": {
+        "type": "object",
+        "description": "JSON data payload emitted in SSE data: frames on GET /test/{name}",
+        "additionalProperties": true
       }
     }
   }

@@ -160,11 +160,12 @@ When running with `--declarative`, rekuiper activates a read-only mode to preven
 
 | Request | Behavior in Declarative Mode |
 | :--- | :--- |
-| `GET`, `HEAD`, `OPTIONS` | Permitted (read-only inspection of status, metrics, streams, and rules). |
+| `GET`, `HEAD`, `OPTIONS` (except `GET /stop`) | Permitted (read-only inspection of status, metrics, streams, and rules; `GET /stop` is blocked with 403). |
 | `POST /declarative/reload` | Permitted (re-reads and reloads manifest files). |
 | `POST /v1/*`, `POST /data/*` | Permitted (telemetry and data ingestion). |
-| `POST /ruletest*` | Permitted (temporary interactive rule testing). |
-| Other `POST`, `PUT`, `PATCH`, `DELETE` | Blocked with HTTP 403 Forbidden (`{"error": "read_only_declarative_mode"}`). |
+| `POST /ruletest*`, `DELETE /ruletest/*` | Permitted (temporary interactive rule testing and cleanup). |
+| `POST /rules/validate`, `POST /plugins/udfs/test` | Permitted (stateless SQL validation and isolated JS UDF testing). |
+| Other `POST`, `PUT`, `PATCH`, `DELETE` | Blocked with HTTP 403 Forbidden (`{"error": "declarative_mode_active"}`). |
 
 ---
 

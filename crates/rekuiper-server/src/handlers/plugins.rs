@@ -1229,3 +1229,18 @@ pub async fn delete_config_upload(Path(name): Path<String>) -> Response {
     }
     (StatusCode::OK, "ok\n").into_response()
 }
+
+#[derive(Deserialize)]
+pub struct TestJsUdfPayload {
+    pub id: String,
+    pub script: String,
+    #[serde(default)]
+    pub args: Vec<Value>,
+}
+
+pub async fn test_js_udf_handler(Json(payload): Json<TestJsUdfPayload>) -> Response {
+    match crate::state::evaluate_js_udf_isolated(&payload.id, &payload.script, &payload.args) {
+        Ok(result) => (StatusCode::OK, Json(json!({ "result": result }))).into_response(),
+        Err(err) => (StatusCode::BAD_REQUEST, Json(json!({ "error": err }))).into_response(),
+    }
+}
