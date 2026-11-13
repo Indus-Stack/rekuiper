@@ -389,4 +389,3 @@ fn apply_reserve(state: &mut BudgetUsage, charge: &BudgetCharge) {
         .observed_physical_bytes
         .saturating_add(charge.physical_bytes);
 }
-

@@ -1,4 +1,5 @@
 use crate::model::StreamRecord;
+use crate::resources::{lossy_channel, LossyQueueReceiver, LossyQueueSender};
 use parking_lot::RwLock;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -167,12 +168,14 @@ impl<'a> Drop for BatchActiveGuard<'a> {
 #[derive(Debug, Default)]
 struct Topic {
     senders: RwLock<Vec<(RecordTx, Option<SubscriberFilter>)>>,
+    lossy_senders: RwLock<Vec<(LossyQueueSender<StreamRecord>, Option<SubscriberFilter>)>>,
     /// Serialises admission per topic: a request's records are reserved and
     /// committed without interleaving with other publishers of the topic.
     /// Separate from the global topic map lock, which is never held across
     /// an await.
     gate: tokio::sync::Mutex<()>,
     batch_active: AtomicBool,
+    has_lossy: AtomicBool,
 }
 
 impl Topic {
@@ -191,6 +194,65 @@ impl Topic {
     fn purge_closed(&self) {
         let mut senders = self.senders.write();
         senders.retain(|(s, _)| !s.is_closed());
+    }
+
+    fn deliver_lossy(&self, record: &StreamRecord) -> usize {
+        let mut any_closed = false;
+        let mut delivered = 0usize;
+        {
+            let senders = self.lossy_senders.read();
+            for (sender, filter) in senders.iter() {
+                if let Some(f) = filter {
+                    if !f.check_and_account(record) {
+                        continue;
+                    }
+                }
+                if sender.push(record.clone()).is_ok() {
+                    delivered += 1;
+                } else {
+                    any_closed = true;
+                }
+            }
+        }
+        if any_closed {
+            let mut senders = self.lossy_senders.write();
+            senders.retain(|(s, _)| !s.is_closed());
+            if senders.is_empty() {
+                self.has_lossy.store(false, Ordering::Release);
+            }
+        }
+        delivered
+    }
+
+    fn deliver_lossy_batch(&self, records: &[StreamRecord]) -> usize {
+        let mut any_closed = false;
+        let mut delivered = 0usize;
+        {
+            let senders = self.lossy_senders.read();
+            for (sender, filter) in senders.iter() {
+                let filtered: Vec<StreamRecord> = match filter {
+                    Some(f) => records
+                        .iter()
+                        .filter(|r| f.check_and_account(r))
+                        .cloned()
+                        .collect(),
+                    None => records.to_vec(),
+                };
+                if sender.push_batch(filtered).is_ok() {
+                    delivered += 1;
+                } else {
+                    any_closed = true;
+                }
+            }
+        }
+        if any_closed {
+            let mut senders = self.lossy_senders.write();
+            senders.retain(|(s, _)| !s.is_closed());
+            if senders.is_empty() {
+                self.has_lossy.store(false, Ordering::Release);
+            }
+        }
+        delivered
     }
 }
 
@@ -274,6 +336,34 @@ impl StreamBus {
         rx
     }
 
+    /// Opt-in `dropOldest` lossy subscriber queue with bounded capacity.
+    /// Does not affect default blocking subscribers or nonblocking feedback admission.
+    pub fn subscribe_lossy(
+        &self,
+        stream_name: &str,
+        capacity: usize,
+    ) -> LossyQueueReceiver<StreamRecord> {
+        let (tx, rx) = lossy_channel(capacity);
+        let topic = self.get_or_create_topic(stream_name);
+        topic.lossy_senders.write().push((tx, None));
+        topic.has_lossy.store(true, Ordering::Release);
+        rx
+    }
+
+    /// Opt-in `dropOldest` lossy subscriber queue with a pre-enqueue predicate filter.
+    pub fn subscribe_lossy_filtered(
+        &self,
+        stream_name: &str,
+        filter: SubscriberFilter,
+        capacity: usize,
+    ) -> LossyQueueReceiver<StreamRecord> {
+        let (tx, rx) = lossy_channel(capacity);
+        let topic = self.get_or_create_topic(stream_name);
+        topic.lossy_senders.write().push((tx, Some(filter)));
+        topic.has_lossy.store(true, Ordering::Release);
+        rx
+    }
+
     /// Records not delivered because their subscriber closed after the
     /// request had already started committing (accept-once lifecycle
     /// losses; see [`StreamBus::publish_batch`]).
@@ -299,9 +389,10 @@ impl StreamBus {
         topic: &Topic,
         record: StreamRecord,
     ) -> Result<usize, PublishError> {
-        // Lock-free fast path: 1 live subscriber and no batch publisher holding admission gate.
+        // Lock-free fast path: 1 live subscriber and no batch publisher or lossy subscriber.
+        let has_lossy = topic.has_lossy.load(Ordering::Relaxed);
         let mut record = Some(record);
-        if !topic.batch_active.load(Ordering::Relaxed) {
+        if !topic.batch_active.load(Ordering::Relaxed) && !has_lossy {
             let mut was_closed = false;
             let mut single_full_tx: Option<RecordTx> = None;
             let mut should_yield = false;
@@ -355,6 +446,11 @@ impl StreamBus {
             }
         }
         let record = record.unwrap();
+        let lossy_delivered = if has_lossy {
+            topic.deliver_lossy(&record)
+        } else {
+            0
+        };
 
         let _admission = match topic.gate.try_lock() {
             Ok(guard) => guard,
@@ -369,7 +465,7 @@ impl StreamBus {
         {
             let senders = topic.senders.read();
             if senders.is_empty() {
-                return Ok(0);
+                return Ok(lossy_delivered);
             }
             if senders.len() == 1 {
                 let (sender, filter) = &senders[0];
@@ -509,9 +605,14 @@ impl StreamBus {
         };
         topic.batch_active.store(true, Ordering::Release);
         let _batch_guard = BatchActiveGuard(&topic.batch_active);
+        let lossy_delivered = if topic.has_lossy.load(Ordering::Relaxed) {
+            topic.deliver_lossy_batch(&records)
+        } else {
+            0
+        };
         let (registered, mut selected) = topic.snapshot();
         if registered == 0 {
-            return Ok(0);
+            return Ok(lossy_delivered);
         }
         if selected.len() < registered {
             topic.purge_closed();
