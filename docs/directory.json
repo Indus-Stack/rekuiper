@@ -34,6 +34,10 @@
           "path": "reliability/qualification_and_scope"
         },
         {
+          "title": "Durable Execution & Recovery Contracts",
+          "path": "reliability/durable_execution"
+        },
+        {
           "title": "Differential Qualification & Chaos Testing",
           "path": "guide/differential_testing"
         },

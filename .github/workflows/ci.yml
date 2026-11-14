@@ -2,9 +2,9 @@ name: Rust CI
 
 on:
   push:
-    branches: [ master, main, rekuiper-dev ]
+    branches: [ master, main, rekuiper-dev, dev ]
   pull_request:
-    branches: [ master, main, rekuiper-dev ]
+    branches: [ master, main, rekuiper-dev, dev ]
   workflow_dispatch:
 
 concurrency:

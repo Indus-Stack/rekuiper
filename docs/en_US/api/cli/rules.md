@@ -232,24 +232,41 @@ Example output:
 }
 ```
 
-## Validate a Rule
+## Validate a Rule or Manifest
 
-Use this command to validate the syntax and configuration of a rule without running it:
+Use this command to validate an online rule definition against a running server or validate a declarative manifest offline without starting rules:
 
 ```shell
 validate rule $rule_name '$rule_json' | validate rule $rule_name -f $rule_def_file
+validate $manifest_path [--allow-unresolved-env] [--json]
 ```
 
 ### Validate via Command Line
 
 ```shell
 # bin/kuiper validate rule rule1 '{"sql": "SELECT * from demo","actions": [{"log":  {}},{"mqtt":  {"server":"tcp://127.0.0.1:1883", "topic":"demoSink"}}]}'
-The rule has been successfully validated and is confirmed to be correct.
 ```
 
 ### Validate via File
 
 ```shell
 # bin/kuiper validate rule rule1 -f /tmp/rule.txt
-The rule has been successfully validated and is confirmed to be correct.
+```
+
+Online rule validation returns the server JSON response with `valid`, `sources`, secret-redacted `plan`, `effective_guarantees`, `limiting_component`, and `diagnostics`.
+
+### Validate a Declarative Manifest Offline
+
+```shell
+# rekuiper-cli validate ./manifests --json
+```
+
+Offline manifest validation parses each rule through the same typed capability planner used by the REST API. When `--json` is set, the command prints `summary` and secret-redacted `plans` entries (`[REDACTED]` for credentials and URL userinfo).
+
+## Explain a Rule
+
+Use this command to retrieve the parsed SQL plan, redacted options and actions, `effective_guarantees`, and `limiting_component` for an existing rule:
+
+```shell
+# rekuiper-cli explain rule rule1
 ```

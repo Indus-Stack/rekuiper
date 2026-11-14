@@ -2,6 +2,107 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use serde_json::{json, Value};
 
+/// Validates a declarative manifest using both structural SQL/catalog validation
+/// and the shared typed planner (`rekuiper_sql::planning::build_typed_plan_report`).
+pub fn validate_manifest_with_plans(
+    manifest: &rekuiper_core::model::DeclarativeManifest,
+) -> Result<
+    (
+        rekuiper_core::model::ValidationSummary,
+        Vec<rekuiper_sql::planning::TypedPlanReport>,
+    ),
+    Vec<serde_json::Value>,
+> {
+    let summary = rekuiper_sql::validator::validate_manifest(manifest).map_err(|diags| {
+        diags
+            .into_iter()
+            .map(|d| serde_json::json!({ "message": d.to_string() }))
+            .collect::<Vec<_>>()
+    })?;
+
+    let mut streams = Vec::new();
+    for (name, ddl) in &manifest.streams {
+        let mut parser = rekuiper_sql::parser::Parser::new(ddl);
+        if let Ok(stmt) = parser.parse_create_stream() {
+            let source_type = stmt
+                .options
+                .iter()
+                .find(|(k, _)| k.eq_ignore_ascii_case("type"))
+                .map(|(_, v)| v.clone());
+            let lossy_queue = rekuiper_core::resolve_buffer_full_policy(&stmt.options)
+                .is_ok_and(|p| p == rekuiper_core::BufferFullPolicy::DropOldest);
+            let replayable = source_type
+                .as_deref()
+                .is_some_and(|t| t.eq_ignore_ascii_case("kafka"))
+                || stmt.options.iter().any(|(k, v)| {
+                    k.eq_ignore_ascii_case("replayable") && v.eq_ignore_ascii_case("true")
+                });
+            let schema = stmt
+                .fields
+                .iter()
+                .map(|c| {
+                    let ty = match c.data_type.to_ascii_lowercase().as_str() {
+                        "bigint" | "int" | "integer" | "long" => {
+                            rekuiper_sql::planning::ExprType::Integer
+                        }
+                        "float" | "double" | "number" => rekuiper_sql::planning::ExprType::Float,
+                        "string" | "varchar" | "text" => rekuiper_sql::planning::ExprType::String,
+                        "boolean" | "bool" => rekuiper_sql::planning::ExprType::Boolean,
+                        _ => rekuiper_sql::planning::ExprType::Any,
+                    };
+                    (c.name.clone(), ty)
+                })
+                .collect();
+            streams.push(rekuiper_sql::planning::StreamCatalogEntry {
+                name: name.clone(),
+                source_type,
+                lossy_queue,
+                replayable,
+                qualification: rekuiper_core::contracts::QualificationLevel::ComponentTested,
+                schema,
+            });
+        }
+    }
+
+    let mut plans = Vec::new();
+    let mut plan_errors = Vec::new();
+    let rules_map = manifest
+        .rules
+        .clone()
+        .into_rules_map()
+        .map_err(|msg| vec![serde_json::json!({ "message": msg })])?;
+    for (rule_id, rule) in &rules_map {
+        let report = rekuiper_sql::planning::build_typed_plan_report(
+            &rekuiper_sql::planning::PlanCatalogInput {
+                rule_id: rule_id.clone(),
+                sql: rule.sql.clone(),
+                options: rule.options.clone(),
+                actions: rule.actions.clone(),
+                streams: streams.clone(),
+            },
+        );
+        if !report.valid {
+            for diag in &report.diagnostics {
+                plan_errors.push(serde_json::json!({
+                    "rule_id": rule_id,
+                    "code": diag.code,
+                    "location": diag.location,
+                    "component": diag.component,
+                    "message": diag.message,
+                    "effective_guarantees": report.effective_guarantees,
+                }));
+            }
+        }
+        plans.push(report);
+    }
+
+    if !plan_errors.is_empty() {
+        return Err(plan_errors);
+    }
+
+    Ok((summary, plans))
+}
+
 #[derive(Parser, Debug)]
 #[command(name = "rekuiper")]
 #[command(
@@ -835,10 +936,17 @@ pub async fn run_cli() -> Result<()> {
                     p,
                     allow_unresolved_env,
                 ) {
-                    Ok(manifest) => match rekuiper_sql::validator::validate_manifest(&manifest) {
-                        Ok(summary) => {
+                    Ok(manifest) => match validate_manifest_with_plans(&manifest) {
+                        Ok((summary, plans)) => {
                             if is_json_output {
-                                println!("{}", serde_json::to_string_pretty(&summary).unwrap());
+                                println!(
+                                    "{}",
+                                    serde_json::to_string_pretty(&serde_json::json!({
+                                        "summary": summary,
+                                        "plans": plans,
+                                    }))
+                                    .unwrap()
+                                );
                             } else {
                                 println!(
                                         "✔ Validated manifest '{}': {} stream(s), {} table(s), {} rule(s), {} connection(s)",

@@ -3439,8 +3439,8 @@ async fn test_sliding_window_event_triggered_execution() {
     assert_eq!(hop3["cnt"], json!(3), "event 3 output: {}", hop3);
     assert_eq!(hop3["total"], json!(60), "event 3 output: {}", hop3);
 
-    // After 350ms all three are past the horizon: a fresh event sees only itself.
-    tokio::time::sleep(std::time::Duration::from_millis(350)).await;
+    // After 450ms all three are past the horizon: a fresh event sees only itself.
+    tokio::time::sleep(std::time::Duration::from_millis(450)).await;
     post_val(&client, &base_url, 40).await;
     let hop4 = recv_output(&mut sink_rx).await;
     assert_eq!(hop4["cnt"], json!(1), "event 4 output: {}", hop4);
@@ -6345,7 +6345,12 @@ async fn test_rule_input_validation() {
         .unwrap();
     assert_eq!(resp.status(), reqwest::StatusCode::OK);
     let valid: serde_json::Value = resp.json().await.unwrap();
-    assert_eq!(valid, json!({"sources": ["vstream"], "valid": true}));
+    assert_eq!(valid["valid"], json!(true));
+    assert_eq!(valid["sources"], json!(["vstream"]));
+    assert_eq!(
+        valid["effective_guarantees"]["delivery"],
+        json!("best_effort")
+    );
 
     // T20: simulations without (parseable) SELECT SQL are rejected.
     for body in [

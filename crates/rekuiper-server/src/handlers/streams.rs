@@ -173,20 +173,10 @@ pub async fn create_stream(
         let mut parser = Parser::new(&sql);
         match parser.parse_create_stream() {
             Ok(stmt) => {
+                if let Err(msg) = rekuiper_core::resolve_buffer_full_policy(&stmt.options) {
+                    return (StatusCode::BAD_REQUEST, msg).into_response();
+                }
                 for (k, v) in &stmt.options {
-                    if k.eq_ignore_ascii_case("buffer_full_policy")
-                        && !v.eq_ignore_ascii_case("block")
-                        && !v.eq_ignore_ascii_case("dropOldest")
-                    {
-                        return (
-                            StatusCode::BAD_REQUEST,
-                            format!(
-                                "Invalid buffer_full_policy: '{}', must be 'block' or 'dropOldest'",
-                                v
-                            ),
-                        )
-                            .into_response();
-                    }
                     if (k.eq_ignore_ascii_case("offset_reset")
                         || k.eq_ignore_ascii_case("offsetreset"))
                         && !v.eq_ignore_ascii_case("earliest")
@@ -360,20 +350,10 @@ pub async fn update_stream(
         Ok(s) => s,
         Err(e) => return (StatusCode::BAD_REQUEST, format!("Invalid SQL: {}", e)).into_response(),
     };
+    if let Err(msg) = rekuiper_core::resolve_buffer_full_policy(&stmt.options) {
+        return (StatusCode::BAD_REQUEST, msg).into_response();
+    }
     for (k, v) in &stmt.options {
-        if k.eq_ignore_ascii_case("buffer_full_policy")
-            && !v.eq_ignore_ascii_case("block")
-            && !v.eq_ignore_ascii_case("dropOldest")
-        {
-            return (
-                StatusCode::BAD_REQUEST,
-                format!(
-                    "Invalid buffer_full_policy: '{}', must be 'block' or 'dropOldest'",
-                    v
-                ),
-            )
-                .into_response();
-        }
         if (k.eq_ignore_ascii_case("offset_reset") || k.eq_ignore_ascii_case("offsetreset"))
             && !v.eq_ignore_ascii_case("earliest")
             && !v.eq_ignore_ascii_case("latest")

@@ -1,0 +1,2544 @@
+{
+  "schema_version": 1,
+  "tickets": [
+    {
+      "id": "C01",
+      "owns": "core/contracts/{identity,position,error}.rs (new); core/lib.rs",
+      "build_after": [],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "component_done",
+      "evidence": [
+        "docs/implementation/tickets/C01.md"
+      ]
+    },
+    {
+      "id": "C02",
+      "owns": "core/contracts/capability.rs (new)",
+      "build_after": [
+        "C01"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "component_done",
+      "evidence": [
+        "docs/implementation/tickets/C02.md"
+      ]
+    },
+    {
+      "id": "C03",
+      "owns": "core/contracts/{clock,control}.rs (new)",
+      "build_after": [
+        "C01"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "component_done",
+      "evidence": [
+        "docs/implementation/tickets/C03.md"
+      ]
+    },
+    {
+      "id": "C04",
+      "owns": "core/contracts/{state,checkpoint,effect}.rs (new)",
+      "build_after": [
+        "C01",
+        "C02",
+        "C03"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "component_done",
+      "evidence": [
+        "docs/implementation/tickets/C04.md"
+      ]
+    },
+    {
+      "id": "C05",
+      "owns": "core/contracts/fixture.rs (new); test/fixtures/contracts/ (new)",
+      "build_after": [
+        "C01",
+        "C03"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "component_done",
+      "evidence": [
+        "docs/implementation/tickets/C05.md"
+      ]
+    },
+    {
+      "id": "C06",
+      "owns": "docs/implementation/dependencies.md (new); workspace manifests/lockfile only when required",
+      "build_after": [],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "C07",
+      "owns": "core/testing/{source,state_store,effect_sink}.rs (new, test support)",
+      "build_after": [
+        "C04",
+        "C05"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "component_done",
+      "evidence": [
+        "docs/implementation/tickets/C07.md"
+      ]
+    },
+    {
+      "id": "C08",
+      "owns": "docs/implementation/backlog.json; test/tools/check_backlog.py (new)",
+      "build_after": [],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "component_done",
+      "evidence": [
+        "docs/implementation/tickets/C08.md"
+      ]
+    },
+    {
+      "id": "A01-T01",
+      "owns": "crates/rekuiper-server/tests support; existing test_issue18_sinks.rs",
+      "build_after": [],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "A01-T02",
+      "owns": "server/engine/sinks.rs; conn/http.rs",
+      "build_after": [
+        "A01-T01"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "A02-T01",
+      "owns": "conn/image_sink.rs; conn/image_paths.rs (new)",
+      "build_after": [],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "A02-T02",
+      "owns": "conn/image_io/unix.rs (new)",
+      "build_after": [
+        "A02-T01"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [
+        {
+          "condition": "Use a vetted API registered through C06 if needed.",
+          "after": [
+            "C06"
+          ]
+        }
+      ],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "A02-T03",
+      "owns": "conn/image_io/windows.rs (new)",
+      "build_after": [
+        "A02-T01"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "A02-T04",
+      "owns": "conn/image_sink.rs; conn/image_io/mod.rs (new)",
+      "build_after": [
+        "A02-T02",
+        "A02-T03"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "A07-T01",
+      "owns": "sql/eval/array.rs",
+      "build_after": [],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "A07-T02",
+      "owns": "sql/eval/array.rs; array function documentation",
+      "build_after": [],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "A07-T03",
+      "owns": "SQL/connector compatibility tests; docs/implementation/kept-features.md",
+      "build_after": [],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P01-T01",
+      "owns": "crates/rekuiper-sql/tests; test/fixtures/semantics/ (new)",
+      "build_after": [],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P01-T02",
+      "owns": "sql/functions.rs; sql/planning/types.rs (new)",
+      "build_after": [
+        "C02"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "component_done",
+      "evidence": [
+        "docs/implementation/tickets/P01-T02.md"
+      ]
+    },
+    {
+      "id": "P01-T03",
+      "owns": "sql/planning/capabilities.rs (new)",
+      "build_after": [
+        "C02",
+        "P01-T02"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "component_done",
+      "evidence": [
+        "docs/implementation/tickets/P01-T03.md"
+      ]
+    },
+    {
+      "id": "P01-T04",
+      "owns": "server/handlers/rules.rs; cli/lib.rs; explain/validate adapters",
+      "build_after": [
+        "P01-T03"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "component_done",
+      "evidence": [
+        "crates/rekuiper-sql/src/planning/adapter.rs",
+        "crates/rekuiper-sql/src/planning/mod.rs",
+        "crates/rekuiper-server/src/handlers/rules.rs",
+        "crates/rekuiper-cli/src/lib.rs",
+        "crates/rekuiper-server/tests/ticket_p01_t04.rs",
+        "crates/rekuiper-cli/tests/ticket_p01_t04.rs",
+        "docs/implementation/tickets/P01-T04.md",
+        "docs/en_US/reliability/durable_execution.md"
+      ]
+    },
+    {
+      "id": "P01-T05",
+      "owns": "server/handlers/plugins.rs; schema manager tests",
+      "build_after": [],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "component_done",
+      "evidence": [
+        "docs/implementation/tickets/P01-T05.md"
+      ]
+    },
+    {
+      "id": "P01-T06",
+      "owns": "docs/implementation/config-contracts.md; targeted config tests",
+      "build_after": [],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P01-T10",
+      "owns": "sql/planning/functions/numeric.rs (new); sql/eval/math.rs",
+      "build_after": [
+        "P01-T02",
+        "P01-T01"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P01-T11",
+      "owns": "sql/planning/functions/string.rs (new); sql/eval/string.rs",
+      "build_after": [
+        "P01-T02",
+        "P01-T01"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P01-T12",
+      "owns": "sql/planning/functions/array_object.rs (new); sql/eval/array.rs",
+      "build_after": [
+        "P01-T02",
+        "P01-T01"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P01-T13",
+      "owns": "sql/planning/functions/json.rs (new); sql/eval/json.rs",
+      "build_after": [
+        "P01-T02",
+        "P01-T01"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P01-T14",
+      "owns": "sql/planning/functions/datetime.rs (new); sql/eval/datetime.rs",
+      "build_after": [
+        "P01-T02",
+        "P01-T01"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P01-T15",
+      "owns": "sql/planning/functions/aggregate.rs (new); sql/eval/aggregate.rs",
+      "build_after": [
+        "P01-T02",
+        "P01-T01"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P01-T16",
+      "owns": "sql/planning/functions/analytic.rs (new); sql/eval/analytic.rs",
+      "build_after": [
+        "P01-T02",
+        "P01-T01"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P01-T17",
+      "owns": "sql/planning/functions/transform.rs (new); sql/eval/transform.rs",
+      "build_after": [
+        "P01-T02",
+        "P01-T01"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P02-T01",
+      "owns": "core/resources/budget.rs (new)",
+      "build_after": [
+        "C01"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "component_done",
+      "evidence": [
+        "docs/implementation/tickets/P02-T01.md"
+      ]
+    },
+    {
+      "id": "P02-T02",
+      "owns": "core/runtime.rs; core/resources/lossy_queue.rs (new)",
+      "build_after": [
+        "P02-T01"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "component_done",
+      "evidence": [
+        "docs/implementation/tickets/P02-T02.md"
+      ]
+    },
+    {
+      "id": "P02-T03",
+      "owns": "server/engine/sources.rs; stream/DDL validation; core runtime adapters",
+      "build_after": [
+        "P02-T02",
+        "P01-T03"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "component_done",
+      "evidence": [
+        "docs/implementation/tickets/P02-T03.md",
+        "crates/rekuiper-server/tests/ticket_p02_t03.rs"
+      ]
+    },
+    {
+      "id": "P02-T04",
+      "owns": "server/engine/operators.rs; DAG integration",
+      "build_after": [
+        "P02-T01",
+        "C03"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "component_done",
+      "evidence": [
+        "crates/rekuiper-server/src/engine/operators.rs",
+        "crates/rekuiper-server/src/engine/dag.rs",
+        "crates/rekuiper-server/tests/ticket_p02_t04.rs",
+        "docs/implementation/tickets/P02-T04.md",
+        "docs/en_US/reliability/durable_execution.md"
+      ]
+    },
+    {
+      "id": "P02-T05",
+      "owns": "server/engine/batching.rs (new); sinks adapter",
+      "build_after": [
+        "P02-T01",
+        "C03",
+        "C04"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "component_done",
+      "evidence": [
+        "docs/implementation/tickets/P02-T05.md"
+      ]
+    },
+    {
+      "id": "P02-T06",
+      "owns": "server/engine/retry.rs (new)",
+      "build_after": [
+        "C04",
+        "C03",
+        "P02-T01"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "component_done",
+      "evidence": [
+        "docs/implementation/tickets/P02-T06.md"
+      ]
+    },
+    {
+      "id": "P02-T07",
+      "owns": "server/engine/joins.rs; server/engine/lookup_runtime.rs (new)",
+      "build_after": [
+        "P02-T01",
+        "C03"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P02-T08",
+      "owns": "conn/scheduling.rs (new); poll-source adapters",
+      "build_after": [
+        "C03"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P03-T01",
+      "owns": "core/reliability/sqlite.rs (new)",
+      "build_after": [
+        "C04",
+        "C07"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "component_done",
+      "evidence": [
+        "docs/implementation/tickets/P03-T01.md"
+      ]
+    },
+    {
+      "id": "P03-T02",
+      "owns": "core/reliability/delivery.rs (new)",
+      "build_after": [
+        "C04"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "component_done",
+      "evidence": [
+        "docs/implementation/tickets/P03-T02.md"
+      ]
+    },
+    {
+      "id": "P03-T03",
+      "owns": "server/engine/reliable_input.rs (new)",
+      "build_after": [
+        "C03",
+        "P03-T02"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "component_done",
+      "evidence": [
+        "docs/implementation/tickets/P03-T03.md"
+      ]
+    },
+    {
+      "id": "P03-T04",
+      "owns": "core/reliability/coordinator.rs (new)",
+      "build_after": [
+        "C04",
+        "C07",
+        "P03-T02"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "component_done",
+      "evidence": [
+        "docs/implementation/tickets/P03-T04.md"
+      ]
+    },
+    {
+      "id": "P03-T05",
+      "owns": "server/engine/state/analytic_count_tumble.rs (new); runtime/windows adapters",
+      "build_after": [
+        "C04"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "component_done",
+      "evidence": [
+        "docs/implementation/tickets/P03-T05.md"
+      ]
+    },
+    {
+      "id": "P03-T06",
+      "owns": "conn/kafka.rs; Kafka position codec",
+      "build_after": [
+        "C01",
+        "C04"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "component_done",
+      "evidence": [
+        "docs/implementation/tickets/P03-T06.md"
+      ]
+    },
+    {
+      "id": "P03-T07",
+      "owns": "server/engine/runtime.rs; reliable engine registration",
+      "build_after": [
+        "P03-T01",
+        "P03-T03",
+        "P03-T04",
+        "P03-T05",
+        "P03-T06",
+        "P02-T05",
+        "P02-T06"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "component_done",
+      "evidence": [
+        "docs/implementation/tickets/P03-T07.md"
+      ]
+    },
+    {
+      "id": "P03-T08",
+      "owns": "core/reliability/outbox.rs (new)",
+      "build_after": [
+        "P03-T01",
+        "P03-T02"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "component_done",
+      "evidence": [
+        "docs/implementation/tickets/P03-T08.md"
+      ]
+    },
+    {
+      "id": "P03-T09",
+      "owns": "server/engine/outbox_dispatch.rs (new)",
+      "build_after": [
+        "P03-T08",
+        "P02-T06",
+        "P02-T01"
+      ],
+      "integrate_after": [
+        "P11-T01"
+      ],
+      "conditional_dependencies": [],
+      "status": "component_done",
+      "evidence": [
+        "docs/implementation/tickets/P03-T09.md"
+      ]
+    },
+    {
+      "id": "P03-T10",
+      "owns": "core/reliability/generation.rs (new); manager lifecycle adapters",
+      "build_after": [
+        "P03-T01",
+        "P03-T04"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "component_done",
+      "evidence": [
+        "docs/implementation/tickets/P03-T10.md"
+      ]
+    },
+    {
+      "id": "P03-T11",
+      "owns": "server/engine/state/hop_slide.rs (new)",
+      "build_after": [
+        "C04",
+        "P03-T05"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "component_done",
+      "evidence": [
+        "docs/implementation/tickets/P03-T11.md"
+      ]
+    },
+    {
+      "id": "P03-T12",
+      "owns": "server/engine/state/session_state.rs (new)",
+      "build_after": [
+        "C04",
+        "P03-T05"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "component_done",
+      "evidence": [
+        "docs/implementation/tickets/P03-T12.md",
+        "crates/rekuiper-server/tests/ticket_p03_t12.rs"
+      ]
+    },
+    {
+      "id": "P03-T13",
+      "owns": "server/engine/state/joins_cep.rs (new)",
+      "build_after": [
+        "C04",
+        "P03-T05"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "component_done",
+      "evidence": [
+        "docs/implementation/tickets/P03-T13.md",
+        "crates/rekuiper-server/tests/ticket_p03_t13.rs"
+      ]
+    },
+    {
+      "id": "P03-T14",
+      "owns": "server/engine/barrier_alignment.rs (new)",
+      "build_after": [
+        "C03",
+        "P03-T04",
+        "P02-T01"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "component_done",
+      "evidence": [
+        "docs/implementation/tickets/P03-T14.md",
+        "crates/rekuiper-server/tests/ticket_p03_t14.rs"
+      ]
+    },
+    {
+      "id": "P03-T15",
+      "owns": "server/engine/{runtime,windows,dag}.rs",
+      "build_after": [
+        "P03-T07",
+        "P03-T10",
+        "P03-T11",
+        "P03-T12",
+        "P03-T13",
+        "P03-T14"
+      ],
+      "integrate_after": [
+        "P04-T06"
+      ],
+      "conditional_dependencies": [],
+      "status": "component_done",
+      "evidence": [
+        "crates/rekuiper-server/src/engine/runtime.rs",
+        "crates/rekuiper-server/src/engine/windows.rs",
+        "crates/rekuiper-server/src/engine/dag.rs",
+        "crates/rekuiper-server/tests/ticket_p03_t15.rs",
+        "docs/implementation/tickets/P03-T15.md",
+        "docs/en_US/reliability/durable_execution.md"
+      ]
+    },
+    {
+      "id": "P03-T16",
+      "owns": "conn/rabbitmq.rs; source acknowledgement adapter",
+      "build_after": [
+        "P03-T02",
+        "P03-T08",
+        "P03-T09"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P03-T17",
+      "owns": "conn/kafka_group.rs (new); optional client registration",
+      "build_after": [
+        "C06",
+        "P03-T02",
+        "P03-T10"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P03-T18",
+      "owns": "core/reliability/savepoint.rs (new)",
+      "build_after": [
+        "P03-T01",
+        "P03-T10"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "component_done",
+      "evidence": [
+        "docs/implementation/tickets/P03-T18.md",
+        "crates/rekuiper-core/tests/ticket_p03_t18.rs"
+      ]
+    },
+    {
+      "id": "P03-T19",
+      "owns": "server/handlers/recovery.rs (new); routes/state; cli/lib.rs",
+      "build_after": [
+        "P03-T15",
+        "P03-T18",
+        "P11-T03",
+        "P13-T02"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P03-T20",
+      "owns": "crates/rekuiper-server/tests/qualification_harness.rs; reliability fixtures",
+      "build_after": [
+        "P03-T07",
+        "P03-T10"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [
+        {
+          "condition": "Add outbox/segment/compaction failpoints when P03-T09/P03-T21 are integrated. Their evidence is mandatory for those capabilities, but their absence does not block checkpoint-only qualification.",
+          "after": [
+            "P03-T09",
+            "P03-T21"
+          ]
+        }
+      ],
+      "status": "component_done",
+      "evidence": [
+        "docs/implementation/tickets/P03-T20.md",
+        "crates/rekuiper-server/tests/qualification_harness.rs",
+        "crates/rekuiper-server/tests/ticket_p03_t20.rs"
+      ]
+    },
+    {
+      "id": "P03-T21",
+      "owns": "core/reliability/segmented_outbox.rs (new)",
+      "build_after": [
+        "P03-T08",
+        "P03-T20"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P03-T22",
+      "owns": "conn/kafka_transactions.rs (new); reliable action adapter",
+      "build_after": [
+        "P03-T17",
+        "P03-T15"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P03-T23",
+      "owns": "core/reliability/kafka_state.rs; Kafka transaction adapter (new)",
+      "build_after": [
+        "P03-T22",
+        "P03-T15"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P04-T01",
+      "owns": "sql/{ast,parser,validator}.rs",
+      "build_after": [
+        "P01-T02"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P04-T02",
+      "owns": "sql/planning/delayed.rs (new)",
+      "build_after": [
+        "P04-T01"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P04-T03",
+      "owns": "server/engine/lead/state.rs (new)",
+      "build_after": [
+        "P04-T02",
+        "P02-T01"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P04-T04",
+      "owns": "server/engine/lead/control.rs (new)",
+      "build_after": [
+        "P04-T03",
+        "C03"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P04-T05",
+      "owns": "server/engine/runtime.rs; delayed plan registration",
+      "build_after": [
+        "P04-T03",
+        "P04-T04",
+        "P01-T03"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P04-T06",
+      "owns": "server/engine/lead/snapshot.rs (new)",
+      "build_after": [
+        "P04-T03",
+        "C04"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P04-T07",
+      "owns": "server delayed integration tests; qualification_harness",
+      "build_after": [
+        "P04-T05",
+        "P04-T06",
+        "P03-T15",
+        "P06-T02"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P05-T01",
+      "owns": "server/engine/time/watermark.rs (new)",
+      "build_after": [
+        "C03"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "component_done",
+      "evidence": [
+        "docs/implementation/tickets/P05-T01.md",
+        "crates/rekuiper-server/tests/ticket_p05_t01.rs"
+      ]
+    },
+    {
+      "id": "P05-T02",
+      "owns": "server/engine/time/idleness.rs (new)",
+      "build_after": [
+        "P05-T01"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P05-T03",
+      "owns": "sql/planning/time_policy.rs (new); engine time contracts",
+      "build_after": [
+        "P01-T03",
+        "C01"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P05-T04",
+      "owns": "server/engine/time/alignment.rs (new)",
+      "build_after": [
+        "P05-T01",
+        "P05-T02",
+        "P02-T01"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P05-T05",
+      "owns": "server/engine/{windows,joins,dag}.rs",
+      "build_after": [
+        "P05-T02",
+        "P05-T03",
+        "P05-T04",
+        "P03-T11",
+        "P03-T12"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [
+        {
+          "condition": "Enable correction modes only when P09 supplies their state/output semantics.",
+          "after": []
+        }
+      ],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P05-T06",
+      "owns": "crates/rekuiper-server/tests temporal conformance",
+      "build_after": [
+        "P05-T05",
+        "P06-T02"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [
+        {
+          "condition": "Qualify existing final/append windows independently. When P09-T06 supplies correction-producing execution, compare its update/retract results against a reference table; correction capability stays unqualified until those cases pass.",
+          "after": [
+            "P09-T06"
+          ]
+        }
+      ],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P06-T01",
+      "owns": "server/testing/fixture_runner.rs (new)",
+      "build_after": [
+        "C05",
+        "C07"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P06-T02",
+      "owns": "cli/lib.rs; CLI fixture/report modules (new)",
+      "build_after": [
+        "P06-T01"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P06-T03",
+      "owns": "server/handlers/ruletest.rs; Studio test adapters",
+      "build_after": [
+        "P06-T01"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P06-T04",
+      "owns": "server/engine/dlq.rs; bounded dispatch adapter",
+      "build_after": [
+        "P02-T01"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [
+        {
+          "condition": "Add versioned source/operator/rule/error envelopes and land bounded legacy dispatch independently. Reuse current retry behavior until P02-T06 is integrated.",
+          "after": [
+            "P02-T06"
+          ]
+        },
+        {
+          "condition": "Enable reliable DLQ only after P03-T08/P03-T09 provide durable enqueue/delivery and its failure tests pass. Until then reject reliable-DLQ configuration; bounded legacy dispatch does not wait for the outbox.",
+          "after": [
+            "P03-T08",
+            "P03-T09"
+          ]
+        }
+      ],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P06-T05",
+      "owns": "server/engine/provenance.rs (new)",
+      "build_after": [
+        "C01",
+        "P02-T01"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P06-T06",
+      "owns": "server/handlers/replay.rs (new); replay executor",
+      "build_after": [
+        "P06-T01",
+        "P06-T05",
+        "P11-T03",
+        "P13-T02"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P06-T07",
+      "owns": "server/handlers/{metrics,rules}.rs; existing status/explain adapters",
+      "build_after": [
+        "C02",
+        "P02-T01"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [
+        {
+          "condition": "Add bounded-label metrics as each producer becomes available: queue age/bytes and per-stage cost first, checkpoint/cursor metrics after P03-T07, and DLQ metrics after P06-T04. Absent producers must not delay existing metric families or falsely report healthy durability.",
+          "after": [
+            "P03-T07",
+            "P06-T04"
+          ]
+        }
+      ],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P07-T01",
+      "owns": "conn/telemetry/model.rs (new); otlp codec fixtures",
+      "build_after": [
+        "C01"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P07-T02",
+      "owns": "conn/telemetry/metrics.rs (new)",
+      "build_after": [
+        "P07-T01",
+        "C04"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P07-T03",
+      "owns": "conn/telemetry/http.rs (new); existing OTLP routes",
+      "build_after": [
+        "P07-T01",
+        "C06"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P07-T04",
+      "owns": "conn/telemetry/grpc.rs (new)",
+      "build_after": [
+        "P07-T01",
+        "C06"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P07-T05",
+      "owns": "conn/telemetry/policy.rs (new)",
+      "build_after": [
+        "P07-T01",
+        "P02-T01"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P07-T06",
+      "owns": "server/engine/telemetry.rs (new); metadata/schema registration",
+      "build_after": [
+        "C02",
+        "P07-T01",
+        "P02-T05"
+      ],
+      "integrate_after": [
+        "P03-T09"
+      ],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P07-T07",
+      "owns": "telemetry service fixtures; server qualification harness",
+      "build_after": [
+        "P07-T06"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [
+        {
+          "condition": "Run each available adapter independently; reliable-profile claims additionally require P03-T20 evidence, while lightweight JSON qualification can proceed earlier.",
+          "after": [
+            "P03-T20"
+          ]
+        }
+      ],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P07-T08",
+      "owns": "conn/telemetry/histogram.rs (new)",
+      "build_after": [
+        "P07-T01"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P08-T01",
+      "owns": "server/engine/alerts/lifecycle.rs (new)",
+      "build_after": [
+        "C03",
+        "C04"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P08-T02",
+      "owns": "server/engine/alerts/conditions.rs (new)",
+      "build_after": [
+        "P08-T01"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P08-T03",
+      "owns": "server/engine/alerts/absence.rs (new)",
+      "build_after": [
+        "P08-T01",
+        "P02-T01"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P08-T04",
+      "owns": "server/engine/cep/pattern.rs (new); planner pattern descriptors",
+      "build_after": [
+        "C03",
+        "C04",
+        "P02-T01"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P08-T05",
+      "owns": "server/engine/alerts/notifications.rs (new)",
+      "build_after": [
+        "P08-T01",
+        "P08-T02"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P08-T06",
+      "owns": "server/engine/alerts/snapshot.rs; runtime/DAG adapters",
+      "build_after": [
+        "P08-T02",
+        "P08-T03",
+        "P08-T04",
+        "P08-T05",
+        "P03-T15"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P08-T07",
+      "owns": "docs/examples/alerts/ (new); Studio metadata; alert tests",
+      "build_after": [
+        "P08-T06",
+        "P06-T02"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P09-T01",
+      "owns": "core/relations/change.rs (new)",
+      "build_after": [
+        "C01"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P09-T02",
+      "owns": "conn/cdc/decode.rs (new)",
+      "build_after": [
+        "P09-T01"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P09-T03",
+      "owns": "core/relations/store.rs (new)",
+      "build_after": [
+        "P09-T01",
+        "C04"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P09-T04",
+      "owns": "server/engine/relations/temporal_join.rs (new)",
+      "build_after": [
+        "P09-T03",
+        "P05-T01"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P09-T05",
+      "owns": "core/relations/aggregate.rs (new)",
+      "build_after": [
+        "P09-T01",
+        "P09-T03"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P09-T06",
+      "owns": "server/engine/relations/incremental_join.rs (new)",
+      "build_after": [
+        "P09-T03",
+        "P09-T05",
+        "P10-T02"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P09-T07",
+      "owns": "server/handlers/views.rs (new); relation runtime",
+      "build_after": [
+        "P09-T06",
+        "P11-T03"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P09-T08",
+      "owns": "conn/sql.rs; server/engine/sinks.rs SQL adapter",
+      "build_after": [
+        "P09-T01",
+        "P02-T05",
+        "P03-T08"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P09-T09",
+      "owns": "CDC service fixtures; relation qualification harness",
+      "build_after": [
+        "P09-T02",
+        "P09-T04",
+        "P09-T07",
+        "P09-T08",
+        "P03-T20"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P09-T10",
+      "owns": "core/relations/aggregate_ordered.rs (new)",
+      "build_after": [
+        "P09-T05"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P09-T11",
+      "owns": "core/relations/aggregate_stats.rs (new)",
+      "build_after": [
+        "P09-T05"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P09-T12",
+      "owns": "core/relations/aggregate_fallback.rs (new)",
+      "build_after": [
+        "P09-T05",
+        "P01-T02"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P09-T13",
+      "owns": "conn/cdc/postgres_snapshot.rs (new)",
+      "build_after": [
+        "P09-T01",
+        "C06",
+        "C04"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P09-T14",
+      "owns": "conn/cdc/postgres_log.rs (new)",
+      "build_after": [
+        "P09-T01",
+        "C06",
+        "P03-T02"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P09-T15",
+      "owns": "conn/cdc/postgres.rs (new); source capability registration",
+      "build_after": [
+        "P09-T13",
+        "P09-T14",
+        "P09-T03",
+        "P03-T07"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P10-T01",
+      "owns": "test/benchmark/ existing harness; join fixtures",
+      "build_after": [],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P10-T02",
+      "owns": "sql/planning/join_key.rs (new)",
+      "build_after": [
+        "P01-T01"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P10-T03",
+      "owns": "server/engine/joins/hash.rs (new)",
+      "build_after": [
+        "P10-T02",
+        "P02-T01"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P10-T04",
+      "owns": "sql/planning/compiled_expr.rs (new)",
+      "build_after": [
+        "P01-T02"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P10-T05",
+      "owns": "sql/planning/optimizer.rs (new)",
+      "build_after": [
+        "P01-T03",
+        "P04-T02",
+        "P05-T01"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P10-T06",
+      "owns": "sql/planning/cost.rs (new); explain adapter",
+      "build_after": [
+        "P10-T01",
+        "P10-T03",
+        "P10-T04",
+        "P10-T05"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P10-T07",
+      "owns": "server/engine/plans/shared.rs (new)",
+      "build_after": [
+        "P09-T06",
+        "P10-T06",
+        "P11-T03"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P10-T08",
+      "owns": "server/engine/plans/batch.rs (new)",
+      "build_after": [
+        "P10-T04",
+        "P10-T06",
+        "P02-T05"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P11-T01",
+      "owns": "server/engine/sinks.rs; server/sink_cache.rs; core identity adapter",
+      "build_after": [
+        "C01"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P11-T02",
+      "owns": "core/catalog/{model,store}.rs (new)",
+      "build_after": [
+        "C01",
+        "P03-T01"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P11-T03",
+      "owns": "server/deployment/candidate.rs (new)",
+      "build_after": [
+        "P11-T02",
+        "P01-T03"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P11-T04",
+      "owns": "server/deployment/activate.rs (new); declarative adapter",
+      "build_after": [
+        "P11-T03",
+        "P03-T10",
+        "P03-T18"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P11-T05",
+      "owns": "core/catalog/bundle.rs (new)",
+      "build_after": [
+        "P11-T02",
+        "C05"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P11-T06",
+      "owns": "server/fleet.rs; deployment status adapter",
+      "build_after": [
+        "P11-T04",
+        "P11-T05",
+        "P13-T02"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P11-T07",
+      "owns": "server deployment/restore qualification fixtures",
+      "build_after": [
+        "P11-T04",
+        "P11-T06",
+        "P03-T19"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P12-T01",
+      "owns": "core/extensions/{manifest,abi}.rs (new)",
+      "build_after": [
+        "C02",
+        "C04"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P12-T02",
+      "owns": "core/extensions/registry.rs (new)",
+      "build_after": [
+        "P12-T01",
+        "P11-T02"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P12-T03",
+      "owns": "core/wasm.rs; extensions/wasm_adapter.rs (new)",
+      "build_after": [
+        "P12-T01",
+        "P02-T01",
+        "C03"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P12-T04",
+      "owns": "core/extensions/process_protocol.rs; host adapter (new)",
+      "build_after": [
+        "P12-T01",
+        "C03",
+        "C04"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P12-T05",
+      "owns": "sql/planning/components.rs (new)",
+      "build_after": [
+        "P01-T02",
+        "P11-T03"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P12-T06",
+      "owns": "crates/rekuiper-core embedding facade or dedicated crate registered by C06",
+      "build_after": [
+        "P12-T01",
+        "P06-T01"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P12-T07",
+      "owns": "embedding FFI module; C header/examples (new)",
+      "build_after": [
+        "P12-T06"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P12-T08",
+      "owns": "bindings/python/ (new)",
+      "build_after": [
+        "P12-T07"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P12-T09",
+      "owns": "templates/extensions; extension qualification fixtures",
+      "build_after": [
+        "P12-T02",
+        "P12-T03",
+        "P12-T04",
+        "P12-T05"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P12-T10",
+      "owns": "bindings/javascript/ (new)",
+      "build_after": [
+        "P12-T07"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P13-T01",
+      "owns": "core/governance/identity.rs (new)",
+      "build_after": [
+        "C01",
+        "P11-T02"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P13-T02",
+      "owns": "core/governance/authorize.rs (new)",
+      "build_after": [
+        "P13-T01"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P13-T03",
+      "owns": "server routes/handlers; CLI/MCP/fleet adapters",
+      "build_after": [
+        "P13-T02"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P13-T04",
+      "owns": "core/resources/fair_scheduler.rs (new)",
+      "build_after": [
+        "P13-T01",
+        "P02-T01"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P13-T05",
+      "owns": "core/governance/resources.rs (new); connector/extension adapters",
+      "build_after": [
+        "P13-T02",
+        "P12-T01",
+        "A02-T04"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P13-T06",
+      "owns": "server audit module; CLI operations adapters",
+      "build_after": [
+        "P13-T03",
+        "P06-T05",
+        "P03-T19"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P13-T07",
+      "owns": "auth/service fixtures; cross-namespace qualification",
+      "build_after": [
+        "P13-T03",
+        "P13-T04",
+        "P13-T05",
+        "P13-T06"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P14-T01",
+      "owns": "core/cluster/contracts.rs (new)",
+      "build_after": [
+        "C04",
+        "P11-T02"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P14-T02",
+      "owns": "core/cluster/coordination.rs (new)",
+      "build_after": [
+        "P14-T01",
+        "C06"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P14-T03",
+      "owns": "server/cluster/failover.rs (new)",
+      "build_after": [
+        "P14-T02",
+        "P03-T19",
+        "P03-T10",
+        "P11-T04"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P14-T04",
+      "owns": "core/cluster/exchange.rs (new)",
+      "build_after": [
+        "P14-T01",
+        "P02-T01",
+        "C03"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P14-T05",
+      "owns": "server/cluster/planner.rs (new)",
+      "build_after": [
+        "P14-T04",
+        "P01-T03",
+        "P05-T04"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P14-T06",
+      "owns": "server/cluster/rescale.rs (new)",
+      "build_after": [
+        "P14-T05",
+        "P03-T18",
+        "P11-T04"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P14-T07",
+      "owns": "server/cluster/lifecycle.rs (new)",
+      "build_after": [
+        "P14-T03",
+        "P14-T05",
+        "P13-T05"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P14-T08",
+      "owns": "server/cluster/upgrade.rs; recovery runbooks (new)",
+      "build_after": [
+        "P14-T06",
+        "P14-T07",
+        "P11-T07"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P14-T09",
+      "owns": "cluster chaos/qualification fixtures (new)",
+      "build_after": [
+        "P14-T03"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [
+        {
+          "condition": "Add partition/rescale/rolling-upgrade scenarios as P14-T05/P14-T06/P14-T08 land, and DR/online-migration scenarios after P14-T10/P14-T11. Each capability requires its own scenarios; missing later capabilities do not block active/passive certification.",
+          "after": [
+            "P14-T05",
+            "P14-T06",
+            "P14-T08",
+            "P14-T10",
+            "P14-T11"
+          ]
+        }
+      ],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P14-T10",
+      "owns": "server/cluster/disaster_recovery.rs; runbooks (new)",
+      "build_after": [
+        "P14-T06",
+        "P03-T18",
+        "P11-T07"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P14-T11",
+      "owns": "server/cluster/online_transfer.rs (new)",
+      "build_after": [
+        "P14-T06",
+        "P14-T04",
+        "P03-T20"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P15-T01",
+      "owns": "conn/kafka.rs; core/model.rs metadata adapter",
+      "build_after": [
+        "C01"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P15-T02",
+      "owns": "conn/codec.rs; codec framing modules",
+      "build_after": [],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P15-T03",
+      "owns": "conn payload dispatch; server ingress/sinks adapters",
+      "build_after": [
+        "P15-T02",
+        "P15-T01",
+        "P02-T05"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P15-T04",
+      "owns": "core/catalog/schema.rs (new); schema registry adapter",
+      "build_after": [
+        "P11-T02"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P15-T05",
+      "owns": "conn/schema/json_schema.rs (new)",
+      "build_after": [
+        "P15-T04",
+        "C06"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P15-T06",
+      "owns": "conn/schema/registry.rs (new)",
+      "build_after": [
+        "P15-T04",
+        "P02-T06",
+        "C06"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P15-T07",
+      "owns": "server/engine/lookup/vector.rs (new)",
+      "build_after": [
+        "P02-T07",
+        "P01-T02"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P15-T08",
+      "owns": "conn/vector/pgvector.rs (new)",
+      "build_after": [
+        "P15-T07",
+        "C06"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P15-T09",
+      "owns": "conn/vector/milvus.rs (new)",
+      "build_after": [
+        "P15-T07",
+        "C06"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P15-T10",
+      "owns": "conn/nats/ (new)",
+      "build_after": [
+        "C02",
+        "C04",
+        "C06",
+        "P03-T02",
+        "P02-T06"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P15-T11",
+      "owns": "conn/object_storage/ (new)",
+      "build_after": [
+        "C02",
+        "C04",
+        "C06",
+        "P02-T06"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P15-T12",
+      "owns": "conn/prometheus/ (new)",
+      "build_after": [
+        "P07-T01",
+        "P07-T02",
+        "P07-T05",
+        "C06"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P15-T13",
+      "owns": "cli migration modules; import fixtures",
+      "build_after": [
+        "P01-T03",
+        "P12-T05",
+        "P15-T04"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P15-T14",
+      "owns": "server/protocol/pgwire.rs (new)",
+      "build_after": [
+        "P09-T07",
+        "P13-T03",
+        "C06"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P15-T15",
+      "owns": "connector qualification registry; real-service fixtures",
+      "build_after": [
+        "C02",
+        "C07"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P15-T16",
+      "owns": "conn/schema/avro.rs (new)",
+      "build_after": [
+        "P15-T04",
+        "C06"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P15-T17",
+      "owns": "conn/nats/sink.rs (new)",
+      "build_after": [
+        "C02",
+        "C04",
+        "C06",
+        "P02-T06"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P15-T18",
+      "owns": "conn/object_storage/sink.rs (new)",
+      "build_after": [
+        "C02",
+        "C04",
+        "C06",
+        "P02-T05",
+        "P02-T06"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P15-T19",
+      "owns": "conn/prometheus/remote_write.rs (new)",
+      "build_after": [
+        "P07-T01",
+        "P07-T02",
+        "P07-T05",
+        "C06",
+        "P02-T05",
+        "P02-T06"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P15-T20",
+      "owns": "cli/migrate/node_red.rs (new)",
+      "build_after": [
+        "P01-T03",
+        "P12-T05"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P15-T21",
+      "owns": "cli/migrate/telegraf.rs (new)",
+      "build_after": [
+        "P07-T06",
+        "P15-T04"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P15-T22",
+      "owns": "cli/migrate/connect.rs (new)",
+      "build_after": [
+        "P01-T03",
+        "P12-T05",
+        "P15-T04"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P15-T23",
+      "owns": "test/benchmark/vector_pgvector.py (new); dataset fixtures",
+      "build_after": [
+        "P15-T08",
+        "P10-T01"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P15-T24",
+      "owns": "test/benchmark/vector_milvus.py (new); shared vector dataset",
+      "build_after": [
+        "P15-T09",
+        "P10-T01"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P16-T01",
+      "owns": "sql/decision/table.rs (new)",
+      "build_after": [
+        "P01-T02",
+        "C01"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P16-T02",
+      "owns": "sql/decision/validate.rs (new)",
+      "build_after": [
+        "P16-T01"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P16-T03",
+      "owns": "sql/decision/evaluate.rs (new); embedding adapter",
+      "build_after": [
+        "P16-T01",
+        "P16-T02",
+        "C03"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P16-T04",
+      "owns": "sql/decision/dmn.rs (new); conformance fixtures",
+      "build_after": [
+        "P16-T03",
+        "C06"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P16-T05",
+      "owns": "extensions/cel/ (new)",
+      "build_after": [
+        "P12-T01",
+        "P12-T04",
+        "P16-T03",
+        "C06"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P16-T06",
+      "owns": "extensions/policy/ (new); decision service adapter",
+      "build_after": [
+        "P12-T04",
+        "P11-T05",
+        "P16-T03"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P16-T07",
+      "owns": "core/decision/facts.rs (new)",
+      "build_after": [
+        "C01",
+        "C04",
+        "P09-T01"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P16-T08",
+      "owns": "core/decision/agenda.rs (new)",
+      "build_after": [
+        "P16-T07",
+        "P16-T03",
+        "C03"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P16-T09",
+      "owns": "core/decision/matching.rs (new)",
+      "build_after": [
+        "P16-T07",
+        "P16-T08",
+        "P10-T01"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P16-T10",
+      "owns": "server/handlers/decisions.rs (new); CLI/embedding adapters",
+      "build_after": [
+        "P16-T03",
+        "P16-T04",
+        "P16-T08",
+        "P13-T03",
+        "P11-T03"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P17-T01",
+      "owns": "docs/compatibility/ (new); capability registry output",
+      "build_after": [
+        "C02"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P17-T02",
+      "owns": "test/workloads/ (new); existing benchmark adapters",
+      "build_after": [
+        "C05",
+        "P10-T01"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P17-T03",
+      "owns": "core/sql/connector tests; fuzz targets",
+      "build_after": [
+        "P01-T01",
+        "C04"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P17-T04",
+      "owns": "test/qualification/registry.json and runner (new)",
+      "build_after": [
+        "C02",
+        "C07",
+        "C08"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P17-T05",
+      "owns": ".github/workflows/; packaging verification fixtures",
+      "build_after": [
+        "P17-T04"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P17-T06",
+      "owns": "docs/runbooks/; docs/examples/; documentation generation",
+      "build_after": [
+        "P17-T01",
+        "P06-T02"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    },
+    {
+      "id": "P17-T07",
+      "owns": "MAINTAINERS/CODEOWNERS or existing equivalents; release templates",
+      "build_after": [
+        "P17-T01",
+        "P12-T09"
+      ],
+      "integrate_after": [],
+      "conditional_dependencies": [],
+      "status": "proposed",
+      "evidence": []
+    }
+  ],
+  "active_reservations": []
+}

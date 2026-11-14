@@ -1,10 +1,17 @@
+pub mod barrier_alignment;
+pub mod batching;
 pub mod dag;
 pub mod dlq;
 pub mod joins;
 pub mod operators;
+pub mod outbox_dispatch;
+pub mod reliable_input;
+pub mod retry;
 pub mod runtime;
 pub mod sinks;
 pub mod sources;
+pub mod state;
+pub mod time;
 pub mod windows;
 
 pub use dag::*;
@@ -156,6 +163,45 @@ pub(crate) fn is_bus_predicate_exhaustive(expr: &rekuiper_sql::Expr) -> bool {
     }
 }
 
+fn subscribe_with_policy(
+    stream_bus: &StreamBus,
+    topic: &str,
+    filter: Option<rekuiper_core::SubscriberFilter>,
+    buffer_len: usize,
+    policy: rekuiper_core::BufferFullPolicy,
+) -> StreamReceiver {
+    match policy {
+        rekuiper_core::BufferFullPolicy::Block => match filter {
+            Some(f) => stream_bus.subscribe_filtered_with_capacity(topic, f, buffer_len),
+            None => stream_bus.subscribe_with_capacity(topic, buffer_len),
+        },
+        rekuiper_core::BufferFullPolicy::DropOldest => {
+            let mut lossy_rx = match filter {
+                Some(f) => stream_bus.subscribe_lossy_filtered(topic, f, buffer_len),
+                None => stream_bus.subscribe_lossy(topic, buffer_len),
+            };
+            let (tx, rx) = tokio::sync::mpsc::channel(1);
+            tokio::spawn(async move {
+                loop {
+                    tokio::select! {
+                        biased;
+                        () = tx.closed() => break,
+                        maybe_rec = lossy_rx.recv() => {
+                            let Some(rec) = maybe_rec else {
+                                break;
+                            };
+                            if tx.send(rec).await.is_err() {
+                                break;
+                            }
+                        }
+                    }
+                }
+            });
+            rx
+        }
+    }
+}
+
 /// Subscribe to the rule's source stream and spawn its window-aware
 /// execution task, registering the join handle on the rule manager.
 #[allow(clippy::too_many_arguments)]
@@ -242,17 +288,23 @@ pub(crate) fn spawn_rule_task(
             (None, false)
         };
 
-    let rx = match bus_pred {
-        Some(pred) => {
-            let filter = rekuiper_core::SubscriberFilter {
-                predicate: pred,
-                source_in_counter: loop_counters.source_in.clone(),
-                filtered_counter: loop_counters.filtered.clone(),
-            };
-            stream_bus.subscribe_filtered_with_capacity(&from_topic, filter, buffer_len)
-        }
-        None => stream_bus.subscribe_with_capacity(&from_topic, buffer_len),
-    };
+    let from_stream_def = stream_manager.get_stream(&from_topic);
+    let from_policy = from_stream_def
+        .as_ref()
+        .and_then(|s| rekuiper_core::resolve_buffer_full_policy(&s.options).ok())
+        .unwrap_or(rekuiper_core::BufferFullPolicy::Block);
+
+    let rx = subscribe_with_policy(
+        stream_bus,
+        &from_topic,
+        bus_pred.map(|pred| rekuiper_core::SubscriberFilter {
+            predicate: pred,
+            source_in_counter: loop_counters.source_in.clone(),
+            filtered_counter: loop_counters.filtered.clone(),
+        }),
+        buffer_len,
+        from_policy,
+    );
     let rx = if !from_fields.is_empty() {
         let (tx, coerced_rx) = tokio::sync::mpsc::channel(buffer_len);
         let fields = from_fields;
@@ -312,7 +364,11 @@ pub(crate) fn spawn_rule_task(
             && !join_rxs.iter().any(|(s, _)| s == &join.target)
         {
             let topic = resolve_source_topic(stream_manager, &join.target);
-            let jrx = stream_bus.subscribe_with_capacity(&topic, buffer_len);
+            let join_policy = stream_manager
+                .get_stream(&topic)
+                .and_then(|s| rekuiper_core::resolve_buffer_full_policy(&s.options).ok())
+                .unwrap_or(rekuiper_core::BufferFullPolicy::Block);
+            let jrx = subscribe_with_policy(stream_bus, &topic, None, buffer_len, join_policy);
             let join_fields = stream_manager
                 .get_stream(&topic)
                 .map(|s| s.stream_fields)

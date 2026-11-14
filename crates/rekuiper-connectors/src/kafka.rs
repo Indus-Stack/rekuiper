@@ -7,7 +7,7 @@ use rekuiper_core::StreamSender;
 use rskafka::client::partition::PartitionClient;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, LazyLock};
 
 type KafkaPartitionKey = (Vec<String>, String, i32);
@@ -73,6 +73,9 @@ pub struct KafkaConfig {
     /// Offset reset policy: `"earliest"` or `"latest"` (default `"latest"`).
     #[serde(default = "default_offset_reset", alias = "offset_reset")]
     pub offset_reset: String,
+    /// Optional explicit next offset to restore from in direct-partition mode.
+    #[serde(default)]
+    pub next_offset: Option<i64>,
 }
 
 fn default_kafka_brokers() -> String {
@@ -92,6 +95,7 @@ impl Default for KafkaConfig {
             partition: 0,
             key: None,
             offset_reset: default_offset_reset(),
+            next_offset: None,
         }
     }
 }
@@ -252,12 +256,62 @@ impl KafkaSource {
                     return;
                 }
             };
-            let offset_at = if self.config.offset_reset.eq_ignore_ascii_case("earliest") {
-                OffsetAt::Earliest
+            let mut offset = if let Some(requested_next) = self.config.next_offset {
+                let earliest = match partition_client.get_offset(OffsetAt::Earliest).await {
+                    Ok(v) => v,
+                    Err(e) => {
+                        let msg = format!("Kafka failed to query earliest offset: {e}");
+                        tracing::error!("{msg}");
+                        if let Some(ref cb) = self.status_callback {
+                            cb(topic, "kafka", "error", Some(&msg));
+                        }
+                        return;
+                    }
+                };
+                let latest = match partition_client.get_offset(OffsetAt::Latest).await {
+                    Ok(v) => v,
+                    Err(e) => {
+                        let msg = format!("Kafka failed to query latest offset: {e}");
+                        tracing::error!("{msg}");
+                        if let Some(ref cb) = self.status_callback {
+                            cb(topic, "kafka", "error", Some(&msg));
+                        }
+                        return;
+                    }
+                };
+                match resolve_start_offset(
+                    earliest,
+                    latest,
+                    Some(requested_next),
+                    &self.config.offset_reset,
+                ) {
+                    Ok(start) => start,
+                    Err(e) => {
+                        tracing::error!("Kafka source restore failed: {}", e);
+                        if let Some(ref cb) = self.status_callback {
+                            cb(topic, "kafka", "error", Some(&e.to_string()));
+                        }
+                        return;
+                    }
+                }
             } else {
-                OffsetAt::Latest
+                let offset_at = if self.config.offset_reset.eq_ignore_ascii_case("earliest") {
+                    OffsetAt::Earliest
+                } else {
+                    OffsetAt::Latest
+                };
+                match partition_client.get_offset(offset_at).await {
+                    Ok(v) => v,
+                    Err(e) => {
+                        let msg = format!("Kafka failed to resolve initial offset: {e}");
+                        tracing::error!("{msg}");
+                        if let Some(ref cb) = self.status_callback {
+                            cb(topic, "kafka", "error", Some(&msg));
+                        }
+                        return;
+                    }
+                }
             };
-            let mut offset = partition_client.get_offset(offset_at).await.unwrap_or(0);
             loop {
                 tokio::select! {
                     fetched = partition_client.fetch_records(offset, 1..1_000_000, 1000) => {
@@ -337,6 +391,336 @@ fn decode_kafka_payload(payload: &[u8], topic: Option<&str>) -> Result<Vec<Strea
             Ok(records)
         }
         _ => anyhow::bail!("Kafka message must be a JSON object or array"),
+    }
+}
+
+/// Terminal policy for Kafka tombstone (null/empty) records in reliable mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum KafkaTombstonePolicy {
+    /// Fail visibly and stop advancing when a tombstone is encountered.
+    #[default]
+    Fail,
+    /// Skip the tombstone and allow committing its offset boundary.
+    SkipAndAdvance,
+}
+
+/// Errors produced by reliable direct-partition Kafka replay.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum KafkaReliableError {
+    RetentionGap {
+        requested_offset: i64,
+        earliest_available: i64,
+    },
+    OffsetBeyondHighWatermark {
+        requested_next_offset: i64,
+        high_watermark_offset: i64,
+    },
+    Tombstone {
+        offset: i64,
+    },
+    DecodeFailed {
+        offset: i64,
+        message: String,
+    },
+    InvalidCursor,
+    OutOfOrderCommit {
+        expected_offset: i64,
+        actual_offset: i64,
+    },
+}
+
+impl std::fmt::Display for KafkaReliableError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::RetentionGap {
+                requested_offset,
+                earliest_available,
+            } => write!(
+                f,
+                "kafka retention gap: requested next offset {requested_offset} is older than earliest available {earliest_available}"
+            ),
+            Self::OffsetBeyondHighWatermark {
+                requested_next_offset,
+                high_watermark_offset,
+            } => write!(
+                f,
+                "kafka restore offset {requested_next_offset} exceeds high watermark {high_watermark_offset}"
+            ),
+            Self::Tombstone { offset } => {
+                write!(f, "kafka tombstone encountered at offset {offset}")
+            }
+            Self::DecodeFailed { offset, message } => {
+                write!(f, "kafka decode failed at offset {offset}: {message}")
+            }
+            Self::InvalidCursor => write!(f, "invalid kafka offset cursor"),
+            Self::OutOfOrderCommit {
+                expected_offset,
+                actual_offset,
+            } => write!(
+                f,
+                "out-of-order kafka commit: expected offset {expected_offset}, got {actual_offset}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for KafkaReliableError {}
+
+/// Codec for big-endian `i64` next-offset Kafka cursors.
+#[derive(Debug, Clone)]
+pub struct KafkaPositionCodec {
+    codec_id: rekuiper_core::contracts::PositionCodecId,
+}
+
+impl Default for KafkaPositionCodec {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl KafkaPositionCodec {
+    pub fn new() -> Self {
+        Self {
+            codec_id: rekuiper_core::contracts::PositionCodecId::try_from("kafka.offset.v1")
+                .expect("valid static kafka codec id"),
+        }
+    }
+
+    pub fn encode_next_offset(next_offset: i64) -> Vec<u8> {
+        next_offset.to_be_bytes().to_vec()
+    }
+
+    pub fn decode_next_offset(cursor: &[u8]) -> std::result::Result<i64, KafkaReliableError> {
+        let bytes: [u8; 8] = cursor
+            .try_into()
+            .map_err(|_| KafkaReliableError::InvalidCursor)?;
+        Ok(i64::from_be_bytes(bytes))
+    }
+
+    pub fn make_position(
+        &self,
+        partition: rekuiper_core::contracts::SourcePartition,
+        generation: rekuiper_core::contracts::Generation,
+        next_offset: i64,
+    ) -> rekuiper_core::contracts::SourcePosition {
+        rekuiper_core::contracts::SourcePosition {
+            partition,
+            generation,
+            codec: self.codec_id.clone(),
+            cursor: Self::encode_next_offset(next_offset),
+        }
+    }
+}
+
+impl rekuiper_core::contracts::PositionCodec for KafkaPositionCodec {
+    fn id(&self) -> &rekuiper_core::contracts::PositionCodecId {
+        &self.codec_id
+    }
+
+    fn compare(&self, left: &[u8], right: &[u8]) -> Option<std::cmp::Ordering> {
+        let l = Self::decode_next_offset(left).ok()?;
+        let r = Self::decode_next_offset(right).ok()?;
+        Some(l.cmp(&r))
+    }
+}
+
+/// Resolves the initial Kafka offset for direct-partition consumption,
+/// detecting retention gaps when an explicit `restore_next_offset` is supplied.
+pub fn resolve_start_offset(
+    earliest_available: i64,
+    latest_available: i64,
+    restore_next_offset: Option<i64>,
+    offset_reset: &str,
+) -> std::result::Result<i64, KafkaReliableError> {
+    if let Some(requested) = restore_next_offset {
+        if requested < earliest_available {
+            return Err(KafkaReliableError::RetentionGap {
+                requested_offset: requested,
+                earliest_available,
+            });
+        }
+        if requested > latest_available {
+            return Err(KafkaReliableError::OffsetBeyondHighWatermark {
+                requested_next_offset: requested,
+                high_watermark_offset: latest_available,
+            });
+        }
+        return Ok(requested);
+    }
+    if offset_reset.eq_ignore_ascii_case("earliest") {
+        Ok(earliest_available)
+    } else {
+        Ok(latest_available)
+    }
+}
+
+/// Raw Kafka message input before payload decoding.
+#[derive(Debug, Clone)]
+pub struct KafkaRawRecord {
+    pub offset: i64,
+    pub payload: Option<Vec<u8>>,
+}
+
+/// Kafka message envelope with metadata/position built before decode.
+///
+/// A multirecord JSON array payload expands into `records`, all sharing a
+/// single commit boundary (`next_offset = offset + 1`) so partial commits are
+/// impossible.
+#[derive(Debug, Clone)]
+pub struct KafkaPreparedMessage {
+    pub offset: i64,
+    pub next_offset: i64,
+    pub position: rekuiper_core::contracts::SourcePosition,
+    pub is_tombstone: bool,
+    topic: Option<String>,
+    payload: Option<Vec<u8>>,
+}
+
+impl KafkaPreparedMessage {
+    /// Decodes the payload into `StreamRecord`s after metadata/position has been
+    /// emitted, enforcing `tombstone_policy`.
+    pub fn decode(
+        &self,
+        tombstone_policy: KafkaTombstonePolicy,
+    ) -> std::result::Result<Vec<StreamRecord>, KafkaReliableError> {
+        let Some(bytes) = self.payload.as_deref().filter(|b| !b.is_empty()) else {
+            return match tombstone_policy {
+                KafkaTombstonePolicy::Fail => Err(KafkaReliableError::Tombstone {
+                    offset: self.offset,
+                }),
+                KafkaTombstonePolicy::SkipAndAdvance => Ok(Vec::new()),
+            };
+        };
+        decode_kafka_payload(bytes, self.topic.as_deref()).map_err(|e| {
+            KafkaReliableError::DecodeFailed {
+                offset: self.offset,
+                message: e.to_string(),
+            }
+        })
+    }
+}
+
+/// Tracks direct-partition replay state and advances `committed_next_offset`
+/// only when an entire message boundary is accepted/committed.
+#[derive(Debug, Clone)]
+pub struct KafkaReliablePartitionReader {
+    partition: rekuiper_core::contracts::SourcePartition,
+    generation: rekuiper_core::contracts::Generation,
+    codec: KafkaPositionCodec,
+    topic: Option<String>,
+    tombstone_policy: KafkaTombstonePolicy,
+    next_fetch_offset: i64,
+    committed_next_offset: i64,
+    prepared_offsets: VecDeque<(i64, i64)>,
+}
+
+impl KafkaReliablePartitionReader {
+    pub fn new(
+        partition: rekuiper_core::contracts::SourcePartition,
+        generation: rekuiper_core::contracts::Generation,
+        topic: Option<String>,
+        start_offset: i64,
+        tombstone_policy: KafkaTombstonePolicy,
+    ) -> Self {
+        Self {
+            partition,
+            generation,
+            codec: KafkaPositionCodec::new(),
+            topic,
+            tombstone_policy,
+            next_fetch_offset: start_offset,
+            committed_next_offset: start_offset,
+            prepared_offsets: VecDeque::new(),
+        }
+    }
+
+    pub fn committed_next_offset(&self) -> i64 {
+        self.committed_next_offset
+    }
+
+    pub fn committed_position(&self) -> rekuiper_core::contracts::SourcePosition {
+        self.codec.make_position(
+            self.partition.clone(),
+            self.generation,
+            self.committed_next_offset,
+        )
+    }
+
+    /// Emits metadata/position BEFORE decode. Does not advance `committed_next_offset`.
+    pub fn prepare(&mut self, raw: KafkaRawRecord) -> KafkaPreparedMessage {
+        let next_offset = raw.offset + 1;
+        if next_offset > self.next_fetch_offset {
+            self.next_fetch_offset = next_offset;
+        }
+        if self
+            .prepared_offsets
+            .back()
+            .is_none_or(|&(last, _)| raw.offset > last)
+        {
+            self.prepared_offsets.push_back((raw.offset, next_offset));
+        }
+        let is_tombstone = raw.payload.as_ref().is_none_or(|b| b.is_empty());
+        let position =
+            self.codec
+                .make_position(self.partition.clone(), self.generation, next_offset);
+        KafkaPreparedMessage {
+            offset: raw.offset,
+            next_offset,
+            position,
+            is_tombstone,
+            topic: self.topic.clone(),
+            payload: raw.payload,
+        }
+    }
+
+    pub fn tombstone_policy(&self) -> KafkaTombstonePolicy {
+        self.tombstone_policy
+    }
+
+    /// Validates that `msg` matches this partition/generation and is the next
+    /// eligible prepared offset without mutating reader state.
+    pub fn validate_commit(
+        &self,
+        msg: &KafkaPreparedMessage,
+    ) -> std::result::Result<(), KafkaReliableError> {
+        if msg.position.partition != self.partition || msg.position.generation != self.generation {
+            return Err(KafkaReliableError::OutOfOrderCommit {
+                expected_offset: self.committed_next_offset,
+                actual_offset: msg.offset,
+            });
+        }
+        if msg.offset < self.committed_next_offset {
+            return Err(KafkaReliableError::OutOfOrderCommit {
+                expected_offset: self.committed_next_offset,
+                actual_offset: msg.offset,
+            });
+        }
+        if let Some(&(expected_offset, _)) = self.prepared_offsets.front() {
+            if msg.offset != expected_offset {
+                return Err(KafkaReliableError::OutOfOrderCommit {
+                    expected_offset,
+                    actual_offset: msg.offset,
+                });
+            }
+        }
+        Ok(())
+    }
+
+    /// Advances the durable boundary only after all records expanded from
+    /// `msg` have been accepted/committed together, allowing partition offset gaps
+    /// (compacted topics / transactional control records) while rejecting out-of-order commits.
+    pub fn commit_message(
+        &mut self,
+        msg: &KafkaPreparedMessage,
+    ) -> std::result::Result<rekuiper_core::contracts::SourcePosition, KafkaReliableError> {
+        self.validate_commit(msg)?;
+        if let Some(&(expected_offset, _)) = self.prepared_offsets.front() {
+            if msg.offset == expected_offset {
+                self.prepared_offsets.pop_front();
+            }
+        }
+        self.committed_next_offset = msg.next_offset;
+        Ok(msg.position.clone())
     }
 }
 

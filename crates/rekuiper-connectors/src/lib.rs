@@ -120,6 +120,7 @@ mod tests {
                 partition: 0,
                 key: None,
                 offset_reset: "latest".to_string(),
+                next_offset: None,
             },
         };
         let mut data = HashMap::new();
