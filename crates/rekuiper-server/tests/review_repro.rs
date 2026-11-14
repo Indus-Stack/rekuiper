@@ -2824,6 +2824,7 @@ async fn repro_default_token_stop_cannot_revoke_initial_or_replacement_generatio
         delivered: Mutex::new(Vec::new()),
     };
     let clock = TestClock::new(0);
+    let default_cancel = DeadlineCancellation::default();
     let m0 = reader1.prepare(KafkaRawRecord {
         offset: 0,
         payload: Some(br#"{"v":1}"#.to_vec()),
@@ -2836,20 +2837,37 @@ async fn repro_default_token_stop_cannot_revoke_initial_or_replacement_generatio
             &sink1,
             &store,
             &clock,
-            &DeadlineCancellation::default(),
+            &default_cancel,
         )
         .await
         .unwrap();
     fence.assert_active(&rule, Generation(1)).await.unwrap();
 
-    // Stopping with an unbound DeadlineCancellation::default() must be rejected.
-    let default_cancel = DeadlineCancellation::default();
+    // Stopping with an unbound DeadlineCancellation::default() must be rejected
+    // without cancelling the active runner's token.
     let err = fence
         .fence_and_revoke(&rule, &default_cancel)
         .await
         .expect_err("unbound default token must not durably revoke");
     assert!(matches!(err, CheckpointError::StorageFailure(_)));
     fence.assert_active(&rule, Generation(1)).await.unwrap();
+
+    let m1 = reader1.prepare(KafkaRawRecord {
+        offset: 1,
+        payload: Some(br#"{"v":2}"#.to_vec()),
+    });
+    runner1
+        .process_and_checkpoint(
+            &mut reader1,
+            &m1,
+            &[],
+            &sink1,
+            &store,
+            &clock,
+            &default_cancel,
+        )
+        .await
+        .expect("rejected stop must not cancel the active runner's token");
 
     // Revoking with an explicit generation-1 token succeeds, then activating generation 2 works.
     let explicit_gen1 = DeadlineCancellation::for_generation(Generation(1));

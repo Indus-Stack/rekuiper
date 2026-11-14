@@ -190,14 +190,16 @@ impl<'a> GenerationFence<'a> {
         rule_id: &RuleId,
         cancel: &DeadlineCancellation,
     ) -> Result<Generation, CheckpointError> {
-        cancel.cancel();
-
         let Some(target_gen) = cancel.target_generation() else {
             return Err(CheckpointError::StorageFailure(
                 "durable revocation requires an explicit target generation on DeadlineCancellation"
                     .to_owned(),
             ));
         };
+        let target_gen_i64 = i64::try_from(target_gen.0)
+            .map_err(|_| CheckpointError::StorageFailure("generation overflow".to_owned()))?;
+
+        cancel.cancel();
 
         let mut tx = self
             .store
@@ -206,8 +208,6 @@ impl<'a> GenerationFence<'a> {
             .await
             .map_err(|e| CheckpointError::StorageFailure(e.to_string()))?;
 
-        let target_gen_i64 = i64::try_from(target_gen.0)
-            .map_err(|_| CheckpointError::StorageFailure("generation overflow".to_owned()))?;
         sqlx::query(
             "INSERT INTO reliable_generations (rule_id, generation, revoked) VALUES (?, ?, 1)
              ON CONFLICT(rule_id) DO UPDATE SET revoked = 1
