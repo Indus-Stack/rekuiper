@@ -89,6 +89,13 @@ impl StateSnapshot {
 pub trait StateParticipant: Send + Sync {
     fn operator_id(&self) -> &OperatorId;
 
+    /// Optional explicit role tag (`"analytic"`, `"tumbling"`, `"count"`, `"hopping"`,
+    /// `"sliding"`, `"session"`, `"state"`, `"join"`, `"cep"`, `"barrier"`) used to
+    /// match required plan participant roles without ambiguous `operator_id` substrings.
+    fn participant_kind_tag(&self) -> Option<&'static str> {
+        None
+    }
+
     fn state_version(&self) -> StateSchemaVersion;
 
     fn resource_usage(&self) -> StateResourceUsage;

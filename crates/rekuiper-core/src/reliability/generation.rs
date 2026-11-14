@@ -1,6 +1,6 @@
 //! Generation fencing and stop/update/delete lifecycle revocation.
 
-use super::outbox::{OutboxEntry, OutboxError, SqliteOutbox};
+use super::outbox::{OutboxEntry, OutboxError, SqliteOutbox, DEFAULT_CLAIM_LEASE_MS};
 use super::sqlite::ReliableSqliteStore;
 use crate::contracts::{
     ActionId, CheckpointError, DeadlineCancellation, EffectOutcome, EffectRecord, Generation,
@@ -39,16 +39,24 @@ impl<'a> GenerationFence<'a> {
                 .await
                 .map_err(|e| CheckpointError::StorageFailure(e.to_string()))?;
 
-        let next_gen = existing
-            .map(|(g,)| u64::try_from(g).unwrap_or(0).saturating_add(1))
-            .unwrap_or(1);
+        let next_gen = match existing {
+            Some((g,)) => u64::try_from(g)
+                .map_err(|_| {
+                    CheckpointError::StorageFailure("corrupt negative generation".to_owned())
+                })?
+                .checked_add(1)
+                .ok_or_else(|| CheckpointError::StorageFailure("generation overflow".to_owned()))?,
+            None => 1,
+        };
+        let next_gen_i64 = i64::try_from(next_gen)
+            .map_err(|_| CheckpointError::StorageFailure("generation overflow".to_owned()))?;
 
         sqlx::query(
             "INSERT INTO reliable_generations (rule_id, generation, revoked) VALUES (?, ?, 0)
              ON CONFLICT(rule_id) DO UPDATE SET generation = excluded.generation, revoked = 0",
         )
         .bind(rule_id.as_str())
-        .bind(i64::try_from(next_gen).unwrap_or(i64::MAX))
+        .bind(next_gen_i64)
         .execute(&mut *tx)
         .await
         .map_err(|e| CheckpointError::StorageFailure(e.to_string()))?;
@@ -84,15 +92,20 @@ impl<'a> GenerationFence<'a> {
                 .await
                 .map_err(|e| CheckpointError::StorageFailure(e.to_string()))?;
 
-        let current_gen = existing
-            .map(|(g,)| u64::try_from(g).unwrap_or(0))
-            .unwrap_or(0);
+        let current_gen = match existing {
+            Some((g,)) => u64::try_from(g).map_err(|_| {
+                CheckpointError::StorageFailure("corrupt negative generation".to_owned())
+            })?,
+            None => 0,
+        };
+        let current_gen_i64 = i64::try_from(current_gen)
+            .map_err(|_| CheckpointError::StorageFailure("generation overflow".to_owned()))?;
         sqlx::query(
             "INSERT INTO reliable_generations (rule_id, generation, revoked) VALUES (?, ?, 1)
              ON CONFLICT(rule_id) DO UPDATE SET revoked = 1",
         )
         .bind(rule_id.as_str())
-        .bind(i64::try_from(current_gen).unwrap_or(i64::MAX))
+        .bind(current_gen_i64)
         .execute(&mut *tx)
         .await
         .map_err(|e| CheckpointError::StorageFailure(e.to_string()))?;
@@ -124,7 +137,9 @@ impl<'a> GenerationFence<'a> {
                 actual: generation,
             });
         };
-        let active_u64 = u64::try_from(active_gen).unwrap_or(0);
+        let active_u64 = u64::try_from(active_gen).map_err(|_| {
+            CheckpointError::StorageFailure("corrupt negative generation".to_owned())
+        })?;
         if revoked != 0 || generation.0 != active_u64 {
             return Err(CheckpointError::GenerationMismatch {
                 expected: Generation(active_u64.saturating_add(u64::from(revoked != 0))),
@@ -134,7 +149,8 @@ impl<'a> GenerationFence<'a> {
         Ok(())
     }
 
-    /// Claims pending outbox effects only if `generation` is still active and unrevoked.
+    /// Claims pending outbox effects only if `generation` is still active and
+    /// unrevoked inside the same SQLite transaction.
     pub async fn claim_pending_fenced(
         &self,
         outbox: &SqliteOutbox<'_>,
@@ -144,9 +160,15 @@ impl<'a> GenerationFence<'a> {
         worker_id: &str,
         limit: usize,
     ) -> Result<Vec<OutboxEntry>, OutboxError> {
-        self.assert_active(rule_id, generation).await?;
         outbox
-            .claim_pending(rule_id, action_id, worker_id, limit)
+            .claim_pending_with_lease(
+                rule_id,
+                action_id,
+                worker_id,
+                limit,
+                DEFAULT_CLAIM_LEASE_MS,
+                Some(generation),
+            )
             .await
     }
 
@@ -188,7 +210,9 @@ impl<'a> GenerationFence<'a> {
                 effect_id: crate::contracts::EffectId::try_from(eff_id_str)
                     .map_err(|e| CheckpointError::StorageFailure(e.to_string()))?,
                 rule_id: rule_id.clone(),
-                generation: Generation(u64::try_from(gen_i64).unwrap_or(0)),
+                generation: Generation(u64::try_from(gen_i64).map_err(|_| {
+                    CheckpointError::StorageFailure("corrupt negative generation".to_owned())
+                })?),
                 destination: crate::contracts::EffectDestination {
                     action_id: ActionId::try_from(act_str)
                         .map_err(|e| CheckpointError::StorageFailure(e.to_string()))?,
@@ -198,7 +222,9 @@ impl<'a> GenerationFence<'a> {
                         .map_err(|e| CheckpointError::StorageFailure(e.to_string()))?,
                 },
                 order_key,
-                attempt: u32::try_from(attempt).unwrap_or(0),
+                attempt: u32::try_from(attempt).map_err(|_| {
+                    CheckpointError::StorageFailure("corrupt negative attempt".to_owned())
+                })?,
                 terminal_outcome: outcome,
             });
         }

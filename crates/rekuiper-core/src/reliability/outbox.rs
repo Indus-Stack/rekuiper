@@ -8,6 +8,9 @@ use crate::contracts::{
     RuleId,
 };
 use sqlx::Row;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+pub const DEFAULT_CLAIM_LEASE_MS: u64 = 30_000;
 
 /// Capacity limits enforced before admitting new pending outbox entries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -114,198 +117,42 @@ impl<'a> SqliteOutbox<'a> {
         envelope: CheckpointEnvelope,
         entries: Vec<OutboxEntry>,
     ) -> Result<EnqueueReport, OutboxError> {
-        let mut tx = self
-            .store
-            .pool()
-            .begin()
+        self.store
+            .commit_checkpoint_and_entries(envelope, entries, Some(self.capacity))
             .await
-            .map_err(|e| OutboxError::Storage(e.to_string()))?;
-
-        let rule_id = envelope.metadata.identity.rule_id.as_str().to_owned();
-        let incoming_gen = envelope.metadata.identity.generation;
-        let cp_id = i64::try_from(envelope.metadata.checkpoint_id.0)
-            .map_err(|_| OutboxError::Storage("checkpoint_id overflow".to_owned()))?;
-        let gen_i64 = i64::try_from(incoming_gen.0)
-            .map_err(|_| OutboxError::Storage("generation overflow".to_owned()))?;
-
-        // 1. Generation fencing.
-        let existing_gen: Option<(i64, i64)> = sqlx::query_as(
-            "SELECT generation, revoked FROM reliable_generations WHERE rule_id = ?",
-        )
-        .bind(&rule_id)
-        .fetch_optional(&mut *tx)
-        .await
-        .map_err(|e| OutboxError::Storage(e.to_string()))?;
-        if let Some((g, revoked)) = existing_gen {
-            let g_u64 = u64::try_from(g).unwrap_or(0);
-            if incoming_gen.0 < g_u64 || (revoked != 0 && incoming_gen.0 == g_u64) {
-                return Err(OutboxError::Checkpoint(
-                    CheckpointError::GenerationMismatch {
-                        expected: Generation(g_u64.saturating_add(u64::from(revoked != 0))),
-                        actual: incoming_gen,
-                    },
-                ));
-            }
-        }
-
-        // 2. Check pending outbox capacity before admitting new items.
-        let (pending_items, pending_bytes): (i64, i64) = sqlx::query_as(
-            "SELECT COUNT(*), COALESCE(SUM(LENGTH(payload)), 0)
-             FROM reliable_outbox_effects
-             WHERE terminal_outcome_json IS NULL",
-        )
-        .fetch_one(&mut *tx)
-        .await
-        .map_err(|e| OutboxError::Storage(e.to_string()))?;
-
-        let current_items = usize::try_from(pending_items).unwrap_or(usize::MAX);
-        let current_bytes = usize::try_from(pending_bytes).unwrap_or(usize::MAX);
-        let incoming_items = entries.len();
-        let incoming_bytes: usize = entries.iter().map(|e| e.payload.len()).sum();
-
-        if current_items.saturating_add(incoming_items) > self.capacity.max_items {
-            return Err(OutboxError::CapacityExceeded {
-                resource: "items",
-                current: current_items,
-                incoming: incoming_items,
-                limit: self.capacity.max_items,
-            });
-        }
-        if current_bytes.saturating_add(incoming_bytes) > self.capacity.max_bytes {
-            return Err(OutboxError::CapacityExceeded {
-                resource: "bytes",
-                current: current_bytes,
-                incoming: incoming_bytes,
-                limit: self.capacity.max_bytes,
-            });
-        }
-
-        // 3. Persist generation, checkpoint metadata, positions, and participant state.
-        sqlx::query(
-            "INSERT INTO reliable_generations (rule_id, generation, revoked) VALUES (?, ?, 0)
-             ON CONFLICT(rule_id) DO UPDATE SET generation = excluded.generation, revoked = 0",
-        )
-        .bind(&rule_id)
-        .bind(gen_i64)
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| OutboxError::Storage(e.to_string()))?;
-
-        let metadata_json = serde_json::to_string(&envelope.metadata)
-            .map_err(|e| OutboxError::Storage(e.to_string()))?;
-        sqlx::query(
-            "INSERT OR REPLACE INTO reliable_checkpoints
-             (rule_id, checkpoint_id, generation, metadata_json, committed_at_ms)
-             VALUES (?, ?, ?, ?, ?)",
-        )
-        .bind(&rule_id)
-        .bind(cp_id)
-        .bind(gen_i64)
-        .bind(metadata_json)
-        .bind(envelope.metadata.created_wall_millis)
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| OutboxError::Storage(e.to_string()))?;
-
-        for pos in &envelope.metadata.source_positions {
-            sqlx::query(
-                "INSERT OR REPLACE INTO reliable_positions
-                 (rule_id, checkpoint_id, source_id, partition_id, generation, codec, cursor)
-                 VALUES (?, ?, ?, ?, ?, ?, ?)",
-            )
-            .bind(&rule_id)
-            .bind(cp_id)
-            .bind(pos.partition.source_id.as_str())
-            .bind(pos.partition.partition_id.as_str())
-            .bind(i64::try_from(pos.generation.0).unwrap_or(i64::MAX))
-            .bind(pos.codec.as_str())
-            .bind(&pos.cursor)
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| OutboxError::Storage(e.to_string()))?;
-        }
-
-        for (op_id, snapshot) in &envelope.payloads {
-            sqlx::query(
-                "INSERT OR REPLACE INTO reliable_participants
-                 (rule_id, checkpoint_id, operator_id, envelope_version, state_version, checksum, payload, records, bytes)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            )
-            .bind(&rule_id)
-            .bind(cp_id)
-            .bind(op_id.as_str())
-            .bind(i64::from(snapshot.envelope_version))
-            .bind(i64::from(snapshot.state_version.0))
-            .bind(snapshot.checksum.as_str())
-            .bind(&snapshot.payload)
-            .bind(i64::try_from(snapshot.usage.records).unwrap_or(i64::MAX))
-            .bind(i64::try_from(snapshot.usage.bytes).unwrap_or(i64::MAX))
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| OutboxError::Storage(e.to_string()))?;
-        }
-
-        // 4. Insert outbox entries idempotently (INSERT OR IGNORE).
-        let mut inserted = 0usize;
-        let mut deduplicated = 0usize;
-        for entry in entries {
-            let outcome_json = entry
-                .effect
-                .terminal_outcome
-                .as_ref()
-                .map(serde_json::to_string)
-                .transpose()
-                .map_err(|e| OutboxError::Storage(e.to_string()))?;
-            let res = sqlx::query(
-                "INSERT OR IGNORE INTO reliable_outbox_effects
-                 (effect_id, rule_id, generation, action_id, connection_id, order_key, payload, claimed_by, attempt, terminal_outcome_json)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)",
-            )
-            .bind(entry.effect.effect_id.as_str())
-            .bind(entry.effect.rule_id.as_str())
-            .bind(i64::try_from(entry.effect.generation.0).unwrap_or(i64::MAX))
-            .bind(entry.effect.destination.action_id.as_str())
-            .bind(entry.effect.destination.connection_id.as_ref().map(|c| c.as_str()))
-            .bind(entry.effect.order_key.as_deref())
-            .bind(&entry.payload)
-            .bind(i64::from(entry.effect.attempt))
-            .bind(outcome_json)
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| OutboxError::Storage(e.to_string()))?;
-            if res.rows_affected() > 0 {
-                inserted += 1;
-            } else {
-                deduplicated += 1;
-            }
-        }
-
-        if self.store.take_commit_failure() {
-            tx.rollback()
-                .await
-                .map_err(|e| OutboxError::Storage(e.to_string()))?;
-            return Err(OutboxError::Checkpoint(CheckpointError::StorageFailure(
-                "injected commit rollback".to_owned(),
-            )));
-        }
-
-        tx.commit()
-            .await
-            .map_err(|e| OutboxError::Storage(e.to_string()))?;
-        Ok(EnqueueReport {
-            inserted,
-            deduplicated,
-        })
     }
 
     /// Claims up to `limit` pending (non-terminal) outbox entries owned by
-    /// `(rule_id, action_id)`. Action order never changes ownership.
+    /// `(rule_id, action_id)` using [`DEFAULT_CLAIM_LEASE_MS`].
     pub async fn claim_pending(
         &self,
         rule_id: &RuleId,
         action_id: &ActionId,
         worker_id: &str,
         limit: usize,
+    ) -> Result<Vec<OutboxEntry>, OutboxError> {
+        self.claim_pending_with_lease(
+            rule_id,
+            action_id,
+            worker_id,
+            limit,
+            DEFAULT_CLAIM_LEASE_MS,
+            None,
+        )
+        .await
+    }
+
+    /// Atomically verifies optional active generation fencing, claims up to `limit`
+    /// unclaimed or lease-expired pending entries owned by `(rule_id, action_id)`,
+    /// and stamps a lease expiry timestamp.
+    pub async fn claim_pending_with_lease(
+        &self,
+        rule_id: &RuleId,
+        action_id: &ActionId,
+        worker_id: &str,
+        limit: usize,
+        lease_duration_ms: u64,
+        expected_generation: Option<Generation>,
     ) -> Result<Vec<OutboxEntry>, OutboxError> {
         let mut tx = self
             .store
@@ -314,15 +161,58 @@ impl<'a> SqliteOutbox<'a> {
             .await
             .map_err(|e| OutboxError::Storage(e.to_string()))?;
 
+        if let Some(generation) = expected_generation {
+            let row: Option<(i64, i64)> = sqlx::query_as(
+                "SELECT generation, revoked FROM reliable_generations WHERE rule_id = ?",
+            )
+            .bind(rule_id.as_str())
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(|e| OutboxError::Storage(e.to_string()))?;
+
+            let Some((active_gen, revoked)) = row else {
+                return Err(OutboxError::Checkpoint(
+                    CheckpointError::GenerationMismatch {
+                        expected: Generation(1),
+                        actual: generation,
+                    },
+                ));
+            };
+            let active_u64 = u64::try_from(active_gen)
+                .map_err(|_| OutboxError::Storage("corrupt negative generation".to_owned()))?;
+            if revoked != 0 || generation.0 != active_u64 {
+                return Err(OutboxError::Checkpoint(
+                    CheckpointError::GenerationMismatch {
+                        expected: Generation(active_u64.saturating_add(u64::from(revoked != 0))),
+                        actual: generation,
+                    },
+                ));
+            }
+        }
+
+        let now_ms = i64::try_from(
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis(),
+        )
+        .unwrap_or(i64::MAX);
+        let lease_ms = i64::try_from(lease_duration_ms).unwrap_or(i64::MAX);
+        let lease_until_ms = now_ms.saturating_add(lease_ms);
+
         let rows = sqlx::query(
             "SELECT effect_id, rule_id, generation, action_id, connection_id, order_key, payload, attempt
              FROM reliable_outbox_effects
-             WHERE rule_id = ? AND action_id = ? AND terminal_outcome_json IS NULL
+             WHERE rule_id = ?
+               AND action_id = ?
+               AND terminal_outcome_json IS NULL
+               AND (claimed_by IS NULL OR claimed_until_ms IS NULL OR claimed_until_ms <= ?)
              ORDER BY rowid ASC
              LIMIT ?",
         )
         .bind(rule_id.as_str())
         .bind(action_id.as_str())
+        .bind(now_ms)
         .bind(i64::try_from(limit).unwrap_or(i64::MAX))
         .fetch_all(&mut *tx)
         .await
@@ -339,12 +229,24 @@ impl<'a> SqliteOutbox<'a> {
             let payload: Vec<u8> = row.get("payload");
             let attempt: i64 = row.get("attempt");
 
-            sqlx::query("UPDATE reliable_outbox_effects SET claimed_by = ? WHERE effect_id = ?")
-                .bind(worker_id)
-                .bind(&eff_id_str)
-                .execute(&mut *tx)
-                .await
-                .map_err(|e| OutboxError::Storage(e.to_string()))?;
+            let res = sqlx::query(
+                "UPDATE reliable_outbox_effects
+                 SET claimed_by = ?, claimed_until_ms = ?
+                 WHERE effect_id = ?
+                   AND terminal_outcome_json IS NULL
+                   AND (claimed_by IS NULL OR claimed_until_ms IS NULL OR claimed_until_ms <= ?)",
+            )
+            .bind(worker_id)
+            .bind(lease_until_ms)
+            .bind(&eff_id_str)
+            .bind(now_ms)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| OutboxError::Storage(e.to_string()))?;
+
+            if res.rows_affected() == 0 {
+                continue;
+            }
 
             claimed.push(OutboxEntry {
                 effect: EffectRecord {
@@ -352,7 +254,9 @@ impl<'a> SqliteOutbox<'a> {
                         .map_err(|e| OutboxError::Storage(e.to_string()))?,
                     rule_id: RuleId::try_from(rule_str)
                         .map_err(|e| OutboxError::Storage(e.to_string()))?,
-                    generation: Generation(u64::try_from(gen_i64).unwrap_or(0)),
+                    generation: Generation(u64::try_from(gen_i64).map_err(|_| {
+                        OutboxError::Storage("corrupt negative generation".to_owned())
+                    })?),
                     destination: EffectDestination {
                         action_id: ActionId::try_from(act_str)
                             .map_err(|e| OutboxError::Storage(e.to_string()))?,
@@ -362,7 +266,8 @@ impl<'a> SqliteOutbox<'a> {
                             .map_err(|e| OutboxError::Storage(e.to_string()))?,
                     },
                     order_key,
-                    attempt: u32::try_from(attempt).unwrap_or(0),
+                    attempt: u32::try_from(attempt)
+                        .map_err(|_| OutboxError::Storage("corrupt negative attempt".to_owned()))?,
                     terminal_outcome: None,
                 },
                 payload,
@@ -373,6 +278,26 @@ impl<'a> SqliteOutbox<'a> {
             .await
             .map_err(|e| OutboxError::Storage(e.to_string()))?;
         Ok(claimed)
+    }
+
+    /// Releases an active claim held by `worker_id` so deferred or unsettled entries
+    /// can be reclaimed immediately on the next dispatcher pass.
+    pub async fn release_claim(
+        &self,
+        effect_id: &EffectId,
+        worker_id: &str,
+    ) -> Result<(), OutboxError> {
+        sqlx::query(
+            "UPDATE reliable_outbox_effects
+             SET claimed_by = NULL, claimed_until_ms = NULL
+             WHERE effect_id = ? AND claimed_by = ?",
+        )
+        .bind(effect_id.as_str())
+        .bind(worker_id)
+        .execute(self.store.pool())
+        .await
+        .map_err(|e| OutboxError::Storage(e.to_string()))?;
+        Ok(())
     }
 
     /// Acknowledges an effect outcome idempotently.

@@ -215,6 +215,9 @@ async fn test_clock_burst_refill_cancellation_and_ten_thousand_queued_inputs() {
             RateLimitEnqueueOutcome::OverflowError(err) => {
                 panic!("unexpected overflow error: {err}")
             }
+            RateLimitEnqueueOutcome::BackpressureWait(_) => {
+                panic!("unexpected backpressure under DropNewest")
+            }
         }
     }
 

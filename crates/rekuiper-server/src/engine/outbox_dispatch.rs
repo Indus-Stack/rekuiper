@@ -4,11 +4,13 @@
 use crate::engine::retry::{execute_with_retry, RetryPolicy};
 use parking_lot::Mutex;
 use rekuiper_core::contracts::{
-    ActionId, Clock, DeadlineCancellation, EffectId, EffectOutcome, RuleId, StructuredError,
+    ActionId, Clock, DeadlineCancellation, EffectId, EffectOutcome, Generation, RuleId,
+    StructuredError,
 };
-use rekuiper_core::reliability::{OutboxEntry, OutboxError, SqliteOutbox};
+use rekuiper_core::reliability::{OutboxEntry, OutboxError, SqliteOutbox, DEFAULT_CLAIM_LEASE_MS};
 use rekuiper_core::resources::ResourceBudget;
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 /// Explicit policy for handling [`EffectOutcome::PermanentFailure`].
@@ -33,7 +35,8 @@ pub trait OutboxSinkAdapter: Send + Sync {
 /// dispatcher workers so two dispatchers cannot claim conflicting ownership.
 #[derive(Debug, Clone, Default)]
 pub struct DispatchCoordinator {
-    leases: Arc<Mutex<HashMap<(RuleId, ActionId), String>>>,
+    leases: Arc<Mutex<HashMap<(RuleId, ActionId), u64>>>,
+    next_lease_id: Arc<AtomicU64>,
 }
 
 impl DispatchCoordinator {
@@ -41,7 +44,7 @@ impl DispatchCoordinator {
         Self::default()
     }
 
-    /// Attempts to acquire exclusive ownership of `(rule_id, action_id)` for `worker_id`.
+    /// Attempts to acquire exclusive ownership of `(rule_id, action_id)`.
     pub fn try_acquire(
         &self,
         rule_id: &RuleId,
@@ -50,15 +53,15 @@ impl DispatchCoordinator {
     ) -> Option<ActionDispatchLease> {
         let mut guard = self.leases.lock();
         let key = (rule_id.clone(), action_id.clone());
-        if let Some(owner) = guard.get(&key) {
-            if owner != worker_id {
-                return None;
-            }
+        if guard.contains_key(&key) {
+            return None;
         }
-        guard.insert(key.clone(), worker_id.to_string());
+        let lease_id = self.next_lease_id.fetch_add(1, Ordering::Relaxed) + 1;
+        guard.insert(key.clone(), lease_id);
         Some(ActionDispatchLease {
             leases: Arc::clone(&self.leases),
             key,
+            lease_id,
             worker_id: worker_id.to_string(),
         })
     }
@@ -67,15 +70,22 @@ impl DispatchCoordinator {
 /// RAII lease releasing `(RuleId, ActionId)` ownership on drop.
 #[derive(Debug)]
 pub struct ActionDispatchLease {
-    leases: Arc<Mutex<HashMap<(RuleId, ActionId), String>>>,
+    leases: Arc<Mutex<HashMap<(RuleId, ActionId), u64>>>,
     key: (RuleId, ActionId),
+    lease_id: u64,
     worker_id: String,
+}
+
+impl ActionDispatchLease {
+    fn claim_owner(&self) -> String {
+        format!("{}:{}", self.worker_id, self.lease_id)
+    }
 }
 
 impl Drop for ActionDispatchLease {
     fn drop(&mut self) {
         let mut guard = self.leases.lock();
-        if guard.get(&self.key).is_some_and(|o| o == &self.worker_id) {
+        if guard.get(&self.key) == Some(&self.lease_id) {
             guard.remove(&self.key);
         }
     }
@@ -166,7 +176,63 @@ impl OutboxDispatcher {
         cancellation: &DeadlineCancellation,
         task_budget: Option<&ResourceBudget>,
     ) -> Result<DispatchBatchReport, OutboxDispatchError> {
-        let Some(_lease) = self
+        self.dispatch_once_inner(
+            outbox,
+            rule_id,
+            action_id,
+            None,
+            limit,
+            adapter,
+            clock,
+            cancellation,
+            task_budget,
+        )
+        .await
+    }
+
+    /// Atomically verifies `generation` is active and unrevoked inside the same
+    /// SQLite claim transaction while acquiring the coordinator lease and dispatching.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn dispatch_once_fenced<A: OutboxSinkAdapter>(
+        &self,
+        outbox: &SqliteOutbox<'_>,
+        rule_id: &RuleId,
+        action_id: &ActionId,
+        generation: Generation,
+        limit: usize,
+        adapter: &A,
+        clock: &dyn Clock,
+        cancellation: &DeadlineCancellation,
+        task_budget: Option<&ResourceBudget>,
+    ) -> Result<DispatchBatchReport, OutboxDispatchError> {
+        self.dispatch_once_inner(
+            outbox,
+            rule_id,
+            action_id,
+            Some(generation),
+            limit,
+            adapter,
+            clock,
+            cancellation,
+            task_budget,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn dispatch_once_inner<A: OutboxSinkAdapter>(
+        &self,
+        outbox: &SqliteOutbox<'_>,
+        rule_id: &RuleId,
+        action_id: &ActionId,
+        required_generation: Option<Generation>,
+        limit: usize,
+        adapter: &A,
+        clock: &dyn Clock,
+        cancellation: &DeadlineCancellation,
+        task_budget: Option<&ResourceBudget>,
+    ) -> Result<DispatchBatchReport, OutboxDispatchError> {
+        let Some(lease) = self
             .coordinator
             .try_acquire(rule_id, action_id, &self.worker_id)
         else {
@@ -176,8 +242,16 @@ impl OutboxDispatcher {
             });
         };
 
+        let claim_owner = lease.claim_owner();
         let entries = outbox
-            .claim_pending(rule_id, action_id, &self.worker_id, limit)
+            .claim_pending_with_lease(
+                rule_id,
+                action_id,
+                &claim_owner,
+                limit,
+                DEFAULT_CLAIM_LEASE_MS,
+                required_generation,
+            )
             .await?;
 
         let mut report = DispatchBatchReport {
@@ -190,6 +264,9 @@ impl OutboxDispatcher {
             if let Some(order_key) = &entry.effect.order_key {
                 if blocked_keys.contains(order_key) {
                     report.deferred_by_order_key += 1;
+                    outbox
+                        .release_claim(&entry.effect.effect_id, &claim_owner)
+                        .await?;
                     continue;
                 }
             }
@@ -222,14 +299,20 @@ impl OutboxDispatcher {
                     report.permanent_failures += 1;
                 }
                 EffectOutcome::Retryable { .. } => {
-                    // Leave unsettled in SQLite outbox so restart resends without early deletion.
+                    // Leave unsettled in SQLite outbox and release claim so retry/restart picks it up.
+                    outbox
+                        .release_claim(&entry.effect.effect_id, &claim_owner)
+                        .await?;
                     report.unsettled_retryable += 1;
                     if let Some(order_key) = &entry.effect.order_key {
                         blocked_keys.insert(order_key.clone());
                     }
                 }
                 EffectOutcome::Ambiguous { .. } => {
-                    // Leave unsettled for idempotent reconciliation on retry/restart.
+                    // Leave unsettled for idempotent reconciliation and release claim for immediate retry.
+                    outbox
+                        .release_claim(&entry.effect.effect_id, &claim_owner)
+                        .await?;
                     report.unsettled_ambiguous += 1;
                     if let Some(order_key) = &entry.effect.order_key {
                         blocked_keys.insert(order_key.clone());

@@ -615,8 +615,9 @@ pub(crate) async fn run_stateless_rule(
 /// Kept completely separate from the default `run_rule_loop` hotpath so
 /// non-reliable rules incur zero overhead.
 pub mod reliable {
-    use crate::engine::batching::{ActionBatchAssembler, BatchConfig, BatchItem, ItemOutcome};
+    use crate::engine::batching::{ActionBatchAssembler, BatchConfig, BatchItem, PushDecision};
     use crate::engine::retry::{execute_with_retry, RetryPolicy};
+    use indexmap::IndexMap;
     use rekuiper_connectors::kafka::{
         KafkaPositionCodec, KafkaPreparedMessage, KafkaReliableError, KafkaReliablePartitionReader,
     };
@@ -626,7 +627,7 @@ pub mod reliable {
     };
     use rekuiper_core::model::StreamRecord;
     use rekuiper_core::reliability::{CheckpointCoordinator, CoordinatorError};
-    use rekuiper_sql::ast::WindowDef;
+    use rekuiper_sql::ast::{TimeUnit, WindowDef};
     use rekuiper_sql::{Evaluator, SelectStmt};
     use serde_json::Value;
     use std::time::Duration;
@@ -768,6 +769,8 @@ pub mod reliable {
         next_checkpoint_id: u64,
         status: ReliableCheckpointStatus,
         retry_policy: RetryPolicy,
+        window_buffer: Vec<(i64, IndexMap<String, Value>)>,
+        tumbling_start_ms: Option<i64>,
     }
 
     impl ReliableSingleSourceRunner {
@@ -787,6 +790,8 @@ pub mod reliable {
                 next_checkpoint_id: 1,
                 status: ReliableCheckpointStatus::new(guarantee),
                 retry_policy,
+                window_buffer: Vec::new(),
+                tumbling_start_ms: None,
             })
         }
 
@@ -805,9 +810,12 @@ pub mod reliable {
             };
             for participant in participants.iter_mut() {
                 let op_id = participant.operator_id().clone();
-                if let Some(snapshot) = envelope.payloads.get(&op_id) {
-                    participant.restore_snapshot(snapshot)?;
-                }
+                let Some(snapshot) = envelope.payloads.get(&op_id) else {
+                    return Err(ReliableRuntimeError::Checkpoint(
+                        CheckpointError::MissingParticipant(op_id),
+                    ));
+                };
+                participant.restore_snapshot(snapshot)?;
             }
             let mut restored_offset = None;
             for pos in &envelope.metadata.source_positions {
@@ -820,6 +828,103 @@ pub mod reliable {
             self.status.last_checkpoint_wall_millis = Some(envelope.metadata.created_wall_millis);
             self.status.restored_next_offset = restored_offset;
             Ok(restored_offset)
+        }
+
+        fn stage_output_value(
+            assembler: &mut ActionBatchAssembler<Value>,
+            pending_batches: &mut Vec<Vec<BatchItem<Value>>>,
+            seq: u64,
+            val: Value,
+            now_elapsed: Duration,
+        ) -> Result<(), ReliableRuntimeError> {
+            let bytes = serde_json::to_vec(&val).map(|b| b.len()).unwrap_or(0);
+            let item = BatchItem::new(seq, bytes, val.clone());
+            match assembler.try_push(item, now_elapsed, None) {
+                Ok(PushDecision::Buffered) => Ok(()),
+                Ok(PushDecision::FlushNow(_)) => {
+                    pending_batches.push(assembler.take_batch());
+                    Ok(())
+                }
+                Ok(PushDecision::FlushCurrentFirst(_)) => {
+                    pending_batches.push(assembler.take_batch());
+                    let retry_item = BatchItem::new(seq, bytes, val);
+                    match assembler.try_push(retry_item, now_elapsed, None) {
+                        Ok(PushDecision::Buffered) => Ok(()),
+                        Ok(PushDecision::FlushNow(_)) => {
+                            pending_batches.push(assembler.take_batch());
+                            Ok(())
+                        }
+                        Ok(PushDecision::FlushCurrentFirst(_)) => {
+                            Err(ReliableRuntimeError::SinkRejected(
+                                "single output record exceeds batch capacity".to_owned(),
+                            ))
+                        }
+                        Err(err) => Err(ReliableRuntimeError::SinkRejected(err.to_string())),
+                    }
+                }
+                Err(err) => Err(ReliableRuntimeError::SinkRejected(err.to_string())),
+            }
+        }
+
+        fn window_duration_ms(unit: &TimeUnit, length: u64) -> i64 {
+            let unit_ms: i64 = match unit {
+                TimeUnit::Ms => 1,
+                TimeUnit::Ss => 1_000,
+                TimeUnit::Mi => 60_000,
+                TimeUnit::Hh => 3_600_000,
+                TimeUnit::Dd => 86_400_000,
+            };
+            i64::try_from(length)
+                .unwrap_or(i64::MAX)
+                .saturating_mul(unit_ms)
+                .max(1)
+        }
+
+        fn flush_due_tumbling_windows(
+            &mut self,
+            horizon_ms: i64,
+            win_ms: i64,
+            assembler: &mut ActionBatchAssembler<Value>,
+            pending_batches: &mut Vec<Vec<BatchItem<Value>>>,
+            out_seq: &mut u64,
+            now_elapsed: Duration,
+        ) -> Result<(), ReliableRuntimeError> {
+            while let Some(start) = self.tumbling_start_ms {
+                let end = start.saturating_add(win_ms);
+                if horizon_ms < end {
+                    break;
+                }
+                let mut due_rows = Vec::new();
+                let mut remaining = Vec::new();
+                for (ts, row) in self.window_buffer.drain(..) {
+                    if ts < end {
+                        due_rows.push(row);
+                    } else {
+                        remaining.push((ts, row));
+                    }
+                }
+                self.window_buffer = remaining;
+                if !due_rows.is_empty() {
+                    for out in Evaluator::eval_window_filtered(&self.stmt, due_rows) {
+                        let val = Value::Object(out.into_iter().collect());
+                        Self::stage_output_value(
+                            assembler,
+                            pending_batches,
+                            *out_seq,
+                            val,
+                            now_elapsed,
+                        )?;
+                        *out_seq = out_seq.saturating_add(1);
+                    }
+                }
+                self.tumbling_start_ms = self
+                    .window_buffer
+                    .iter()
+                    .map(|(ts, _)| *ts)
+                    .min()
+                    .map(|next_ts| next_ts.div_euclid(win_ms) * win_ms);
+            }
+            Ok(())
         }
 
         /// Processes one prepared Kafka message (single or multirecord JSON array),
@@ -838,18 +943,95 @@ pub mod reliable {
         ) -> Result<CheckpointId, ReliableRuntimeError> {
             let records: Vec<StreamRecord> = prepared.decode(reader.tombstone_policy())?;
             let mut assembler = ActionBatchAssembler::new(BatchConfig::legacy(1024, None));
-            let now_elapsed = clock.now().elapsed;
+            let mut pending_batches: Vec<Vec<BatchItem<Value>>> = Vec::new();
+            let now_snap = clock.now();
+            let now_elapsed = now_snap.elapsed;
+            let mut out_seq: u64 = 0;
 
-            for (idx, rec) in records.into_iter().enumerate() {
-                if let Some(projected) = Evaluator::eval_select(&self.stmt, &rec.data) {
-                    let val = Value::Object(projected.into_iter().collect());
-                    let bytes = serde_json::to_vec(&val).map(|b| b.len()).unwrap_or(0);
-                    let _ = assembler.try_push(
-                        BatchItem::new(idx as u64, bytes, val),
-                        now_elapsed,
-                        None,
-                    );
+            match self.stmt.window.clone() {
+                None => {
+                    for rec in records {
+                        if let Some(projected) = Evaluator::eval_select(&self.stmt, &rec.data) {
+                            let val = Value::Object(projected.into_iter().collect());
+                            Self::stage_output_value(
+                                &mut assembler,
+                                &mut pending_batches,
+                                out_seq,
+                                val,
+                                now_elapsed,
+                            )?;
+                            out_seq = out_seq.saturating_add(1);
+                        }
+                    }
                 }
+                Some(WindowDef::Count { size, interval }) => {
+                    let win_size = size.max(1);
+                    let hop = interval.unwrap_or(win_size).max(1);
+                    for rec in records {
+                        if Evaluator::passes_where(&self.stmt, &rec.data) {
+                            self.window_buffer
+                                .push((rec.timestamp, rec.data.into_inner()));
+                            while self.window_buffer.len() >= win_size {
+                                let window_rows: Vec<IndexMap<String, Value>> = self.window_buffer
+                                    [..win_size]
+                                    .iter()
+                                    .map(|(_, r)| r.clone())
+                                    .collect();
+                                let drain_len = hop.min(self.window_buffer.len());
+                                self.window_buffer.drain(..drain_len);
+                                for out in Evaluator::eval_window_filtered(&self.stmt, window_rows)
+                                {
+                                    let val = Value::Object(out.into_iter().collect());
+                                    Self::stage_output_value(
+                                        &mut assembler,
+                                        &mut pending_batches,
+                                        out_seq,
+                                        val,
+                                        now_elapsed,
+                                    )?;
+                                    out_seq = out_seq.saturating_add(1);
+                                }
+                            }
+                        }
+                    }
+                }
+                Some(WindowDef::TumblingTime { unit, length }) => {
+                    let win_ms = Self::window_duration_ms(&unit, length);
+                    for rec in records {
+                        if Evaluator::passes_where(&self.stmt, &rec.data) {
+                            let ev_ts = rec.timestamp;
+                            self.flush_due_tumbling_windows(
+                                ev_ts,
+                                win_ms,
+                                &mut assembler,
+                                &mut pending_batches,
+                                &mut out_seq,
+                                now_elapsed,
+                            )?;
+                            if self.tumbling_start_ms.is_none() {
+                                self.tumbling_start_ms = Some(ev_ts.div_euclid(win_ms) * win_ms);
+                            }
+                            self.window_buffer.push((ev_ts, rec.data.into_inner()));
+                        }
+                    }
+                    self.flush_due_tumbling_windows(
+                        now_snap.wall_millis,
+                        win_ms,
+                        &mut assembler,
+                        &mut pending_batches,
+                        &mut out_seq,
+                        now_elapsed,
+                    )?;
+                }
+                Some(_) => {
+                    return Err(ReliableRuntimeError::UnsupportedShape(
+                        "only tumbling, count, or analytic (windowless) plans are supported",
+                    ));
+                }
+            }
+
+            if !assembler.is_empty() {
+                pending_batches.push(assembler.take_batch());
             }
 
             let cp_id = CheckpointId(self.next_checkpoint_id);
@@ -868,8 +1050,7 @@ pub mod reliable {
                     Duration::from_secs(30),
                     cancellation,
                     || async {
-                        if !assembler.is_empty() {
-                            let batch = assembler.take_batch();
+                        for batch in pending_batches {
                             let payloads: Vec<Value> =
                                 batch.iter().map(|item| item.payload.clone()).collect();
                             let report = execute_with_retry(
@@ -881,18 +1062,30 @@ pub mod reliable {
                             )
                             .await;
                             match report.outcome {
-                                EffectOutcome::Delivered => {
-                                    let outcomes = vec![ItemOutcome::Delivered; batch.len()];
-                                    assembler.apply_outcomes(batch, &outcomes, clock.now().elapsed);
-                                }
+                                EffectOutcome::Delivered => {}
                                 EffectOutcome::PermanentFailure { error } => {
                                     return Err(CoordinatorError::CheckpointFailed(
-                                        CheckpointError::StorageFailure(error.to_string()),
+                                        CheckpointError::StorageFailure(format!(
+                                            "sink permanent failure (attempts={}): {error}",
+                                            report.attempts
+                                        )),
                                     ));
                                 }
-                                EffectOutcome::Retryable { .. }
-                                | EffectOutcome::Ambiguous { .. } => {
-                                    return Err(CoordinatorError::TimedOut);
+                                EffectOutcome::Retryable { delay_hint_millis } => {
+                                    return Err(CoordinatorError::CheckpointFailed(
+                                        CheckpointError::StorageFailure(format!(
+                                            "sink retryable failure after {} attempt(s) (delay_hint_ms={delay_hint_millis:?})",
+                                            report.attempts
+                                        )),
+                                    ));
+                                }
+                                EffectOutcome::Ambiguous { error } => {
+                                    return Err(CoordinatorError::CheckpointFailed(
+                                        CheckpointError::StorageFailure(format!(
+                                            "sink ambiguous failure after {} attempt(s): {error}",
+                                            report.attempts
+                                        )),
+                                    ));
                                 }
                             }
                         }
@@ -952,20 +1145,16 @@ pub mod reliable {
             }
         }
 
-        fn matches_operator_id(self, op_id: &str) -> bool {
-            let id = op_id.to_ascii_lowercase();
-            match self {
-                Self::Analytic => id.contains("analytic"),
-                Self::TumblingWindow => id.contains("tumbl"),
-                Self::CountWindow => id.contains("count"),
-                Self::HoppingWindow => id.contains("hop"),
-                Self::SlidingWindow => id.contains("slid"),
-                Self::SessionWindow => id.contains("session"),
-                Self::StateWindow => id.contains("state"),
-                Self::JoinBuffer => id.contains("join"),
-                Self::CepSequence => id.contains("cep"),
-                Self::BarrierAlignment => id.contains("barrier") || id.contains("align"),
+        fn matches_participant(self, participant: &dyn StateParticipant) -> bool {
+            let label = self.label();
+            if let Some(tag) = participant.participant_kind_tag() {
+                return tag == label;
             }
+            let id = participant.operator_id().as_str().to_ascii_lowercase();
+            id == label
+                || id.starts_with(&format!("{label}:"))
+                || id.starts_with(&format!("{label}_"))
+                || id.starts_with(&format!("{label}-"))
         }
     }
 
@@ -1102,9 +1291,7 @@ pub mod reliable {
         participants: &[&dyn StateParticipant],
     ) -> Result<(), ReliableRuntimeError> {
         for kind in required {
-            let covered = participants
-                .iter()
-                .any(|p| kind.matches_operator_id(p.operator_id().as_str()));
+            let covered = participants.iter().any(|p| kind.matches_participant(*p));
             if !covered {
                 return Err(ReliableRuntimeError::MissingParticipant(kind.label()));
             }
@@ -1166,9 +1353,12 @@ pub mod reliable {
             };
             for participant in participants.iter_mut() {
                 let op_id = participant.operator_id().clone();
-                if let Some(snapshot) = envelope.payloads.get(&op_id) {
-                    participant.restore_snapshot(snapshot)?;
-                }
+                let Some(snapshot) = envelope.payloads.get(&op_id) else {
+                    return Err(ReliableRuntimeError::Checkpoint(
+                        CheckpointError::MissingParticipant(op_id),
+                    ));
+                };
+                participant.restore_snapshot(snapshot)?;
             }
             self.next_checkpoint_id = envelope.metadata.checkpoint_id.0.saturating_add(1);
             self.status.last_checkpoint_id = Some(envelope.metadata.checkpoint_id);

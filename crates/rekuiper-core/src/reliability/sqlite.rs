@@ -1,21 +1,24 @@
 //! Atomic, generation-fenced SQLite checkpoint and outbox v1 store.
 
+use super::outbox::{EnqueueReport, OutboxCapacity, OutboxEntry, OutboxError};
 use crate::contracts::{
     ActionId, CheckpointEnvelope, CheckpointError, CheckpointId, CheckpointMetadata,
     CheckpointStore, CompletionStatus, ConnectionId, ContentChecksum, EffectDestination, EffectId,
     EffectOutcome, EffectRecord, Generation, OperatorId, PartitionId, PositionCodecId, RuleId,
     SourceId, SourcePartition, SourcePosition, StateResourceUsage, StateSchemaVersion,
-    StateSnapshot, STATE_ENVELOPE_VERSION,
+    StateSnapshot,
 };
 use async_trait::async_trait;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::{Row, SqlitePool};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 pub const RELIABLE_SQLITE_SCHEMA_VERSION: u32 = 1;
+pub const DEFAULT_CHECKPOINT_RETENTION: usize = 5;
+pub const DEFAULT_OUTBOX_RETENTION: usize = 1000;
 
 /// Synchronous durability level enforced on the reliable SQLite connection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -54,6 +57,8 @@ pub struct ReliableSqliteStore {
     pool: SqlitePool,
     verified_durability: VerifiedSqliteDurability,
     fail_next_commit: AtomicBool,
+    checkpoint_retention: usize,
+    outbox_retention: usize,
 }
 
 impl ReliableSqliteStore {
@@ -144,9 +149,23 @@ impl ReliableSqliteStore {
                 foreign_keys,
             },
             fail_next_commit: AtomicBool::new(false),
+            checkpoint_retention: DEFAULT_CHECKPOINT_RETENTION,
+            outbox_retention: DEFAULT_OUTBOX_RETENTION,
         };
         store.migrate().await?;
         Ok(store)
+    }
+
+    /// Configures per-rule retention limits for checkpoints and settled outbox rows.
+    /// `max_checkpoints_per_rule` is clamped to at least 1 so the active checkpoint is preserved.
+    pub fn with_retention(
+        mut self,
+        max_checkpoints_per_rule: usize,
+        max_settled_outbox_per_rule: usize,
+    ) -> Self {
+        self.checkpoint_retention = max_checkpoints_per_rule.max(1);
+        self.outbox_retention = max_settled_outbox_per_rule;
+        self
     }
 
     pub fn verified_durability(&self) -> &VerifiedSqliteDurability {
@@ -228,6 +247,7 @@ impl ReliableSqliteStore {
                 order_key TEXT,
                 payload BLOB NOT NULL DEFAULT X'',
                 claimed_by TEXT,
+                claimed_until_ms INTEGER,
                 attempt INTEGER NOT NULL,
                 terminal_outcome_json TEXT
             )",
@@ -235,6 +255,20 @@ impl ReliableSqliteStore {
 
         for stmt in ddl {
             sqlx::query(stmt)
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| CheckpointError::StorageFailure(e.to_string()))?;
+        }
+
+        let columns = sqlx::query("PRAGMA table_info(reliable_outbox_effects)")
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(|e| CheckpointError::StorageFailure(e.to_string()))?;
+        let has_claimed_until = columns
+            .iter()
+            .any(|row| row.get::<String, _>("name") == "claimed_until_ms");
+        if !has_claimed_until {
+            sqlx::query("ALTER TABLE reliable_outbox_effects ADD COLUMN claimed_until_ms INTEGER")
                 .execute(&mut *tx)
                 .await
                 .map_err(|e| CheckpointError::StorageFailure(e.to_string()))?;
@@ -253,52 +287,148 @@ impl ReliableSqliteStore {
         envelope: CheckpointEnvelope,
         effects: Vec<EffectRecord>,
     ) -> Result<(), CheckpointError> {
+        let entries: Vec<OutboxEntry> = effects
+            .into_iter()
+            .map(|effect| OutboxEntry {
+                effect,
+                payload: Vec::new(),
+            })
+            .collect();
+        self.commit_checkpoint_and_entries(envelope, entries, None)
+            .await
+            .map(|_| ())
+            .map_err(|err| match err {
+                OutboxError::Checkpoint(ce) => ce,
+                OutboxError::Storage(msg) => CheckpointError::StorageFailure(msg),
+                other @ OutboxError::CapacityExceeded { .. } => {
+                    CheckpointError::StorageFailure(other.to_string())
+                }
+            })
+    }
+
+    pub(crate) async fn commit_checkpoint_and_entries(
+        &self,
+        envelope: CheckpointEnvelope,
+        entries: Vec<OutboxEntry>,
+        capacity: Option<OutboxCapacity>,
+    ) -> Result<EnqueueReport, OutboxError> {
         let mut tx = self
             .pool
             .begin()
             .await
-            .map_err(|e| CheckpointError::StorageFailure(e.to_string()))?;
+            .map_err(|e| OutboxError::Storage(e.to_string()))?;
 
         let rule_id = envelope.metadata.identity.rule_id.as_str().to_owned();
         let incoming_gen = envelope.metadata.identity.generation;
-        let cp_id = i64::try_from(envelope.metadata.checkpoint_id.0)
-            .map_err(|_| CheckpointError::StorageFailure("checkpoint_id overflow".to_owned()))?;
-        let gen_i64 = i64::try_from(incoming_gen.0)
-            .map_err(|_| CheckpointError::StorageFailure("generation overflow".to_owned()))?;
+        let cp_id = i64::try_from(envelope.metadata.checkpoint_id.0).map_err(|_| {
+            OutboxError::Checkpoint(CheckpointError::StorageFailure(
+                "checkpoint_id overflow".to_owned(),
+            ))
+        })?;
+        let gen_i64 = i64::try_from(incoming_gen.0).map_err(|_| {
+            OutboxError::Checkpoint(CheckpointError::StorageFailure(
+                "generation overflow".to_owned(),
+            ))
+        })?;
 
+        // 1. Atomic generation fence check (strict equality once a generation exists).
         let existing: Option<(i64, i64)> = sqlx::query_as(
             "SELECT generation, revoked FROM reliable_generations WHERE rule_id = ?",
         )
         .bind(&rule_id)
         .fetch_optional(&mut *tx)
         .await
-        .map_err(|e| CheckpointError::StorageFailure(e.to_string()))?;
+        .map_err(|e| OutboxError::Storage(e.to_string()))?;
 
-        if let Some((existing_gen, revoked)) = existing {
-            let existing_gen_u64 = u64::try_from(existing_gen)
-                .map_err(|_| CheckpointError::StorageFailure("corrupt generation".to_owned()))?;
-            if incoming_gen.0 < existing_gen_u64
-                || (revoked != 0 && incoming_gen.0 == existing_gen_u64)
-            {
-                return Err(CheckpointError::GenerationMismatch {
-                    expected: Generation(existing_gen_u64.saturating_add(u64::from(revoked != 0))),
-                    actual: incoming_gen,
-                });
+        match existing {
+            Some((existing_gen, revoked)) => {
+                let existing_gen_u64 = u64::try_from(existing_gen).map_err(|_| {
+                    OutboxError::Checkpoint(CheckpointError::StorageFailure(
+                        "corrupt generation".to_owned(),
+                    ))
+                })?;
+                if revoked != 0 || incoming_gen.0 != existing_gen_u64 {
+                    return Err(OutboxError::Checkpoint(
+                        CheckpointError::GenerationMismatch {
+                            expected: Generation(
+                                existing_gen_u64.saturating_add(u64::from(revoked != 0)),
+                            ),
+                            actual: incoming_gen,
+                        },
+                    ));
+                }
+            }
+            None => {
+                sqlx::query(
+                    "INSERT INTO reliable_generations (rule_id, generation, revoked) VALUES (?, ?, 0)",
+                )
+                .bind(&rule_id)
+                .bind(gen_i64)
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| OutboxError::Storage(e.to_string()))?;
             }
         }
 
-        sqlx::query(
-            "INSERT INTO reliable_generations (rule_id, generation, revoked) VALUES (?, ?, 0)
-             ON CONFLICT(rule_id) DO UPDATE SET generation = excluded.generation, revoked = 0",
-        )
-        .bind(&rule_id)
-        .bind(gen_i64)
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| CheckpointError::StorageFailure(e.to_string()))?;
+        // 2. Per-rule capacity check before admitting genuinely new non-terminal entries.
+        if let Some(cap) = capacity {
+            let mut seen_ids = HashSet::with_capacity(entries.len());
+            let mut new_by_rule: BTreeMap<&str, (usize, usize)> = BTreeMap::new();
+            for entry in &entries {
+                if !seen_ids.insert(entry.effect.effect_id.as_str()) {
+                    continue;
+                }
+                let exists: Option<(i64,)> =
+                    sqlx::query_as("SELECT 1 FROM reliable_outbox_effects WHERE effect_id = ?")
+                        .bind(entry.effect.effect_id.as_str())
+                        .fetch_optional(&mut *tx)
+                        .await
+                        .map_err(|e| OutboxError::Storage(e.to_string()))?;
+                if exists.is_some() || entry.effect.terminal_outcome.is_some() {
+                    continue;
+                }
+                let slot = new_by_rule
+                    .entry(entry.effect.rule_id.as_str())
+                    .or_insert((0, 0));
+                slot.0 = slot.0.saturating_add(1);
+                slot.1 = slot.1.saturating_add(entry.payload.len());
+            }
 
+            for (target_rule, (incoming_items, incoming_bytes)) in new_by_rule {
+                let (pending_items, pending_bytes): (i64, i64) = sqlx::query_as(
+                    "SELECT COUNT(*), COALESCE(SUM(LENGTH(payload)), 0)
+                     FROM reliable_outbox_effects
+                     WHERE rule_id = ? AND terminal_outcome_json IS NULL",
+                )
+                .bind(target_rule)
+                .fetch_one(&mut *tx)
+                .await
+                .map_err(|e| OutboxError::Storage(e.to_string()))?;
+
+                let current_items = usize::try_from(pending_items).unwrap_or(usize::MAX);
+                let current_bytes = usize::try_from(pending_bytes).unwrap_or(usize::MAX);
+                if current_items.saturating_add(incoming_items) > cap.max_items {
+                    return Err(OutboxError::CapacityExceeded {
+                        resource: "items",
+                        current: current_items,
+                        incoming: incoming_items,
+                        limit: cap.max_items,
+                    });
+                }
+                if current_bytes.saturating_add(incoming_bytes) > cap.max_bytes {
+                    return Err(OutboxError::CapacityExceeded {
+                        resource: "bytes",
+                        current: current_bytes,
+                        incoming: incoming_bytes,
+                        limit: cap.max_bytes,
+                    });
+                }
+            }
+        }
+
+        // 3. Persist checkpoint metadata, positions, and participant state.
         let metadata_json = serde_json::to_string(&envelope.metadata)
-            .map_err(|e| CheckpointError::StorageFailure(e.to_string()))?;
+            .map_err(|e| OutboxError::Storage(e.to_string()))?;
 
         sqlx::query(
             "INSERT OR REPLACE INTO reliable_checkpoints
@@ -312,11 +442,14 @@ impl ReliableSqliteStore {
         .bind(envelope.metadata.created_wall_millis)
         .execute(&mut *tx)
         .await
-        .map_err(|e| CheckpointError::StorageFailure(e.to_string()))?;
+        .map_err(|e| OutboxError::Storage(e.to_string()))?;
 
         for pos in &envelope.metadata.source_positions {
-            let pos_gen = i64::try_from(pos.generation.0)
-                .map_err(|_| CheckpointError::StorageFailure("generation overflow".to_owned()))?;
+            let pos_gen = i64::try_from(pos.generation.0).map_err(|_| {
+                OutboxError::Checkpoint(CheckpointError::StorageFailure(
+                    "generation overflow".to_owned(),
+                ))
+            })?;
             sqlx::query(
                 "INSERT OR REPLACE INTO reliable_positions
                  (rule_id, checkpoint_id, source_id, partition_id, generation, codec, cursor)
@@ -331,7 +464,7 @@ impl ReliableSqliteStore {
             .bind(&pos.cursor)
             .execute(&mut *tx)
             .await
-            .map_err(|e| CheckpointError::StorageFailure(e.to_string()))?;
+            .map_err(|e| OutboxError::Storage(e.to_string()))?;
         }
 
         for (op_id, snapshot) in &envelope.payloads {
@@ -351,50 +484,105 @@ impl ReliableSqliteStore {
             .bind(i64::try_from(snapshot.usage.bytes).unwrap_or(i64::MAX))
             .execute(&mut *tx)
             .await
-            .map_err(|e| CheckpointError::StorageFailure(e.to_string()))?;
+            .map_err(|e| OutboxError::Storage(e.to_string()))?;
         }
 
-        for effect in effects {
-            let outcome_json = effect
+        // 4. Insert outbox entries idempotently without overwriting existing/delivered outcomes.
+        let mut inserted = 0usize;
+        let mut deduplicated = 0usize;
+        for entry in entries {
+            let outcome_json = entry
+                .effect
                 .terminal_outcome
                 .as_ref()
                 .map(serde_json::to_string)
                 .transpose()
-                .map_err(|e| CheckpointError::StorageFailure(e.to_string()))?;
-            let eff_gen = i64::try_from(effect.generation.0)
-                .map_err(|_| CheckpointError::StorageFailure("generation overflow".to_owned()))?;
+                .map_err(|e| OutboxError::Storage(e.to_string()))?;
+            let eff_gen = i64::try_from(entry.effect.generation.0).map_err(|_| {
+                OutboxError::Checkpoint(CheckpointError::StorageFailure(
+                    "generation overflow".to_owned(),
+                ))
+            })?;
 
-            sqlx::query(
-                "INSERT OR REPLACE INTO reliable_outbox_effects
-                 (effect_id, rule_id, generation, action_id, connection_id, order_key, attempt, terminal_outcome_json)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            let res = sqlx::query(
+                "INSERT INTO reliable_outbox_effects
+                 (effect_id, rule_id, generation, action_id, connection_id, order_key, payload, claimed_by, claimed_until_ms, attempt, terminal_outcome_json)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?)
+                 ON CONFLICT(effect_id) DO NOTHING",
             )
-            .bind(effect.effect_id.as_str())
-            .bind(effect.rule_id.as_str())
+            .bind(entry.effect.effect_id.as_str())
+            .bind(entry.effect.rule_id.as_str())
             .bind(eff_gen)
-            .bind(effect.destination.action_id.as_str())
-            .bind(effect.destination.connection_id.as_ref().map(|c| c.as_str()))
-            .bind(effect.order_key.as_deref())
-            .bind(i64::from(effect.attempt))
+            .bind(entry.effect.destination.action_id.as_str())
+            .bind(entry.effect.destination.connection_id.as_ref().map(|c| c.as_str()))
+            .bind(entry.effect.order_key.as_deref())
+            .bind(&entry.payload)
+            .bind(i64::from(entry.effect.attempt))
             .bind(outcome_json)
             .execute(&mut *tx)
             .await
-            .map_err(|e| CheckpointError::StorageFailure(e.to_string()))?;
+            .map_err(|e| OutboxError::Storage(e.to_string()))?;
+            if res.rows_affected() > 0 {
+                inserted += 1;
+            } else {
+                deduplicated += 1;
+            }
         }
 
-        if self.fail_next_commit.swap(false, Ordering::SeqCst) {
+        // 5. Enforce bounded retention per rule inside the commit transaction.
+        let cp_keep = i64::try_from(self.checkpoint_retention).unwrap_or(i64::MAX);
+        sqlx::query(
+            "DELETE FROM reliable_checkpoints
+             WHERE rule_id = ?
+               AND checkpoint_id NOT IN (
+                   SELECT checkpoint_id FROM reliable_checkpoints
+                   WHERE rule_id = ?
+                   ORDER BY checkpoint_id DESC
+                   LIMIT ?
+               )",
+        )
+        .bind(&rule_id)
+        .bind(&rule_id)
+        .bind(cp_keep)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| OutboxError::Storage(e.to_string()))?;
+
+        let outbox_keep = i64::try_from(self.outbox_retention).unwrap_or(i64::MAX);
+        sqlx::query(
+            "DELETE FROM reliable_outbox_effects
+             WHERE rule_id = ?
+               AND terminal_outcome_json IS NOT NULL
+               AND rowid NOT IN (
+                   SELECT rowid FROM reliable_outbox_effects
+                   WHERE rule_id = ? AND terminal_outcome_json IS NOT NULL
+                   ORDER BY rowid DESC
+                   LIMIT ?
+               )",
+        )
+        .bind(&rule_id)
+        .bind(&rule_id)
+        .bind(outbox_keep)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| OutboxError::Storage(e.to_string()))?;
+
+        if self.take_commit_failure() {
             tx.rollback()
                 .await
-                .map_err(|e| CheckpointError::StorageFailure(e.to_string()))?;
-            return Err(CheckpointError::StorageFailure(
+                .map_err(|e| OutboxError::Storage(e.to_string()))?;
+            return Err(OutboxError::Checkpoint(CheckpointError::StorageFailure(
                 "injected commit rollback".to_owned(),
-            ));
+            )));
         }
 
         tx.commit()
             .await
-            .map_err(|e| CheckpointError::StorageFailure(e.to_string()))?;
-        Ok(())
+            .map_err(|e| OutboxError::Storage(e.to_string()))?;
+        Ok(EnqueueReport {
+            inserted,
+            deduplicated,
+        })
     }
 
     /// Loads an outbox effect record by ID.
@@ -453,7 +641,7 @@ impl ReliableSqliteStore {
                 .map_err(|e| CheckpointError::StorageFailure(e.to_string()))?;
             sqlx::query(
                 "UPDATE reliable_outbox_effects
-                 SET attempt = ?, terminal_outcome_json = ?
+                 SET attempt = ?, terminal_outcome_json = ?, claimed_by = NULL, claimed_until_ms = NULL
                  WHERE effect_id = ?",
             )
             .bind(i64::from(record.attempt))
@@ -608,7 +796,9 @@ impl CheckpointStore for ReliableSqliteStore {
             let bytes: i64 = part.get("bytes");
 
             let snapshot = StateSnapshot {
-                envelope_version: u32::try_from(env_ver).unwrap_or(STATE_ENVELOPE_VERSION),
+                envelope_version: u32::try_from(env_ver).map_err(|_| {
+                    CheckpointError::StorageFailure("invalid envelope_version".to_owned())
+                })?,
                 operator_id: op_id.clone(),
                 state_version: StateSchemaVersion(u32::try_from(state_ver).map_err(|_| {
                     CheckpointError::StorageFailure("invalid state_version".to_owned())
@@ -617,8 +807,12 @@ impl CheckpointStore for ReliableSqliteStore {
                     .map_err(|e| CheckpointError::StorageFailure(e.to_string()))?,
                 payload,
                 usage: StateResourceUsage {
-                    records: u64::try_from(records).unwrap_or(0),
-                    bytes: u64::try_from(bytes).unwrap_or(0),
+                    records: u64::try_from(records).map_err(|_| {
+                        CheckpointError::StorageFailure("invalid participant records".to_owned())
+                    })?,
+                    bytes: u64::try_from(bytes).map_err(|_| {
+                        CheckpointError::StorageFailure("invalid participant bytes".to_owned())
+                    })?,
                 },
             };
             payloads.insert(op_id, snapshot);

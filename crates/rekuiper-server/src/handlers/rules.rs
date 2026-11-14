@@ -1,6 +1,6 @@
 use crate::engine::{
     bootstrap_graph_sources, bootstrap_rule_sources, cancel_rule_source, spawn_graph_rule_task,
-    spawn_rule_task,
+    spawn_rule_task, validate_graph_nodes,
 };
 use crate::state::{check_valid_name, AppState, TracerConfig};
 use axum::{
@@ -94,6 +94,16 @@ pub async fn create_rule(
     // Graph rules carry no SQL: compile linear DAGs or spawn native DAG executor.
     if rule.sql.trim().is_empty() {
         if let Some(ref graph) = rule.graph {
+            if let Err(e) = validate_graph_nodes(graph) {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({
+                        "error": 1000,
+                        "message": e
+                    })),
+                )
+                    .into_response();
+            }
             let is_native_dag = graph
                 .nodes
                 .values()
@@ -1147,6 +1157,32 @@ pub async fn validate_rule(
     }
     if rule.sql.trim().is_empty() {
         if let Some(ref graph) = rule.graph {
+            if let Err(e) = validate_graph_nodes(graph) {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({
+                        "error": 1000,
+                        "message": e
+                    })),
+                )
+                    .into_response();
+            }
+            let is_native_dag = graph
+                .nodes
+                .values()
+                .any(|n| matches!(n.node_type.as_str(), "switch" | "rate_limit" | "watchdog"))
+                || graph
+                    .topo
+                    .edges
+                    .values()
+                    .any(|e| matches!(e, EdgeTargets::Multi(_)));
+            if is_native_dag {
+                return Json(json!({
+                    "sources": graph.topo.sources,
+                    "valid": true
+                }))
+                .into_response();
+            }
             return match compile_graph_to_sql_and_actions(graph) {
                 Ok((sql, _)) => {
                     let mut parser = Parser::new(&sql);
@@ -1727,6 +1763,16 @@ pub async fn update_rule(
     // Graph rules carry no SQL: compile the DAG first or handle native DAG.
     if rule.sql.trim().is_empty() {
         if let Some(ref graph) = rule.graph {
+            if let Err(e) = validate_graph_nodes(graph) {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({
+                        "error": 1000,
+                        "message": e
+                    })),
+                )
+                    .into_response();
+            }
             let is_native_dag = graph
                 .nodes
                 .values()

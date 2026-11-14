@@ -4,22 +4,11 @@ use rekuiper_core::contracts::{
     ContentChecksum, OperatorId, StateError, StateParticipant, StateResourceUsage,
     StateSchemaVersion, StateSnapshot, STATE_ENVELOPE_VERSION,
 };
-use ring::digest::{digest, SHA256};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
 
 pub const JOINS_CEP_STATE_VERSION: StateSchemaVersion = StateSchemaVersion(1);
-
-fn sha256_checksum(bytes: &[u8]) -> ContentChecksum {
-    let d = digest(&SHA256, bytes);
-    let mut hex = String::with_capacity(64);
-    for b in d.as_ref() {
-        use std::fmt::Write as _;
-        let _ = write!(&mut hex, "{b:02x}");
-    }
-    ContentChecksum::try_from(format!("sha256:{hex}")).expect("valid sha256 digest")
-}
 
 fn encode_snapshot<T: Serialize>(
     operator_id: &OperatorId,
@@ -28,7 +17,7 @@ fn encode_snapshot<T: Serialize>(
 ) -> Result<StateSnapshot, StateError> {
     let payload =
         serde_json::to_vec(state).map_err(|e| StateError::CorruptSnapshot(e.to_string()))?;
-    let checksum = sha256_checksum(&payload);
+    let checksum = ContentChecksum::sha256_bytes(&payload);
     let bytes = payload.len() as u64;
     Ok(StateSnapshot {
         envelope_version: STATE_ENVELOPE_VERSION,
@@ -45,7 +34,7 @@ fn decode_snapshot<T: for<'de> Deserialize<'de>>(
     snapshot: &StateSnapshot,
 ) -> Result<T, StateError> {
     snapshot.validate(operator_id, &[JOINS_CEP_STATE_VERSION])?;
-    let actual_checksum = sha256_checksum(&snapshot.payload);
+    let actual_checksum = ContentChecksum::sha256_bytes(&snapshot.payload);
     if actual_checksum != snapshot.checksum {
         return Err(StateError::CorruptSnapshot(format!(
             "checksum mismatch for operator `{}`",
@@ -322,6 +311,10 @@ impl StateParticipant for JoinBufferStateParticipant {
         &self.operator_id
     }
 
+    fn participant_kind_tag(&self) -> Option<&'static str> {
+        Some("join")
+    }
+
     fn state_version(&self) -> StateSchemaVersion {
         JOINS_CEP_STATE_VERSION
     }
@@ -539,6 +532,10 @@ impl CepSequenceStateParticipant {
 impl StateParticipant for CepSequenceStateParticipant {
     fn operator_id(&self) -> &OperatorId {
         &self.operator_id
+    }
+
+    fn participant_kind_tag(&self) -> Option<&'static str> {
+        Some("cep")
     }
 
     fn state_version(&self) -> StateSchemaVersion {

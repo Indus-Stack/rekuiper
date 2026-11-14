@@ -14,6 +14,49 @@ use crate::engine::is_rule_running;
 use crate::engine::operators::{RateLimitEnqueueOutcome, RateLimitNode, SwitchNode, WatchdogNode};
 use rekuiper_core::contracts::clock::DeadlineCancellation;
 
+fn halt_graph_rule(
+    running: &Arc<RwLock<RuleStatus>>,
+    counters: &Arc<RuleCounters>,
+    err_msg: String,
+) {
+    counters.record_exception(&err_msg);
+    let mut st = running.write();
+    st.status = "stopped".to_string();
+    st.last_stop_timestamp = chrono::Utc::now().timestamp_millis();
+    st.message = format!("halted on error: {err_msg}");
+    st.last_exception = err_msg;
+}
+
+/// Validates configuration properties for native DAG operator nodes.
+pub fn validate_graph_nodes(graph: &GraphDefinition) -> Result<(), String> {
+    for (node_id, node) in &graph.nodes {
+        if node.node_category != "operator" {
+            continue;
+        }
+        match node.node_type.as_str() {
+            "rate_limit" => {
+                RateLimitNode::try_from_props(&node.props)
+                    .map_err(|e| format!("Invalid rate_limit config for node '{node_id}': {e}"))?;
+            }
+            "switch" => {
+                SwitchNode::from_props(&node.props)
+                    .map_err(|e| format!("Invalid switch config for node '{node_id}': {e}"))?;
+            }
+            "filter" => {
+                let expr_str = node
+                    .props
+                    .get("expr")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("true");
+                parse_expression(expr_str)
+                    .map_err(|e| format!("Invalid filter expr for node '{node_id}': {e}"))?;
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
 /// Spawns a native DAG rule execution pipeline.
 /// Each node in `graph.nodes` runs as a decoupled async actor connected by bounded MPSC channels.
 ///
@@ -32,6 +75,16 @@ pub async fn run_graph_rule(
     comms_hub: CommsHub,
     buffer_len: usize,
 ) {
+    if let Err(err_msg) = validate_graph_nodes(&graph) {
+        tracing::error!(
+            rule_id = %rule_id,
+            error = %err_msg,
+            "Stopping graph rule due to invalid node configuration"
+        );
+        halt_graph_rule(&running, &counters, err_msg);
+        return;
+    }
+
     let mut senders: HashMap<String, Sender<StreamRecord>> = HashMap::new();
     let mut receivers: HashMap<String, Receiver<StreamRecord>> = HashMap::new();
 
@@ -103,12 +156,12 @@ pub async fn run_graph_rule(
                             let switch = match SwitchNode::from_props(&node.props) {
                                 Ok(s) => s,
                                 Err(e) => {
-                                    tracing::error!(
+                                    let msg = format!(
                                         "[RULE {}][NODE {}] Invalid switch config: {}",
-                                        rule_id_clone,
-                                        node_id_clone,
-                                        e
+                                        rule_id_clone, node_id_clone, e
                                     );
+                                    tracing::error!("{}", msg);
+                                    halt_graph_rule(&running, &counters, msg);
                                     return;
                                 }
                             };
@@ -141,19 +194,39 @@ pub async fn run_graph_rule(
                             let limiter = match RateLimitNode::try_from_props(&node.props) {
                                 Ok(l) => l,
                                 Err(err) => {
+                                    let msg = format!(
+                                        "Invalid rate_limit configuration for node '{}': {}",
+                                        node_id_clone, err
+                                    );
                                     tracing::error!(
                                         rule_id = %rule_id_clone,
                                         node_id = %node_id_clone,
                                         error = %err,
                                         "Invalid rate_limit configuration"
                                     );
-                                    counters.inc_exceptions(1);
+                                    halt_graph_rule(&running, &counters, msg);
                                     return;
                                 }
                             };
                             let budget = limiter.default_budget();
                             let mut buffer = limiter.into_buffer::<StreamRecord>(budget);
                             let cancellation = DeadlineCancellation::default();
+                            let emit_record = |record: StreamRecord| {
+                                comms_hub.maybe_sample(
+                                    &rule_id_clone,
+                                    &node_id_clone,
+                                    &record.data,
+                                    record.timestamp,
+                                );
+                                send_to_port_targets(
+                                    &senders,
+                                    &edges,
+                                    &node_id_clone,
+                                    0,
+                                    record,
+                                );
+                            };
+
                             loop {
                                 if !is_rule_running(&running) {
                                     cancellation.cancel();
@@ -173,19 +246,7 @@ pub async fn run_graph_rule(
                                             break;
                                         }
                                         for record in buffer.drain_ready() {
-                                            comms_hub.maybe_sample(
-                                                &rule_id_clone,
-                                                &node_id_clone,
-                                                &record.data,
-                                                record.timestamp,
-                                            );
-                                            send_to_port_targets(
-                                                &senders,
-                                                &edges,
-                                                &node_id_clone,
-                                                0,
-                                                record,
-                                            );
+                                            emit_record(record);
                                         }
                                     }
                                     rec = rx.recv() => {
@@ -195,19 +256,7 @@ pub async fn run_graph_rule(
                                                     break;
                                                 }
                                                 for record in buffer.drain_ready() {
-                                                    comms_hub.maybe_sample(
-                                                        &rule_id_clone,
-                                                        &node_id_clone,
-                                                        &record.data,
-                                                        record.timestamp,
-                                                    );
-                                                    send_to_port_targets(
-                                                        &senders,
-                                                        &edges,
-                                                        &node_id_clone,
-                                                        0,
-                                                        record,
-                                                    );
+                                                    emit_record(record);
                                                 }
                                             }
                                             buffer.clear();
@@ -221,35 +270,45 @@ pub async fn run_graph_rule(
                                         let est_bytes = (record.data.len() as u64)
                                             .saturating_mul(64)
                                             .max(64);
-                                        match buffer.enqueue(record, est_bytes) {
-                                            RateLimitEnqueueOutcome::AdmitNow(record) => {
-                                                comms_hub.maybe_sample(
-                                                    &rule_id_clone,
-                                                    &node_id_clone,
-                                                    &record.data,
-                                                    record.timestamp,
-                                                );
-                                                send_to_port_targets(
-                                                    &senders,
-                                                    &edges,
-                                                    &node_id_clone,
-                                                    0,
-                                                    record,
-                                                );
-                                            }
-                                            RateLimitEnqueueOutcome::Buffered { .. } => {}
-                                            RateLimitEnqueueOutcome::Dropped => {
-                                                counters.inc_filtered(1);
-                                            }
-                                            RateLimitEnqueueOutcome::OverflowError(msg) => {
-                                                tracing::warn!(
-                                                    rule_id = %rule_id_clone,
-                                                    node_id = %node_id_clone,
-                                                    error = %msg,
-                                                    "rate_limit buffer overflow"
-                                                );
-                                                counters.inc_exceptions(1);
-                                                counters.inc_filtered(1);
+                                        let mut outcome = buffer.enqueue(record, est_bytes);
+                                        loop {
+                                            match outcome {
+                                                RateLimitEnqueueOutcome::AdmitNow(record) => {
+                                                    emit_record(record);
+                                                    break;
+                                                }
+                                                RateLimitEnqueueOutcome::Buffered { .. } => break,
+                                                RateLimitEnqueueOutcome::BackpressureWait(pending) => {
+                                                    if !is_rule_running(&running)
+                                                        || buffer
+                                                            .wait_next_token(&cancellation)
+                                                            .await
+                                                            .is_err()
+                                                    {
+                                                        cancellation.cancel();
+                                                        buffer.clear();
+                                                        return;
+                                                    }
+                                                    for ready_rec in buffer.drain_ready() {
+                                                        emit_record(ready_rec);
+                                                    }
+                                                    outcome = buffer.enqueue(pending, est_bytes);
+                                                }
+                                                RateLimitEnqueueOutcome::Dropped => {
+                                                    counters.inc_filtered(1);
+                                                    break;
+                                                }
+                                                RateLimitEnqueueOutcome::OverflowError(msg) => {
+                                                    tracing::warn!(
+                                                        rule_id = %rule_id_clone,
+                                                        node_id = %node_id_clone,
+                                                        error = %msg,
+                                                        "rate_limit buffer overflow"
+                                                    );
+                                                    counters.inc_exceptions(1);
+                                                    counters.inc_filtered(1);
+                                                    break;
+                                                }
                                             }
                                         }
                                     }
@@ -303,12 +362,12 @@ pub async fn run_graph_rule(
                             let expr = match parse_expression(expr_str) {
                                 Ok(e) => e,
                                 Err(err) => {
-                                    tracing::error!(
+                                    let msg = format!(
                                         "[RULE {}][NODE {}] Filter expr error: {}",
-                                        rule_id_clone,
-                                        node_id_clone,
-                                        err
+                                        rule_id_clone, node_id_clone, err
                                     );
+                                    tracing::error!("{}", msg);
+                                    halt_graph_rule(&running, &counters, msg);
                                     return;
                                 }
                             };

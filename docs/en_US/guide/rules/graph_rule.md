@@ -436,7 +436,7 @@ Properties:
 - `strategy`: Action when no token is available: `drop` (default) drops excess records, and `buffer` queues them in a bounded FIFO buffer.
 - `max_buffer` (or `maxBuffer`): Maximum queued record count when `strategy` is `buffer`. Must be at least `1` (default `1024`).
 - `max_buffer_bytes` (or `maxBufferBytes`): Maximum queued payload bytes when `strategy` is `buffer`. Must be at least `1` (default `max_buffer * 65536`).
-- `overflow_policy` (or `overflowPolicy`): Action when the buffer or memory budget is full: `drop_newest` (default, or `dropNewest`), `drop_oldest` (`dropOldest`), or `fail` (`error`, `reject`).
+- `overflow_policy` (or `overflowPolicy`): Action when the buffer or memory budget is full: `backpressure` (default for `buffer` strategy, also accepts `block` or `wait`), `drop_newest` (default for `drop` strategy, or `dropNewest`), `drop_oldest` (`dropOldest`), or `fail` (`error`, `reject`). With `backpressure`, the `rate_limit` node stops reading from its upstream channel until tokens refill and buffer capacity frees up.
 
 Example bounded FIFO rate limiter:
 

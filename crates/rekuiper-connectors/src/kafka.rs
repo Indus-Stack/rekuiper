@@ -7,7 +7,7 @@ use rekuiper_core::StreamSender;
 use rskafka::client::partition::PartitionClient;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, LazyLock};
 
 type KafkaPartitionKey = (Vec<String>, String, i32);
@@ -257,13 +257,31 @@ impl KafkaSource {
                 }
             };
             let mut offset = if let Some(requested_next) = self.config.next_offset {
-                let earliest = partition_client
-                    .get_offset(OffsetAt::Earliest)
-                    .await
-                    .unwrap_or(0);
+                let earliest = match partition_client.get_offset(OffsetAt::Earliest).await {
+                    Ok(v) => v,
+                    Err(e) => {
+                        let msg = format!("Kafka failed to query earliest offset: {e}");
+                        tracing::error!("{msg}");
+                        if let Some(ref cb) = self.status_callback {
+                            cb(topic, "kafka", "error", Some(&msg));
+                        }
+                        return;
+                    }
+                };
+                let latest = match partition_client.get_offset(OffsetAt::Latest).await {
+                    Ok(v) => v,
+                    Err(e) => {
+                        let msg = format!("Kafka failed to query latest offset: {e}");
+                        tracing::error!("{msg}");
+                        if let Some(ref cb) = self.status_callback {
+                            cb(topic, "kafka", "error", Some(&msg));
+                        }
+                        return;
+                    }
+                };
                 match resolve_start_offset(
                     earliest,
-                    earliest,
+                    latest,
                     Some(requested_next),
                     &self.config.offset_reset,
                 ) {
@@ -282,7 +300,17 @@ impl KafkaSource {
                 } else {
                     OffsetAt::Latest
                 };
-                partition_client.get_offset(offset_at).await.unwrap_or(0)
+                match partition_client.get_offset(offset_at).await {
+                    Ok(v) => v,
+                    Err(e) => {
+                        let msg = format!("Kafka failed to resolve initial offset: {e}");
+                        tracing::error!("{msg}");
+                        if let Some(ref cb) = self.status_callback {
+                            cb(topic, "kafka", "error", Some(&msg));
+                        }
+                        return;
+                    }
+                }
             };
             loop {
                 tokio::select! {
@@ -383,6 +411,10 @@ pub enum KafkaReliableError {
         requested_offset: i64,
         earliest_available: i64,
     },
+    OffsetBeyondHighWatermark {
+        requested_next_offset: i64,
+        high_watermark_offset: i64,
+    },
     Tombstone {
         offset: i64,
     },
@@ -406,6 +438,13 @@ impl std::fmt::Display for KafkaReliableError {
             } => write!(
                 f,
                 "kafka retention gap: requested next offset {requested_offset} is older than earliest available {earliest_available}"
+            ),
+            Self::OffsetBeyondHighWatermark {
+                requested_next_offset,
+                high_watermark_offset,
+            } => write!(
+                f,
+                "kafka restore offset {requested_next_offset} exceeds high watermark {high_watermark_offset}"
             ),
             Self::Tombstone { offset } => {
                 write!(f, "kafka tombstone encountered at offset {offset}")
@@ -500,6 +539,12 @@ pub fn resolve_start_offset(
                 earliest_available,
             });
         }
+        if requested > latest_available {
+            return Err(KafkaReliableError::OffsetBeyondHighWatermark {
+                requested_next_offset: requested,
+                high_watermark_offset: latest_available,
+            });
+        }
         return Ok(requested);
     }
     if offset_reset.eq_ignore_ascii_case("earliest") {
@@ -566,6 +611,7 @@ pub struct KafkaReliablePartitionReader {
     tombstone_policy: KafkaTombstonePolicy,
     next_fetch_offset: i64,
     committed_next_offset: i64,
+    prepared_offsets: VecDeque<(i64, i64)>,
 }
 
 impl KafkaReliablePartitionReader {
@@ -584,6 +630,7 @@ impl KafkaReliablePartitionReader {
             tombstone_policy,
             next_fetch_offset: start_offset,
             committed_next_offset: start_offset,
+            prepared_offsets: VecDeque::new(),
         }
     }
 
@@ -605,6 +652,13 @@ impl KafkaReliablePartitionReader {
         if next_offset > self.next_fetch_offset {
             self.next_fetch_offset = next_offset;
         }
+        if self
+            .prepared_offsets
+            .back()
+            .is_none_or(|&(last, _)| raw.offset > last)
+        {
+            self.prepared_offsets.push_back((raw.offset, next_offset));
+        }
         let is_tombstone = raw.payload.as_ref().is_none_or(|b| b.is_empty());
         let position =
             self.codec
@@ -624,16 +678,26 @@ impl KafkaReliablePartitionReader {
     }
 
     /// Advances the durable boundary only after all records expanded from
-    /// `msg` have been accepted/committed together.
+    /// `msg` have been accepted/committed together, allowing partition offset gaps
+    /// (compacted topics / transactional control records) while rejecting out-of-order commits.
     pub fn commit_message(
         &mut self,
         msg: &KafkaPreparedMessage,
     ) -> std::result::Result<rekuiper_core::contracts::SourcePosition, KafkaReliableError> {
-        if msg.offset != self.committed_next_offset {
+        if msg.offset < self.committed_next_offset {
             return Err(KafkaReliableError::OutOfOrderCommit {
                 expected_offset: self.committed_next_offset,
                 actual_offset: msg.offset,
             });
+        }
+        if let Some(&(expected_offset, _)) = self.prepared_offsets.front() {
+            if msg.offset != expected_offset {
+                return Err(KafkaReliableError::OutOfOrderCommit {
+                    expected_offset,
+                    actual_offset: msg.offset,
+                });
+            }
+            self.prepared_offsets.pop_front();
         }
         self.committed_next_offset = msg.next_offset;
         Ok(msg.position.clone())

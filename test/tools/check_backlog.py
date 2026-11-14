@@ -13,6 +13,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_LEDGER = ROOT / "docs/implementation/backlog.json"
+DEFAULT_ROADMAP = ROOT / "docs/implementation/roadmap.md"
 TICKET_ID = r"(?:C[0-9]{2}|[AP][0-9]{2}-T[0-9]{2})"
 STATUSES = (
     "proposed", "in_progress", "blocked", "keep", "component_done", "integrated", "qualified"
@@ -344,18 +345,26 @@ class LedgerTests(unittest.TestCase):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--ledger", type=Path, default=DEFAULT_LEDGER)
-    parser.add_argument("--roadmap", type=Path, help="verify roadmap fields against this Markdown file")
+    parser.add_argument(
+        "--roadmap",
+        type=Path,
+        help="verify roadmap fields against this Markdown file (defaults to docs/implementation/roadmap.md for the default ledger)",
+    )
     parser.add_argument("--self-test", action="store_true", help="run the checker fixtures")
     args = parser.parse_args()
     if args.self_test:
         suite = unittest.defaultTestLoader.loadTestsFromTestCase(LedgerTests)
         return 0 if unittest.TextTestRunner(verbosity=2).run(suite).wasSuccessful() else 1
 
+    roadmap = args.roadmap
+    if roadmap is None and args.ledger.resolve() == DEFAULT_LEDGER.resolve():
+        roadmap = DEFAULT_ROADMAP
+
     try:
         ledger = json.loads(args.ledger.read_text(encoding="utf-8"), object_pairs_hook=unique_object)
         by_id = validate_ledger(ledger, evidence_root=ROOT)
-        if args.roadmap is not None:
-            compare_roadmap(ledger["tickets"], args.roadmap)
+        if roadmap is not None:
+            compare_roadmap(ledger["tickets"], roadmap)
     except (OSError, ValueError) as error:
         print(f"backlog: {error}", file=sys.stderr)
         return 1
@@ -363,7 +372,7 @@ def main():
     counts = Counter(ticket["status"] for ticket in by_id.values())
     summary = ", ".join(f"{status}={counts[status]}" for status in STATUSES)
     print(f"{len(by_id)} tickets ({summary})")
-    if args.roadmap is not None:
+    if roadmap is not None:
         print("Roadmap IDs, order, ownership, and dependency fields match.")
     ready = build_ready(by_id)
     print(f"Build-ready ({len(ready)}):")

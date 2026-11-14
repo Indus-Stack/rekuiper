@@ -70,16 +70,20 @@ pub struct TypedPlanReport {
 }
 
 fn is_secret_key(key: &str) -> bool {
-    let k = key.to_ascii_lowercase();
+    let k = key.to_ascii_lowercase().replace(['_', '-'], "");
     k.contains("password")
+        || k.contains("passwd")
+        || k.contains("passphrase")
         || k.contains("secret")
         || k.contains("token")
-        || k.contains("api_key")
         || k.contains("apikey")
         || k.contains("credential")
-        || k.contains("private_key")
-        || k.contains("access_key")
-        || k.contains("connection_string")
+        || k.contains("privatekey")
+        || k.contains("accesskey")
+        || k.contains("connectionstring")
+        || k.contains("authorization")
+        || k.contains("cookie")
+        || k.contains("sas")
         || k == "dsn"
 }
 

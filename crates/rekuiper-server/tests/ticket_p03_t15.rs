@@ -37,6 +37,10 @@ impl StateParticipant for BarrierParticipantStub {
         &self.id
     }
 
+    fn participant_kind_tag(&self) -> Option<&'static str> {
+        Some("barrier")
+    }
+
     fn state_version(&self) -> StateSchemaVersion {
         StateSchemaVersion(1)
     }

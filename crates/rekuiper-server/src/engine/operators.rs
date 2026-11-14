@@ -79,6 +79,8 @@ pub enum RateLimitStrategy {
 /// Configured outcome when a bounded rate-limit buffer overflows or exhausts its budget.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RateLimitOverflowPolicy {
+    /// Pause reading from upstream until token capacity and buffer space free up.
+    Backpressure,
     /// Drop the newly arriving record.
     DropNewest,
     /// Evict the oldest buffered record to make room for the newest record.
@@ -140,6 +142,8 @@ pub enum RateLimitEnqueueOutcome<T> {
     AdmitNow(T),
     /// Buffered in the bounded FIFO (possibly after evicting the oldest item).
     Buffered { evicted: bool },
+    /// Buffer or budget is full under `Backpressure`; pause reading upstream until space frees up.
+    BackpressureWait(T),
     /// Dropped under `Drop` strategy or `DropNewest` overflow policy.
     Dropped,
     /// Rejected under `Fail` overflow policy or budget exhaustion.
@@ -199,6 +203,9 @@ impl<T> RateLimitBuffer<T> {
 
         if self.queue.len() >= self.limiter.config.max_buffer {
             match self.limiter.config.overflow_policy {
+                RateLimitOverflowPolicy::Backpressure => {
+                    return RateLimitEnqueueOutcome::BackpressureWait(item);
+                }
                 RateLimitOverflowPolicy::DropNewest => {
                     self.limiter.dropped.fetch_add(1, Ordering::Relaxed);
                     return RateLimitEnqueueOutcome::Dropped;
@@ -242,6 +249,9 @@ impl<T> RateLimitBuffer<T> {
                     }
                 }
                 return match self.limiter.config.overflow_policy {
+                    RateLimitOverflowPolicy::Backpressure => {
+                        RateLimitEnqueueOutcome::BackpressureWait(item)
+                    }
                     RateLimitOverflowPolicy::DropNewest | RateLimitOverflowPolicy::DropOldest => {
                         self.limiter.dropped.fetch_add(1, Ordering::Relaxed);
                         RateLimitEnqueueOutcome::Dropped
@@ -307,12 +317,17 @@ impl RateLimitNode {
 
     pub fn new(rate: f64, burst: f64, strategy: RateLimitStrategy, max_buffer: usize) -> Self {
         let safe_max = max_buffer.max(1);
+        let overflow_policy = if strategy == RateLimitStrategy::Buffer {
+            RateLimitOverflowPolicy::Backpressure
+        } else {
+            RateLimitOverflowPolicy::DropNewest
+        };
         let config = RateLimitConfig {
             rate,
             burst,
             strategy,
             max_buffer: safe_max,
-            overflow_policy: RateLimitOverflowPolicy::DropNewest,
+            overflow_policy,
             max_buffer_bytes: (safe_max as u64).saturating_mul(64 * 1024),
         };
         Self::try_new(config, Arc::new(RealClock::default()))
@@ -320,21 +335,30 @@ impl RateLimitNode {
     }
 
     pub fn try_from_props(props: &HashMap<String, Value>) -> Result<Self> {
+        let parse_f64 = |v: &Value| -> Option<f64> {
+            v.as_f64()
+                .or_else(|| v.as_str().and_then(|s| s.trim().parse::<f64>().ok()))
+        };
+        let parse_u64 = |v: &Value| -> Option<u64> {
+            v.as_u64()
+                .or_else(|| v.as_str().and_then(|s| s.trim().parse::<u64>().ok()))
+        };
+
         let rate = match props
             .get("rate")
             .or_else(|| props.get("limit"))
             .or_else(|| props.get("rate_limit"))
         {
-            Some(v) => v
-                .as_f64()
-                .ok_or_else(|| anyhow::anyhow!("rate_limit rate must be a number"))?,
+            Some(v) => {
+                parse_f64(v).ok_or_else(|| anyhow::anyhow!("rate_limit rate must be a number"))?
+            }
             None => 100.0,
         };
 
         let burst = match props.get("burst") {
-            Some(v) => v
-                .as_f64()
-                .ok_or_else(|| anyhow::anyhow!("rate_limit burst must be a number"))?,
+            Some(v) => {
+                parse_f64(v).ok_or_else(|| anyhow::anyhow!("rate_limit burst must be a number"))?
+            }
             None => rate.max(1.0),
         };
 
@@ -348,7 +372,7 @@ impl RateLimitNode {
         let max_buffer = match props.get("max_buffer").or_else(|| props.get("maxBuffer")) {
             None => 1024usize,
             Some(v) => {
-                let raw = v.as_u64().ok_or_else(|| {
+                let raw = parse_u64(v).ok_or_else(|| {
                     anyhow::anyhow!("rate_limit max_buffer must be a non-negative integer")
                 })?;
                 usize::try_from(raw)
@@ -361,7 +385,20 @@ impl RateLimitNode {
             .or_else(|| props.get("overflowPolicy"))
             .and_then(|v| v.as_str())
         {
-            None => RateLimitOverflowPolicy::DropNewest,
+            None => {
+                if strategy == RateLimitStrategy::Buffer {
+                    RateLimitOverflowPolicy::Backpressure
+                } else {
+                    RateLimitOverflowPolicy::DropNewest
+                }
+            }
+            Some(s)
+                if s.eq_ignore_ascii_case("backpressure")
+                    || s.eq_ignore_ascii_case("block")
+                    || s.eq_ignore_ascii_case("wait") =>
+            {
+                RateLimitOverflowPolicy::Backpressure
+            }
             Some(s)
                 if s.eq_ignore_ascii_case("drop_newest")
                     || s.eq_ignore_ascii_case("dropNewest") =>
@@ -389,8 +426,7 @@ impl RateLimitNode {
             .or_else(|| props.get("maxBufferBytes"))
         {
             None => (max_buffer.max(1) as u64).saturating_mul(64 * 1024),
-            Some(v) => v
-                .as_u64()
+            Some(v) => parse_u64(v)
                 .ok_or_else(|| anyhow::anyhow!("rate_limit max_buffer_bytes must be an integer"))?,
         };
 

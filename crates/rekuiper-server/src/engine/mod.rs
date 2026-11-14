@@ -182,9 +182,18 @@ fn subscribe_with_policy(
             };
             let (tx, rx) = tokio::sync::mpsc::channel(1);
             tokio::spawn(async move {
-                while let Some(rec) = lossy_rx.recv().await {
-                    if tx.send(rec).await.is_err() {
-                        break;
+                loop {
+                    tokio::select! {
+                        biased;
+                        () = tx.closed() => break,
+                        maybe_rec = lossy_rx.recv() => {
+                            let Some(rec) = maybe_rec else {
+                                break;
+                            };
+                            if tx.send(rec).await.is_err() {
+                                break;
+                            }
+                        }
                     }
                 }
             });

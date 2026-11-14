@@ -117,6 +117,7 @@ pub struct AlignedBarrier<T> {
     pub checkpoint: CheckpointId,
     pub generation: Generation,
     pub drained_paused_data: Vec<(EdgeId, T)>,
+    pub drained_paused_watermarks: Vec<(EdgeId, EventTimestamp)>,
     pub recorded_lookups: BTreeMap<u64, Value>,
     pub target_sinks: Vec<String>,
 }
@@ -127,6 +128,7 @@ pub struct AbortedAlignment<T> {
     pub generation: Generation,
     pub reason: AlignmentAbortReason,
     pub released_paused_data: Vec<(EdgeId, T)>,
+    pub released_paused_watermarks: Vec<(EdgeId, EventTimestamp)>,
     pub cancelled_lookups: Vec<u64>,
 }
 
@@ -156,13 +158,26 @@ pub enum AlignmentOutcome<T> {
     Aligned(AlignedBarrier<T>),
 }
 
+enum PausedBufferEntry<T> {
+    Data(T, BudgetReservation),
+    Watermark {
+        edge: EdgeId,
+        timestamp: EventTimestamp,
+    },
+}
+
+struct DrainedPausedEntries<T> {
+    data: Vec<(EdgeId, T)>,
+    watermarks: Vec<(EdgeId, EventTimestamp)>,
+}
+
 struct ActiveAlignment<T> {
     checkpoint: CheckpointId,
     generation: Generation,
     deadline_ms: i64,
     arrived_barriers: BTreeSet<EdgeId>,
     paused_edges: BTreeSet<EdgeId>,
-    paused_buffers: BTreeMap<EdgeId, Vec<(T, BudgetReservation)>>,
+    paused_buffers: BTreeMap<EdgeId, Vec<PausedBufferEntry<T>>>,
 }
 
 /// Aligns checkpoint barriers across participating input edges while bounding
@@ -271,7 +286,7 @@ impl<T> BarrierAligner<T> {
                                 }
                             })?;
                         let buf = active.paused_buffers.entry(edge).or_default();
-                        buf.push((item, reservation));
+                        buf.push(PausedBufferEntry::Data(item, reservation));
                         return Ok(AlignmentOutcome::BufferedPaused {
                             edge,
                             buffered_on_edge: buf.len(),
@@ -284,6 +299,19 @@ impl<T> BarrierAligner<T> {
                 edge: wm_edge,
                 timestamp,
             } => {
+                if let Some(active) = self.active.as_mut() {
+                    if active.paused_edges.contains(&edge) {
+                        let buf = active.paused_buffers.entry(edge).or_default();
+                        buf.push(PausedBufferEntry::Watermark {
+                            edge: wm_edge,
+                            timestamp,
+                        });
+                        return Ok(AlignmentOutcome::BufferedPaused {
+                            edge,
+                            buffered_on_edge: buf.len(),
+                        });
+                    }
+                }
                 self.watermarks.insert(wm_edge, timestamp);
                 Ok(AlignmentOutcome::Watermark {
                     edge: wm_edge,
@@ -364,12 +392,7 @@ impl<T> BarrierAligner<T> {
         }
 
         let active = self.active.take().expect("active alignment exists");
-        let mut drained_paused_data = Vec::new();
-        for (edge, items) in active.paused_buffers {
-            for (item, _reservation) in items {
-                drained_paused_data.push((edge, item));
-            }
-        }
+        let drained = self.drain_paused_entries(active.paused_buffers);
 
         let mut recorded_lookups = BTreeMap::new();
         for (id, status) in std::mem::take(&mut self.outstanding_lookups) {
@@ -390,10 +413,36 @@ impl<T> BarrierAligner<T> {
         AlignmentOutcome::Aligned(AlignedBarrier {
             checkpoint: active.checkpoint,
             generation: active.generation,
-            drained_paused_data,
+            drained_paused_data: drained.data,
+            drained_paused_watermarks: drained.watermarks,
             recorded_lookups,
             target_sinks,
         })
+    }
+
+    fn drain_paused_entries(
+        &mut self,
+        paused_buffers: BTreeMap<EdgeId, Vec<PausedBufferEntry<T>>>,
+    ) -> DrainedPausedEntries<T> {
+        let mut data = Vec::new();
+        let mut watermarks = Vec::new();
+        for (edge, entries) in paused_buffers {
+            for entry in entries {
+                match entry {
+                    PausedBufferEntry::Data(item, _reservation) => {
+                        data.push((edge, item));
+                    }
+                    PausedBufferEntry::Watermark {
+                        edge: wm_edge,
+                        timestamp,
+                    } => {
+                        self.watermarks.insert(wm_edge, timestamp);
+                        watermarks.push((wm_edge, timestamp));
+                    }
+                }
+            }
+        }
+        DrainedPausedEntries { data, watermarks }
     }
 
     pub fn poll_timeout(&mut self, now_ms: i64) -> Option<AbortedAlignment<T>> {
@@ -414,12 +463,7 @@ impl<T> BarrierAligner<T> {
 
     pub fn abort(&mut self, reason: AlignmentAbortReason) -> Option<AbortedAlignment<T>> {
         let active = self.active.take()?;
-        let mut released_paused_data = Vec::new();
-        for (edge, items) in active.paused_buffers {
-            for (item, _reservation) in items {
-                released_paused_data.push((edge, item));
-            }
-        }
+        let released = self.drain_paused_entries(active.paused_buffers);
 
         let mut cancelled_lookups = Vec::new();
         self.outstanding_lookups.retain(|id, status| {
@@ -435,9 +479,14 @@ impl<T> BarrierAligner<T> {
             checkpoint: active.checkpoint,
             generation: active.generation,
             reason,
-            released_paused_data,
+            released_paused_data: released.data,
+            released_paused_watermarks: released.watermarks,
             cancelled_lookups,
         })
+    }
+
+    pub fn watermark(&self, edge: &EdgeId) -> Option<EventTimestamp> {
+        self.watermarks.get(edge).copied()
     }
 
     /// Marks a reachable sink as having completed checkpoint `checkpoint`.
