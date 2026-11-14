@@ -897,7 +897,7 @@ pub mod reliable {
             store: &dyn CheckpointStore,
             participants: &mut [&mut dyn StateParticipant],
         ) -> Result<Option<i64>, ReliableRuntimeError> {
-            let Some(envelope) = store.load_latest(&self.identity.rule_id).await? else {
+            let Some(mut envelope) = store.load_latest(&self.identity.rule_id).await? else {
                 return Ok(None);
             };
             let mut expected_participants: std::collections::BTreeSet<OperatorId> = participants
@@ -910,6 +910,7 @@ pub mod reliable {
                         .expect("valid static runner window operator id"),
                 );
             }
+            envelope.handoff_to_generation(self.identity.generation)?;
             envelope.validate_restore(&self.identity, &expected_participants)?;
 
             let restored_window = if self.stmt.window.is_some() {
@@ -921,11 +922,13 @@ pub mod reliable {
                     ));
                 };
                 runner_window.restore_snapshot(snapshot)?;
-                let expected_fp = self.stmt_fingerprint();
-                if runner_window.state.stmt_fingerprint.as_deref() != Some(expected_fp.as_str()) {
-                    return Err(ReliableRuntimeError::Checkpoint(
-                        CheckpointError::PlanFingerprintMismatch,
-                    ));
+                if let Some(ref saved_fp) = runner_window.state.stmt_fingerprint {
+                    let expected_fp = self.stmt_fingerprint();
+                    if saved_fp != &expected_fp {
+                        return Err(ReliableRuntimeError::Checkpoint(
+                            CheckpointError::PlanFingerprintMismatch,
+                        ));
+                    }
                 }
                 Some((
                     runner_window.state.window_buffer,
@@ -1514,13 +1517,14 @@ pub mod reliable {
         ) -> Result<Vec<rekuiper_core::contracts::SourcePosition>, ReliableRuntimeError> {
             let refs: Vec<&dyn StateParticipant> = participants.iter().map(|p| &**p).collect();
             validate_participant_coverage(&self.required_participants, &refs)?;
-            let Some(envelope) = store.load_latest(&self.identity.rule_id).await? else {
+            let Some(mut envelope) = store.load_latest(&self.identity.rule_id).await? else {
                 return Ok(Vec::new());
             };
             let expected_participants: std::collections::BTreeSet<OperatorId> = participants
                 .iter()
                 .map(|p| p.operator_id().clone())
                 .collect();
+            envelope.handoff_to_generation(self.identity.generation)?;
             envelope.validate_restore(&self.identity, &expected_participants)?;
             for participant in participants.iter_mut() {
                 let op_id = participant.operator_id().clone();

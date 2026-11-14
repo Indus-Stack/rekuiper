@@ -57,8 +57,8 @@ async fn transactional_outbox_deduplicates_enforces_capacity_and_preserves_actio
     let id_b = deterministic_effect_id(&rule, Generation(1), &op, &act_b, 10, 0).unwrap();
     assert_ne!(id_a, id_b);
 
-    let entry_a = OutboxEntry {
-        effect: EffectRecord {
+    let entry_a = OutboxEntry::new(
+        EffectRecord {
             effect_id: id_a.clone(),
             rule_id: rule.clone(),
             generation: Generation(1),
@@ -70,10 +70,10 @@ async fn transactional_outbox_deduplicates_enforces_capacity_and_preserves_actio
             attempt: 0,
             terminal_outcome: None,
         },
-        payload: b"hello".to_vec(),
-    };
-    let entry_b = OutboxEntry {
-        effect: EffectRecord {
+        b"hello".to_vec(),
+    );
+    let entry_b = OutboxEntry::new(
+        EffectRecord {
             effect_id: id_b.clone(),
             rule_id: rule.clone(),
             generation: Generation(1),
@@ -85,8 +85,8 @@ async fn transactional_outbox_deduplicates_enforces_capacity_and_preserves_actio
             attempt: 0,
             terminal_outcome: None,
         },
-        payload: b"world".to_vec(),
-    };
+        b"world".to_vec(),
+    );
 
     // 1. Crash/rollback before commit retains neither checkpoint nor outbox effects.
     store.arm_commit_failure();
@@ -110,8 +110,8 @@ async fn transactional_outbox_deduplicates_enforces_capacity_and_preserves_actio
 
     // 3. Full capacity refuses new items.
     let id_c = deterministic_effect_id(&rule, Generation(1), &op, &act_a, 11, 0).unwrap();
-    let entry_c = OutboxEntry {
-        effect: EffectRecord {
+    let entry_c = OutboxEntry::new(
+        EffectRecord {
             effect_id: id_c,
             rule_id: rule.clone(),
             generation: Generation(1),
@@ -123,8 +123,8 @@ async fn transactional_outbox_deduplicates_enforces_capacity_and_preserves_actio
             attempt: 0,
             terminal_outcome: None,
         },
-        payload: b"extra".to_vec(),
-    };
+        b"extra".to_vec(),
+    );
     let cap_err = outbox
         .commit_state_and_enqueue(sample_cp("rule_outbox", 1, 2), vec![entry_c])
         .await
@@ -135,9 +135,10 @@ async fn transactional_outbox_deduplicates_enforces_capacity_and_preserves_actio
     let claimed_b = outbox.claim_pending(&rule, &act_b, "w1", 10).await.unwrap();
     assert_eq!(claimed_b.len(), 1);
     assert_eq!(claimed_b[0].effect.effect_id, id_b);
+    assert!(!claimed_b[0].claim_token.is_empty());
     assert_eq!(
         outbox
-            .ack(&id_b, "w1", EffectOutcome::Delivered)
+            .ack(&id_b, &claimed_b[0].claim_token, EffectOutcome::Delivered)
             .await
             .unwrap(),
         Some(CompletionStatus::Applied)

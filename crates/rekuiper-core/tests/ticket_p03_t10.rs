@@ -61,8 +61,8 @@ async fn revoked_generation_blocks_late_writers_and_stale_claims_while_preservin
         retriable: true,
         position: None,
     };
-    let entry = OutboxEntry {
-        effect: EffectRecord {
+    let entry = OutboxEntry::new(
+        EffectRecord {
             effect_id: eff_id.clone(),
             rule_id: rule.clone(),
             generation: gen1,
@@ -74,8 +74,8 @@ async fn revoked_generation_blocks_late_writers_and_stale_claims_while_preservin
             attempt: 1,
             terminal_outcome: Some(EffectOutcome::Ambiguous { error: ambig_err }),
         },
-        payload: b"{\"temp\":99}".to_vec(),
-    };
+        b"{\"temp\":99}".to_vec(),
+    );
     outbox
         .commit_state_and_enqueue(sample_cp("rule_fence", 1, 10), vec![entry])
         .await

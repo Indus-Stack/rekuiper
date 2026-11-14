@@ -304,8 +304,8 @@ async fn failpoint_outbox_ambiguous_and_retryable_effects_survive_restart() {
 
     let eff_id =
         deterministic_effect_id(&rule_id, Generation(1), &op_id, &action_id, 1, 0).unwrap();
-    let entry = OutboxEntry {
-        effect: EffectRecord {
+    let entry = OutboxEntry::new(
+        EffectRecord {
             effect_id: eff_id,
             rule_id: rule_id.clone(),
             generation: Generation(1),
@@ -317,8 +317,8 @@ async fn failpoint_outbox_ambiguous_and_retryable_effects_survive_restart() {
             attempt: 0,
             terminal_outcome: None,
         },
-        payload: br#"{"msg":"hello"}"#.to_vec(),
-    };
+        br#"{"msg":"hello"}"#.to_vec(),
+    );
     let envelope = CheckpointEnvelope {
         metadata: CheckpointMetadata {
             format_version: CHECKPOINT_FORMAT_VERSION,

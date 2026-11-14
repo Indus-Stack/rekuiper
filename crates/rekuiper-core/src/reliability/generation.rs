@@ -3,8 +3,8 @@
 use super::outbox::{OutboxEntry, OutboxError, SqliteOutbox, DEFAULT_CLAIM_LEASE_MS};
 use super::sqlite::ReliableSqliteStore;
 use crate::contracts::{
-    ActionId, CheckpointError, DeadlineCancellation, EffectOutcome, EffectRecord, Generation,
-    RuleId,
+    ActionId, CheckpointError, CheckpointMetadata, DeadlineCancellation, EffectOutcome,
+    EffectRecord, Generation, RuleId,
 };
 use sqlx::Row;
 
@@ -60,6 +60,63 @@ impl<'a> GenerationFence<'a> {
         .execute(&mut *tx)
         .await
         .map_err(|e| CheckpointError::StorageFailure(e.to_string()))?;
+
+        // Hand off the latest durable checkpoint to the newly activated generation so
+        // the replacement runner can resume while stale writers/claimers stay fenced.
+        let latest_cp = sqlx::query(
+            "SELECT checkpoint_id, generation, metadata_json
+             FROM reliable_checkpoints
+             WHERE rule_id = ?
+             ORDER BY checkpoint_id DESC
+             LIMIT 1",
+        )
+        .bind(rule_id.as_str())
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|e| CheckpointError::StorageFailure(e.to_string()))?;
+
+        if let Some(cp_row) = latest_cp {
+            let cp_id: i64 = cp_row.get("checkpoint_id");
+            let cp_gen_i64: i64 = cp_row.get("generation");
+            let cp_gen_u64 = u64::try_from(cp_gen_i64).map_err(|_| {
+                CheckpointError::StorageFailure("corrupt negative checkpoint generation".to_owned())
+            })?;
+            if cp_gen_u64 < next_gen {
+                let metadata_json: String = cp_row.get("metadata_json");
+                let mut metadata: CheckpointMetadata = serde_json::from_str(&metadata_json)
+                    .map_err(|e| CheckpointError::StorageFailure(e.to_string()))?;
+                metadata.identity.generation = Generation(next_gen);
+                for pos in &mut metadata.source_positions {
+                    pos.generation = Generation(next_gen);
+                }
+                let updated_metadata_json = serde_json::to_string(&metadata)
+                    .map_err(|e| CheckpointError::StorageFailure(e.to_string()))?;
+                sqlx::query(
+                    "UPDATE reliable_checkpoints
+                     SET generation = ?, metadata_json = ?
+                     WHERE rule_id = ? AND checkpoint_id = ?",
+                )
+                .bind(next_gen_i64)
+                .bind(updated_metadata_json)
+                .bind(rule_id.as_str())
+                .bind(cp_id)
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| CheckpointError::StorageFailure(e.to_string()))?;
+
+                sqlx::query(
+                    "UPDATE reliable_positions
+                     SET generation = ?
+                     WHERE rule_id = ? AND checkpoint_id = ?",
+                )
+                .bind(next_gen_i64)
+                .bind(rule_id.as_str())
+                .bind(cp_id)
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| CheckpointError::StorageFailure(e.to_string()))?;
+            }
+        }
 
         tx.commit()
             .await

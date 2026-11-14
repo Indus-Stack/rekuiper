@@ -258,10 +258,7 @@ async fn repro_two_workers_claim_same_entry() {
     outbox
         .commit_state_and_enqueue(
             envelope("r3", 1),
-            vec![OutboxEntry {
-                effect: effect("r3", "eff_x"),
-                payload: b"p".to_vec(),
-            }],
+            vec![OutboxEntry::new(effect("r3", "eff_x"), b"p".to_vec())],
         )
         .await
         .unwrap();
@@ -298,20 +295,14 @@ async fn repro_capacity_is_global_across_rules() {
     outbox
         .commit_state_and_enqueue(
             envelope("rule_a", 1),
-            vec![OutboxEntry {
-                effect: effect("rule_a", "eff_a"),
-                payload: b"p".to_vec(),
-            }],
+            vec![OutboxEntry::new(effect("rule_a", "eff_a"), b"p".to_vec())],
         )
         .await
         .unwrap();
     let res = outbox
         .commit_state_and_enqueue(
             envelope("rule_b", 1),
-            vec![OutboxEntry {
-                effect: effect("rule_b", "eff_b"),
-                payload: b"p".to_vec(),
-            }],
+            vec![OutboxEntry::new(effect("rule_b", "eff_b"), b"p".to_vec())],
         )
         .await;
     println!("REPRO rule_b enqueue = {res:?}");
@@ -405,10 +396,10 @@ async fn repro_same_worker_id_dispatch_coordinator_and_fenced_dispatch() {
     outbox
         .commit_state_and_enqueue(
             envelope("r_coord", 1),
-            vec![OutboxEntry {
-                effect: effect("r_coord", "eff_coord_1"),
-                payload: b"hello".to_vec(),
-            }],
+            vec![OutboxEntry::new(
+                effect("r_coord", "eff_coord_1"),
+                b"hello".to_vec(),
+            )],
         )
         .await
         .unwrap();
@@ -1535,14 +1526,8 @@ async fn repro_outbox_worker_cannot_overtake_leased_same_key_effect() {
         .commit_state_and_enqueue(
             envelope("r_order", 1),
             vec![
-                OutboxEntry {
-                    effect: e1.clone(),
-                    payload: b"first".to_vec(),
-                },
-                OutboxEntry {
-                    effect: e2,
-                    payload: b"second".to_vec(),
-                },
+                OutboxEntry::new(e1.clone(), b"first".to_vec()),
+                OutboxEntry::new(e2, b"second".to_vec()),
             ],
         )
         .await
@@ -1947,10 +1932,7 @@ async fn repro_expired_outbox_worker_cannot_settle_reassigned_effect() {
     outbox
         .commit_state_and_enqueue(
             envelope("r_lease", 1),
-            vec![OutboxEntry {
-                effect: eff.clone(),
-                payload: b"payload".to_vec(),
-            }],
+            vec![OutboxEntry::new(eff.clone(), b"payload".to_vec())],
         )
         .await
         .unwrap();
@@ -1962,6 +1944,7 @@ async fn repro_expired_outbox_worker_cannot_settle_reassigned_effect() {
         .await
         .unwrap();
     assert_eq!(claimed_a.len(), 1);
+    assert!(!claimed_a[0].claim_token.is_empty());
 
     let claimed_b = outbox
         .claim_pending_with_lease(&rule, &act, "worker-b", 1, 60_000, None)
@@ -1969,9 +1952,14 @@ async fn repro_expired_outbox_worker_cannot_settle_reassigned_effect() {
         .unwrap();
     assert_eq!(claimed_b.len(), 1);
     assert_eq!(claimed_b[0].effect.effect_id, eff.effect_id);
+    assert_ne!(claimed_a[0].claim_token, claimed_b[0].claim_token);
 
     let err = outbox
-        .ack(&eff.effect_id, "worker-a", EffectOutcome::Delivered)
+        .ack(
+            &eff.effect_id,
+            &claimed_a[0].claim_token,
+            EffectOutcome::Delivered,
+        )
         .await
         .expect_err("expired worker-a must not settle effect reassigned to worker-b");
     assert!(matches!(
@@ -1993,7 +1981,11 @@ async fn repro_expired_outbox_worker_cannot_settle_reassigned_effect() {
     drop(raw_pool);
 
     let ack_b = outbox
-        .ack(&eff.effect_id, "worker-b", EffectOutcome::Delivered)
+        .ack(
+            &eff.effect_id,
+            &claimed_b[0].claim_token,
+            EffectOutcome::Delivered,
+        )
         .await
         .unwrap();
     assert_eq!(
@@ -2002,4 +1994,270 @@ async fn repro_expired_outbox_worker_cannot_settle_reassigned_effect() {
     );
     drop(store);
     let _ = std::fs::remove_file(&db_path);
+}
+
+#[tokio::test]
+async fn repro_activated_generation_resumes_last_committed_checkpoint() {
+    let store = ReliableSqliteStore::open(":memory:", SqliteDurabilityMode::Full)
+        .await
+        .unwrap();
+    let fence = GenerationFence::new(&store);
+    let rule = RuleId::try_from("r_gen_handoff").unwrap();
+    let stmt = Parser::new("SELECT count(*) AS cnt FROM k GROUP BY COUNTWINDOW(2)")
+        .parse_select()
+        .unwrap();
+
+    let (gen1, cancel1) = fence.activate_next(&rule).await.unwrap();
+    assert_eq!(gen1, Generation(1));
+    let id1 = identity("r_gen_handoff", gen1.0);
+    let mut runner1 = ReliableSingleSourceRunner::new(
+        id1.clone(),
+        partition(),
+        stmt.clone(),
+        RetryPolicy::default(),
+    )
+    .unwrap();
+    let mut reader1 =
+        KafkaReliablePartitionReader::new(partition(), gen1, None, 0, KafkaTombstonePolicy::Fail);
+    let sink1 = CountingSink {
+        delivered: Mutex::new(Vec::new()),
+    };
+    let clock = TestClock::new(0);
+    let m0 = reader1.prepare(KafkaRawRecord {
+        offset: 0,
+        payload: Some(br#"{"v":10}"#.to_vec()),
+    });
+    runner1
+        .process_and_checkpoint(&mut reader1, &m0, &[], &sink1, &store, &clock, &cancel1)
+        .await
+        .unwrap();
+    assert_eq!(sink1.delivered.lock().len(), 0);
+
+    fence.fence_and_revoke(&rule, &cancel1).await.unwrap();
+    let (gen2, cancel2) = fence.activate_next(&rule).await.unwrap();
+    assert_eq!(gen2, Generation(2));
+
+    // Stale generation 1 writer stays fenced even after generation 2 activates.
+    let stale_err = store.commit_checkpoint(envelope("r_gen_handoff", 99)).await;
+    assert!(matches!(
+        stale_err,
+        Err(CheckpointError::GenerationMismatch { .. })
+    ));
+
+    // Newly activated generation 2 resumes from the committed checkpoint at offset 1.
+    let mut id2 = id1;
+    id2.generation = gen2;
+    let mut runner2 =
+        ReliableSingleSourceRunner::new(id2, partition(), stmt, RetryPolicy::default()).unwrap();
+    let restored = runner2
+        .restore_before_intake(&store, &mut [])
+        .await
+        .expect("activated replacement generation must resume committed checkpoint");
+    assert_eq!(restored, Some(1));
+
+    let mut reader2 = KafkaReliablePartitionReader::new(
+        partition(),
+        gen2,
+        None,
+        restored.unwrap(),
+        KafkaTombstonePolicy::Fail,
+    );
+    let sink2 = CountingSink {
+        delivered: Mutex::new(Vec::new()),
+    };
+    let m1 = reader2.prepare(KafkaRawRecord {
+        offset: 1,
+        payload: Some(br#"{"v":20}"#.to_vec()),
+    });
+    runner2
+        .process_and_checkpoint(&mut reader2, &m1, &[], &sink2, &store, &clock, &cancel2)
+        .await
+        .unwrap();
+    {
+        let out = sink2.delivered.lock();
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0]["cnt"], 2);
+    }
+}
+
+#[tokio::test]
+async fn repro_legacy_window_snapshot_without_stmt_fingerprint_restores() {
+    let store = ReliableSqliteStore::open(":memory:", SqliteDurabilityMode::Full)
+        .await
+        .unwrap();
+    let stmt = Parser::new("SELECT count(*) AS cnt FROM k WHERE v > 0 GROUP BY COUNTWINDOW(2)")
+        .parse_select()
+        .unwrap();
+    let id1 = identity("r_legacy_win", 1);
+
+    let mut runner1 = ReliableSingleSourceRunner::new(
+        id1.clone(),
+        partition(),
+        stmt.clone(),
+        RetryPolicy::default(),
+    )
+    .unwrap();
+    let mut reader1 = KafkaReliablePartitionReader::new(
+        partition(),
+        Generation(1),
+        None,
+        0,
+        KafkaTombstonePolicy::Fail,
+    );
+    let sink1 = CountingSink {
+        delivered: Mutex::new(Vec::new()),
+    };
+    let clock = TestClock::new(0);
+    let cancel = DeadlineCancellation::default();
+    let m0 = reader1.prepare(KafkaRawRecord {
+        offset: 0,
+        payload: Some(br#"{"v":20}"#.to_vec()),
+    });
+    runner1
+        .process_and_checkpoint(&mut reader1, &m0, &[], &sink1, &store, &clock, &cancel)
+        .await
+        .unwrap();
+    drop(runner1);
+
+    // Rewrite the window participant snapshot to match the f197bad format (without `stmt_fingerprint`).
+    let win_op = OperatorId::try_from("__runner_window_state__").unwrap();
+    let mut legacy_env = store.load_latest(&id1.rule_id).await.unwrap().unwrap();
+    legacy_env.metadata.checkpoint_id = CheckpointId(2);
+    let legacy_bytes = br#"{"window_buffer":[[0,{"v":20}]],"tumbling_start_ms":null}"#.to_vec();
+    let legacy_checksum = ContentChecksum::sha256_bytes(&legacy_bytes);
+    {
+        let snap = legacy_env.payloads.get_mut(&win_op).unwrap();
+        snap.payload = legacy_bytes.clone();
+        snap.checksum = legacy_checksum.clone();
+    }
+    {
+        let part_ref = legacy_env.metadata.participants.get_mut(&win_op).unwrap();
+        part_ref.payload_bytes = legacy_bytes.len() as u64;
+        part_ref.payload_checksum = legacy_checksum;
+    }
+    store.commit_checkpoint(legacy_env).await.unwrap();
+
+    // Matching PlanIdentity restores the legacy snapshot and continues window accumulation.
+    let mut runner2 = ReliableSingleSourceRunner::new(
+        id1.clone(),
+        partition(),
+        stmt.clone(),
+        RetryPolicy::default(),
+    )
+    .unwrap();
+    let restored = runner2
+        .restore_before_intake(&store, &mut [])
+        .await
+        .expect("valid f197bad snapshot without stmt_fingerprint must restore");
+    assert_eq!(restored, Some(1));
+
+    let mut reader2 = KafkaReliablePartitionReader::new(
+        partition(),
+        Generation(1),
+        None,
+        restored.unwrap(),
+        KafkaTombstonePolicy::Fail,
+    );
+    let sink2 = CountingSink {
+        delivered: Mutex::new(Vec::new()),
+    };
+    let m1 = reader2.prepare(KafkaRawRecord {
+        offset: 1,
+        payload: Some(br#"{"v":30}"#.to_vec()),
+    });
+    runner2
+        .process_and_checkpoint(&mut reader2, &m1, &[], &sink2, &store, &clock, &cancel)
+        .await
+        .unwrap();
+    {
+        let out = sink2.delivered.lock();
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0]["cnt"], 2);
+    }
+
+    // Mismatched PlanIdentity::plan_fingerprint must still reject the legacy snapshot.
+    let mut diff_id = id1;
+    let hex_b: String = std::iter::repeat_n('b', 64).collect();
+    diff_id.plan_fingerprint = ContentChecksum::try_from(format!("sha256:{hex_b}")).unwrap();
+    let mut runner_diff_fp =
+        ReliableSingleSourceRunner::new(diff_id, partition(), stmt, RetryPolicy::default())
+            .unwrap();
+    let err_fp = runner_diff_fp
+        .restore_before_intake(&store, &mut [])
+        .await
+        .expect_err("legacy snapshot with mismatched PlanIdentity must fail");
+    assert!(matches!(
+        err_fp,
+        ReliableRuntimeError::Checkpoint(CheckpointError::PlanFingerprintMismatch)
+    ));
+}
+
+#[tokio::test]
+async fn repro_reclaimed_effect_with_same_worker_id_rejects_original_claim_token() {
+    let store = ReliableSqliteStore::open(":memory:", SqliteDurabilityMode::Full)
+        .await
+        .unwrap();
+    let outbox = SqliteOutbox::new(&store, OutboxCapacity::default());
+    let eff = effect("r_same_worker_lease", "eff_same_worker_1");
+    outbox
+        .commit_state_and_enqueue(
+            envelope("r_same_worker_lease", 1),
+            vec![OutboxEntry::new(eff.clone(), b"payload".to_vec())],
+        )
+        .await
+        .unwrap();
+
+    let rule = RuleId::try_from("r_same_worker_lease").unwrap();
+    let act = ActionId::try_from("mqtt_0").unwrap();
+    let first_claim = outbox
+        .claim_pending_with_lease(&rule, &act, "worker-a", 1, 0, None)
+        .await
+        .unwrap();
+    assert_eq!(first_claim.len(), 1);
+
+    let second_claim = outbox
+        .claim_pending_with_lease(&rule, &act, "worker-a", 1, 60_000, None)
+        .await
+        .unwrap();
+    assert_eq!(second_claim.len(), 1);
+    assert_ne!(first_claim[0].claim_token, second_claim[0].claim_token);
+
+    // Stale claim token from original claim with same worker_id must be rejected.
+    let stale_ack = outbox
+        .ack(
+            &eff.effect_id,
+            &first_claim[0].claim_token,
+            EffectOutcome::Delivered,
+        )
+        .await
+        .expect_err("stale claim token must not settle replacement claim");
+    assert!(matches!(stale_ack, OutboxError::LeaseMismatch { .. }));
+
+    // Passing bare worker_id must also be rejected.
+    let bare_ack = outbox
+        .ack(&eff.effect_id, "worker-a", EffectOutcome::Delivered)
+        .await
+        .expect_err("bare worker_id must not settle claimed effect");
+    assert!(matches!(bare_ack, OutboxError::LeaseMismatch { .. }));
+
+    // Current claim token settles cleanly.
+    let ok = outbox
+        .ack(
+            &eff.effect_id,
+            &second_claim[0].claim_token,
+            EffectOutcome::Delivered,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        ok,
+        Some(rekuiper_core::contracts::CompletionStatus::Applied)
+    );
+
+    // Separate DispatchCoordinator instances with the same worker_id generate distinct owners.
+    let coord1 = DispatchCoordinator::new();
+    let coord2 = DispatchCoordinator::new();
+    let lease1 = coord1.try_acquire(&rule, &act, "worker-a").unwrap();
+    let lease2 = coord2.try_acquire(&rule, &act, "worker-a").unwrap();
+    assert_ne!(lease1.claim_owner(), lease2.claim_owner());
 }

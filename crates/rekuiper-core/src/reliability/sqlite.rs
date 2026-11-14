@@ -247,7 +247,9 @@ impl ReliableSqliteStore {
                 order_key TEXT,
                 payload BLOB NOT NULL DEFAULT X'',
                 claimed_by TEXT,
+                claim_token TEXT,
                 claimed_until_ms INTEGER,
+                claim_seq INTEGER NOT NULL DEFAULT 0,
                 attempt INTEGER NOT NULL,
                 terminal_outcome_json TEXT
             )",
@@ -273,6 +275,26 @@ impl ReliableSqliteStore {
                 .await
                 .map_err(|e| CheckpointError::StorageFailure(e.to_string()))?;
         }
+        let has_claim_token = columns
+            .iter()
+            .any(|row| row.get::<String, _>("name") == "claim_token");
+        if !has_claim_token {
+            sqlx::query("ALTER TABLE reliable_outbox_effects ADD COLUMN claim_token TEXT")
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| CheckpointError::StorageFailure(e.to_string()))?;
+        }
+        let has_claim_seq = columns
+            .iter()
+            .any(|row| row.get::<String, _>("name") == "claim_seq");
+        if !has_claim_seq {
+            sqlx::query(
+                "ALTER TABLE reliable_outbox_effects ADD COLUMN claim_seq INTEGER NOT NULL DEFAULT 0",
+            )
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| CheckpointError::StorageFailure(e.to_string()))?;
+        }
 
         tx.commit()
             .await
@@ -289,10 +311,7 @@ impl ReliableSqliteStore {
     ) -> Result<(), CheckpointError> {
         let entries: Vec<OutboxEntry> = effects
             .into_iter()
-            .map(|effect| OutboxEntry {
-                effect,
-                payload: Vec::new(),
-            })
+            .map(|effect| OutboxEntry::new(effect, Vec::new()))
             .collect();
         self.commit_checkpoint_and_entries(envelope, entries, None)
             .await
@@ -642,7 +661,7 @@ impl ReliableSqliteStore {
                 .map_err(|e| CheckpointError::StorageFailure(e.to_string()))?;
             sqlx::query(
                 "UPDATE reliable_outbox_effects
-                 SET attempt = ?, terminal_outcome_json = ?, claimed_by = NULL, claimed_until_ms = NULL
+                 SET attempt = ?, terminal_outcome_json = ?, claimed_by = NULL, claim_token = NULL, claimed_until_ms = NULL
                  WHERE effect_id = ?",
             )
             .bind(i64::from(record.attempt))
@@ -659,11 +678,12 @@ impl ReliableSqliteStore {
         Ok(Some(status))
     }
 
-    /// Records an effect completion while verifying the acknowledging `worker_id` still holds the active lease.
+    /// Records an effect completion while verifying the acknowledging `claim_token`
+    /// matches the currently active outbox claim.
     pub async fn record_claimed_effect_completion(
         &self,
         effect_id: &EffectId,
-        worker_id: &str,
+        claim_token: &str,
         outcome: EffectOutcome,
     ) -> Result<Option<CompletionStatus>, crate::reliability::outbox::OutboxError> {
         use crate::reliability::outbox::OutboxError;
@@ -675,7 +695,7 @@ impl ReliableSqliteStore {
             .map_err(|e| OutboxError::Storage(e.to_string()))?;
 
         let row = sqlx::query(
-            "SELECT effect_id, rule_id, generation, action_id, connection_id, order_key, attempt, terminal_outcome_json, claimed_by
+            "SELECT effect_id, rule_id, generation, action_id, connection_id, order_key, attempt, terminal_outcome_json, claim_token
              FROM reliable_outbox_effects WHERE effect_id = ?",
         )
         .bind(effect_id.as_str())
@@ -687,11 +707,13 @@ impl ReliableSqliteStore {
             return Ok(None);
         };
         let mut record = Self::decode_effect_row(&row)?;
-        let claimed_by: Option<String> = row.get("claimed_by");
-        if record.terminal_outcome.is_none() && claimed_by.as_deref() != Some(worker_id) {
+        let active_token: Option<String> = row.get("claim_token");
+        if record.terminal_outcome.is_none()
+            && (claim_token.is_empty() || active_token.as_deref() != Some(claim_token))
+        {
             return Err(OutboxError::LeaseMismatch {
                 effect_id: effect_id.clone(),
-                worker_id: worker_id.to_owned(),
+                worker_id: claim_token.to_owned(),
             });
         }
 
@@ -706,20 +728,20 @@ impl ReliableSqliteStore {
                 .map_err(|e| OutboxError::Storage(e.to_string()))?;
             let res = sqlx::query(
                 "UPDATE reliable_outbox_effects
-                 SET attempt = ?, terminal_outcome_json = ?, claimed_by = NULL, claimed_until_ms = NULL
-                 WHERE effect_id = ? AND claimed_by = ? AND terminal_outcome_json IS NULL",
+                 SET attempt = ?, terminal_outcome_json = ?, claimed_by = NULL, claim_token = NULL, claimed_until_ms = NULL
+                 WHERE effect_id = ? AND claim_token = ? AND terminal_outcome_json IS NULL",
             )
             .bind(i64::from(record.attempt))
             .bind(outcome_json)
             .bind(effect_id.as_str())
-            .bind(worker_id)
+            .bind(claim_token)
             .execute(&mut *tx)
             .await
             .map_err(|e| OutboxError::Storage(e.to_string()))?;
             if res.rows_affected() != 1 {
                 return Err(OutboxError::LeaseMismatch {
                     effect_id: effect_id.clone(),
-                    worker_id: worker_id.to_owned(),
+                    worker_id: claim_token.to_owned(),
                 });
             }
         }

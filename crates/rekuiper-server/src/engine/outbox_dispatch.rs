@@ -31,12 +31,13 @@ pub trait OutboxSinkAdapter: Send + Sync {
     async fn send_to_dlq(&self, _entry: &OutboxEntry, _error: &StructuredError) {}
 }
 
+static NEXT_LEASE_ID: AtomicU64 = AtomicU64::new(0);
+
 /// Coordinates exclusive `(RuleId, ActionId)` ownership across concurrent
 /// dispatcher workers so two dispatchers cannot claim conflicting ownership.
 #[derive(Debug, Clone, Default)]
 pub struct DispatchCoordinator {
     leases: Arc<Mutex<HashMap<(RuleId, ActionId), u64>>>,
-    next_lease_id: Arc<AtomicU64>,
 }
 
 impl DispatchCoordinator {
@@ -56,7 +57,7 @@ impl DispatchCoordinator {
         if guard.contains_key(&key) {
             return None;
         }
-        let lease_id = self.next_lease_id.fetch_add(1, Ordering::Relaxed) + 1;
+        let lease_id = NEXT_LEASE_ID.fetch_add(1, Ordering::SeqCst) + 1;
         guard.insert(key.clone(), lease_id);
         Some(ActionDispatchLease {
             leases: Arc::clone(&self.leases),
@@ -77,8 +78,14 @@ pub struct ActionDispatchLease {
 }
 
 impl ActionDispatchLease {
-    fn claim_owner(&self) -> String {
+    /// Returns a globally unique owner string combining `worker_id` and this lease's unique ID.
+    pub fn claim_owner(&self) -> String {
         format!("{}:{}", self.worker_id, self.lease_id)
+    }
+
+    /// Returns the process-wide unique numeric ID assigned to this dispatch lease.
+    pub fn lease_id(&self) -> u64 {
+        self.lease_id
     }
 }
 
@@ -265,7 +272,7 @@ impl OutboxDispatcher {
                 if blocked_keys.contains(order_key) {
                     report.deferred_by_order_key += 1;
                     outbox
-                        .release_claim(&entry.effect.effect_id, &claim_owner)
+                        .release_claim(&entry.effect.effect_id, &entry.claim_token)
                         .await?;
                     continue;
                 }
@@ -283,7 +290,7 @@ impl OutboxDispatcher {
                     outbox
                         .ack(
                             &entry.effect.effect_id,
-                            &claim_owner,
+                            &entry.claim_token,
                             EffectOutcome::Delivered,
                         )
                         .await?;
@@ -297,7 +304,7 @@ impl OutboxDispatcher {
                     outbox
                         .ack(
                             &entry.effect.effect_id,
-                            &claim_owner,
+                            &entry.claim_token,
                             EffectOutcome::PermanentFailure { error },
                         )
                         .await?;
@@ -306,7 +313,7 @@ impl OutboxDispatcher {
                 EffectOutcome::Retryable { .. } => {
                     // Leave unsettled in SQLite outbox and release claim so retry/restart picks it up.
                     outbox
-                        .release_claim(&entry.effect.effect_id, &claim_owner)
+                        .release_claim(&entry.effect.effect_id, &entry.claim_token)
                         .await?;
                     report.unsettled_retryable += 1;
                     if let Some(order_key) = &entry.effect.order_key {
@@ -316,7 +323,7 @@ impl OutboxDispatcher {
                 EffectOutcome::Ambiguous { .. } => {
                     // Leave unsettled for idempotent reconciliation and release claim for immediate retry.
                     outbox
-                        .release_claim(&entry.effect.effect_id, &claim_owner)
+                        .release_claim(&entry.effect.effect_id, &entry.claim_token)
                         .await?;
                     report.unsettled_ambiguous += 1;
                     if let Some(order_key) = &entry.effect.order_key {

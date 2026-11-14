@@ -66,8 +66,8 @@ fn make_entry(
 ) -> OutboxEntry {
     let eff_id = deterministic_effect_id(rule_id, Generation(1), op_id, action_id, seq, 0)
         .expect("effect id");
-    OutboxEntry {
-        effect: EffectRecord {
+    OutboxEntry::new(
+        EffectRecord {
             effect_id: eff_id,
             rule_id: rule_id.clone(),
             generation: Generation(1),
@@ -79,8 +79,8 @@ fn make_entry(
             attempt: 0,
             terminal_outcome: None,
         },
-        payload: payload.to_vec(),
-    }
+        payload.to_vec(),
+    )
 }
 
 #[tokio::test]

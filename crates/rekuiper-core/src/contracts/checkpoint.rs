@@ -205,6 +205,35 @@ pub enum CheckpointError {
 }
 
 impl CheckpointEnvelope {
+    /// Hands off a committed checkpoint from an earlier (or current) generation to
+    /// `target_generation` so a newly activated replacement generation can resume
+    /// from the last durable checkpoint while rejecting checkpoints created by a
+    /// newer generation (`target_generation < metadata.identity.generation`).
+    pub fn handoff_to_generation(
+        &mut self,
+        target_generation: Generation,
+    ) -> Result<(), CheckpointError> {
+        let current = self.metadata.identity.generation;
+        if target_generation.0 < current.0 {
+            return Err(CheckpointError::GenerationMismatch {
+                expected: target_generation,
+                actual: current,
+            });
+        }
+        for pos in &self.metadata.source_positions {
+            if pos.generation != current {
+                return Err(CheckpointError::SourcePositionGenerationMismatch);
+            }
+        }
+        if target_generation.0 > current.0 {
+            self.metadata.identity.generation = target_generation;
+            for pos in &mut self.metadata.source_positions {
+                pos.generation = target_generation;
+            }
+        }
+        Ok(())
+    }
+
     /// Validates format version, plan/generation/dependency identity, participant
     /// completeness, checksum consistency, and source position ownership.
     pub fn validate_restore(

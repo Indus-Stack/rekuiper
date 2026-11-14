@@ -7,10 +7,14 @@ use crate::contracts::{
     EffectDestination, EffectId, EffectOutcome, EffectRecord, Generation, InvalidId, OperatorId,
     RuleId,
 };
+use serde::{Deserialize, Serialize};
 use sqlx::Row;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const DEFAULT_CLAIM_LEASE_MS: u64 = 30_000;
+
+static NEXT_CLAIM_NONCE: AtomicU64 = AtomicU64::new(1);
 
 /// Capacity limits enforced before admitting new pending outbox entries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -28,10 +32,35 @@ impl Default for OutboxCapacity {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OutboxEntry {
     pub effect: EffectRecord,
     pub payload: Vec<u8>,
+    /// Unique lease token minted when this entry is claimed from the outbox.
+    /// Empty before the entry has been claimed.
+    #[serde(default)]
+    pub claim_token: String,
+}
+
+impl OutboxEntry {
+    /// Creates an unclaimed outbox entry.
+    pub fn new(effect: EffectRecord, payload: Vec<u8>) -> Self {
+        Self {
+            effect,
+            payload,
+            claim_token: String::new(),
+        }
+    }
+
+    /// Returns the unique lease token assigned to this claimed entry.
+    pub fn claim_token(&self) -> &str {
+        &self.claim_token
+    }
+
+    /// Alias for [`OutboxEntry::claim_token`].
+    pub fn lease_token(&self) -> &str {
+        &self.claim_token
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -205,8 +234,12 @@ impl<'a> SqliteOutbox<'a> {
         let lease_ms = i64::try_from(lease_duration_ms).unwrap_or(i64::MAX);
         let lease_until_ms = now_ms.saturating_add(lease_ms);
 
+        let batch_nonce = NEXT_CLAIM_NONCE.fetch_add(1, Ordering::Relaxed);
+        let batch_prefix = format!("b{}-{}-{}", std::process::id(), now_ms, batch_nonce);
+        let batch_like = format!("{batch_prefix}:%");
+
         let rows = sqlx::query(
-            "SELECT effect_id, rule_id, generation, action_id, connection_id, order_key, payload, attempt
+            "SELECT effect_id, rule_id, generation, action_id, connection_id, order_key, payload, attempt, claim_seq
              FROM reliable_outbox_effects
              WHERE rule_id = ?
                AND action_id = ?
@@ -247,11 +280,16 @@ impl<'a> SqliteOutbox<'a> {
             let order_key: Option<String> = row.get("order_key");
             let payload: Vec<u8> = row.get("payload");
             let attempt: i64 = row.get("attempt");
+            let prev_seq: i64 = row.get("claim_seq");
+            let next_seq = prev_seq.saturating_add(1);
+            let row_nonce = NEXT_CLAIM_NONCE.fetch_add(1, Ordering::Relaxed);
+            let claim_token = format!("{batch_prefix}:{next_seq}:{row_nonce}:{worker_id}");
 
             let res = sqlx::query(
-                "UPDATE reliable_outbox_effects
-                 SET claimed_by = ?, claimed_until_ms = ?
+                r#"UPDATE reliable_outbox_effects
+                 SET claimed_by = ?, claim_token = ?, claimed_until_ms = ?, claim_seq = ?
                  WHERE effect_id = ?
+                   AND claim_seq = ?
                    AND terminal_outcome_json IS NULL
                    AND (claimed_by IS NULL OR claimed_until_ms IS NULL OR claimed_until_ms <= ?)
                    AND NOT EXISTS (
@@ -264,16 +302,19 @@ impl<'a> SqliteOutbox<'a> {
                          AND prior.terminal_outcome_json IS NULL
                          AND prior.rowid < reliable_outbox_effects.rowid
                          AND prior.claimed_by IS NOT NULL
-                         AND prior.claimed_by != ?
+                         AND (prior.claim_token IS NULL OR prior.claim_token NOT LIKE ? ESCAPE '\')
                          AND prior.claimed_until_ms IS NOT NULL
                          AND prior.claimed_until_ms > ?
-                   )",
+                   )"#,
             )
             .bind(worker_id)
+            .bind(&claim_token)
             .bind(lease_until_ms)
+            .bind(next_seq)
             .bind(&eff_id_str)
+            .bind(prev_seq)
             .bind(now_ms)
-            .bind(worker_id)
+            .bind(&batch_like)
             .bind(now_ms)
             .execute(&mut *tx)
             .await
@@ -306,6 +347,7 @@ impl<'a> SqliteOutbox<'a> {
                     terminal_outcome: None,
                 },
                 payload,
+                claim_token,
             });
         }
 
@@ -315,36 +357,39 @@ impl<'a> SqliteOutbox<'a> {
         Ok(claimed)
     }
 
-    /// Releases an active claim held by `worker_id` so deferred or unsettled entries
-    /// can be reclaimed immediately on the next dispatcher pass.
+    /// Releases an active claim matching `claim_token` so deferred or unsettled
+    /// entries can be reclaimed immediately on the next dispatcher pass.
     pub async fn release_claim(
         &self,
         effect_id: &EffectId,
-        worker_id: &str,
+        claim_token: &str,
     ) -> Result<(), OutboxError> {
+        if claim_token.is_empty() {
+            return Ok(());
+        }
         sqlx::query(
             "UPDATE reliable_outbox_effects
-             SET claimed_by = NULL, claimed_until_ms = NULL
-             WHERE effect_id = ? AND claimed_by = ?",
+             SET claimed_by = NULL, claim_token = NULL, claimed_until_ms = NULL
+             WHERE effect_id = ? AND claim_token = ?",
         )
         .bind(effect_id.as_str())
-        .bind(worker_id)
+        .bind(claim_token)
         .execute(self.store.pool())
         .await
         .map_err(|e| OutboxError::Storage(e.to_string()))?;
         Ok(())
     }
 
-    /// Acknowledges an effect outcome idempotently, requiring the active lease holder (`worker_id`)
+    /// Acknowledges an effect outcome idempotently, requiring the active `claim_token`
     /// when settling a non-terminal effect.
     pub async fn ack(
         &self,
         effect_id: &EffectId,
-        worker_id: &str,
+        claim_token: &str,
         outcome: EffectOutcome,
     ) -> Result<Option<CompletionStatus>, OutboxError> {
         self.store
-            .record_claimed_effect_completion(effect_id, worker_id, outcome)
+            .record_claimed_effect_completion(effect_id, claim_token, outcome)
             .await
     }
 }
