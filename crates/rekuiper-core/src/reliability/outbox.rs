@@ -207,11 +207,25 @@ impl<'a> SqliteOutbox<'a> {
                AND action_id = ?
                AND terminal_outcome_json IS NULL
                AND (claimed_by IS NULL OR claimed_until_ms IS NULL OR claimed_until_ms <= ?)
+               AND NOT EXISTS (
+                   SELECT 1
+                   FROM reliable_outbox_effects AS prior
+                   WHERE prior.rule_id = reliable_outbox_effects.rule_id
+                     AND prior.action_id = reliable_outbox_effects.action_id
+                     AND reliable_outbox_effects.order_key IS NOT NULL
+                     AND prior.order_key = reliable_outbox_effects.order_key
+                     AND prior.terminal_outcome_json IS NULL
+                     AND prior.rowid < reliable_outbox_effects.rowid
+                     AND prior.claimed_by IS NOT NULL
+                     AND prior.claimed_until_ms IS NOT NULL
+                     AND prior.claimed_until_ms > ?
+               )
              ORDER BY rowid ASC
              LIMIT ?",
         )
         .bind(rule_id.as_str())
         .bind(action_id.as_str())
+        .bind(now_ms)
         .bind(now_ms)
         .bind(i64::try_from(limit).unwrap_or(i64::MAX))
         .fetch_all(&mut *tx)
@@ -234,11 +248,27 @@ impl<'a> SqliteOutbox<'a> {
                  SET claimed_by = ?, claimed_until_ms = ?
                  WHERE effect_id = ?
                    AND terminal_outcome_json IS NULL
-                   AND (claimed_by IS NULL OR claimed_until_ms IS NULL OR claimed_until_ms <= ?)",
+                   AND (claimed_by IS NULL OR claimed_until_ms IS NULL OR claimed_until_ms <= ?)
+                   AND NOT EXISTS (
+                       SELECT 1
+                       FROM reliable_outbox_effects AS prior
+                       WHERE prior.rule_id = reliable_outbox_effects.rule_id
+                         AND prior.action_id = reliable_outbox_effects.action_id
+                         AND reliable_outbox_effects.order_key IS NOT NULL
+                         AND prior.order_key = reliable_outbox_effects.order_key
+                         AND prior.terminal_outcome_json IS NULL
+                         AND prior.rowid < reliable_outbox_effects.rowid
+                         AND prior.claimed_by IS NOT NULL
+                         AND prior.claimed_by != ?
+                         AND prior.claimed_until_ms IS NOT NULL
+                         AND prior.claimed_until_ms > ?
+                   )",
             )
             .bind(worker_id)
             .bind(lease_until_ms)
             .bind(&eff_id_str)
+            .bind(now_ms)
+            .bind(worker_id)
             .bind(now_ms)
             .execute(&mut *tx)
             .await

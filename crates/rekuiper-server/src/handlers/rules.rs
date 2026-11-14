@@ -115,6 +115,9 @@ pub async fn create_rule(
                     .any(|e| matches!(e, EdgeTargets::Multi(_)));
 
             if is_native_dag {
+                if let Some(resp) = reject_unsupported_native_dag_options(rule.options.as_ref()) {
+                    return resp;
+                }
                 let rule_id = rule.id.clone();
                 if let Err(e) = state.rule_manager.create_rule(rule.clone()).await {
                     let msg = if e.to_string().contains("already exists") {
@@ -1069,6 +1072,60 @@ fn stream_catalog_entry(
     }
 }
 
+fn reject_unsupported_native_dag_options(
+    options: Option<&HashMap<String, Value>>,
+) -> Option<Response> {
+    if rekuiper_sql::planning::is_durable_options(options) {
+        return Some(
+            (
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "error": 1000,
+                    "message": "Invalid rule options: native DAG execution does not support checkpointEnabled or durable delivery guarantees"
+                })),
+            )
+                .into_response(),
+        );
+    }
+    None
+}
+
+fn graph_source_catalog_entry(
+    graph: &rekuiper_core::model::GraphDefinition,
+    source_name: &str,
+) -> Option<rekuiper_sql::planning::StreamCatalogEntry> {
+    use rekuiper_core::contracts::QualificationLevel;
+    use rekuiper_sql::planning::StreamCatalogEntry;
+    use std::collections::BTreeMap;
+
+    for (node_id, node) in &graph.nodes {
+        if node.node_category != "source" {
+            continue;
+        }
+        let prop_name = node
+            .props
+            .get("sourceName")
+            .or_else(|| node.props.get("datasource"))
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+        let matches = node_id == source_name || prop_name == Some(source_name);
+        if matches {
+            let source_type = node.node_type.to_ascii_lowercase();
+            let replayable = matches!(source_type.as_str(), "kafka" | "sql" | "file");
+            return Some(StreamCatalogEntry {
+                name: source_name.to_string(),
+                source_type: Some(source_type),
+                lossy_queue: false,
+                replayable,
+                qualification: QualificationLevel::ComponentTested,
+                schema: BTreeMap::new(),
+            });
+        }
+    }
+    None
+}
+
 fn build_rule_typed_plan(
     state: &AppState,
     rule: &RuleDefinition,
@@ -1077,10 +1134,18 @@ fn build_rule_typed_plan(
     let mut streams = Vec::new();
     if let Some(s) = state.stream_manager.get_stream(&stmt.from) {
         streams.push(stream_catalog_entry(&s));
+    } else if let Some(ref graph) = rule.graph {
+        if let Some(entry) = graph_source_catalog_entry(graph, &stmt.from) {
+            streams.push(entry);
+        }
     }
     for j in &stmt.joins {
         if let Some(s) = state.stream_manager.get_stream(&j.target) {
             streams.push(stream_catalog_entry(&s));
+        } else if let Some(ref graph) = rule.graph {
+            if let Some(entry) = graph_source_catalog_entry(graph, &j.target) {
+                streams.push(entry);
+            }
         }
     }
     rekuiper_sql::planning::build_typed_plan_report(&rekuiper_sql::planning::PlanCatalogInput {
@@ -1177,6 +1242,9 @@ pub async fn validate_rule(
                     .values()
                     .any(|e| matches!(e, EdgeTargets::Multi(_)));
             if is_native_dag {
+                if let Some(resp) = reject_unsupported_native_dag_options(rule.options.as_ref()) {
+                    return resp;
+                }
                 return Json(json!({
                     "sources": graph.topo.sources,
                     "valid": true
@@ -1184,22 +1252,36 @@ pub async fn validate_rule(
                 .into_response();
             }
             return match compile_graph_to_sql_and_actions(graph) {
-                Ok((sql, _)) => {
+                Ok((sql, actions)) => {
                     let mut parser = Parser::new(&sql);
                     match parser.parse_select() {
                         Ok(stmt) => {
+                            let mut compiled_rule = rule.clone();
+                            compiled_rule.sql = sql;
+                            if compiled_rule.actions.is_empty() {
+                                compiled_rule.actions = actions;
+                            }
+                            if let Some(resp) = reject_invalid_rule(
+                                &state,
+                                &stmt,
+                                compiled_rule.options.as_ref(),
+                                true,
+                            ) {
+                                return resp;
+                            }
+                            if let Some(resp) = check_rule_functions(&state, &stmt) {
+                                return resp;
+                            }
                             if let Some(resp) =
-                                reject_invalid_rule(&state, &stmt, rule.options.as_ref(), true)
+                                reject_invalid_typed_plan(&state, &compiled_rule, &stmt)
                             {
                                 return resp;
                             }
-                            check_rule_functions(&state, &stmt).unwrap_or_else(|| {
-                                Json(json!({
-                                    "sources": graph.topo.sources,
-                                    "valid": true
-                                }))
-                                .into_response()
-                            })
+                            Json(json!({
+                                "sources": graph.topo.sources,
+                                "valid": true
+                            }))
+                            .into_response()
                         }
                         Err(e) => (
                             StatusCode::BAD_REQUEST,
@@ -1784,6 +1866,9 @@ pub async fn update_rule(
                     .any(|e| matches!(e, EdgeTargets::Multi(_)));
 
             if is_native_dag {
+                if let Some(resp) = reject_unsupported_native_dag_options(rule.options.as_ref()) {
+                    return resp;
+                }
                 let was_running = match state.rule_manager.update_rule(rule.clone()).await {
                     Ok(running) => running,
                     Err(e) => {
@@ -1869,6 +1954,9 @@ pub async fn update_rule(
         }
     };
     if let Some(resp) = reject_invalid_rule(&state, &select_stmt, rule.options.as_ref(), false) {
+        return resp;
+    }
+    if let Some(resp) = reject_invalid_typed_plan(&state, &rule, &select_stmt) {
         return resp;
     }
     if let Err(e) = validate_sink_actions(&rule.actions) {

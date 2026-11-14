@@ -163,6 +163,7 @@ enum PausedBufferEntry<T> {
     Watermark {
         edge: EdgeId,
         timestamp: EventTimestamp,
+        _reservation: BudgetReservation,
     },
 }
 
@@ -301,10 +302,20 @@ impl<T> BarrierAligner<T> {
             } => {
                 if let Some(active) = self.active.as_mut() {
                     if active.paused_edges.contains(&edge) {
+                        let reservation = self
+                            .budget
+                            .try_reserve(BudgetCharge::new(1, byte_size, 0))
+                            .map_err(|e: BudgetError| {
+                                BarrierAlignmentError::PausedBufferBudgetExceeded {
+                                    edge,
+                                    reason: e.to_string(),
+                                }
+                            })?;
                         let buf = active.paused_buffers.entry(edge).or_default();
                         buf.push(PausedBufferEntry::Watermark {
                             edge: wm_edge,
                             timestamp,
+                            _reservation: reservation,
                         });
                         return Ok(AlignmentOutcome::BufferedPaused {
                             edge,
@@ -435,6 +446,7 @@ impl<T> BarrierAligner<T> {
                     PausedBufferEntry::Watermark {
                         edge: wm_edge,
                         timestamp,
+                        _reservation: _,
                     } => {
                         self.watermarks.insert(wm_edge, timestamp);
                         watermarks.push((wm_edge, timestamp));

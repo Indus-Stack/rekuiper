@@ -50,21 +50,25 @@ fn rejects_unknown_step_kinds_with_line_and_column() {
 #[test]
 fn rejects_contradictory_and_invalid_fixtures() {
     // allow_no_outputs: true while expected.rows is non-empty
-    let contradictory = include_str!("../../../test/fixtures/contracts/tiny_transform.json")
-        .replace(
-            "\"rows\": [",
-            "\"allow_no_outputs\": true,\n    \"rows\": [",
-        );
+    let tiny_raw =
+        include_str!("../../../test/fixtures/contracts/tiny_transform.json").replace("\r\n", "\n");
+    let contradictory = tiny_raw.replace(
+        "\"rows\": [",
+        "\"allow_no_outputs\": true,\n    \"rows\": [",
+    );
+    assert!(contradictory.contains("\"allow_no_outputs\": true"));
     let err = FixtureDocument::from_json_str(&contradictory)
         .expect_err("contradictory expectations must fail");
     assert!(matches!(err, FixtureError::Validation(_)));
 
     // Restore referencing a checkpoint_id that was never created
-    let bad_restore = include_str!("../../../test/fixtures/contracts/tumbling_window.json")
-        .replace(
-            "\"checkpoint_id\": 1\n    },\n    {\n      \"kind\": \"advance_clock\"",
-            "\"checkpoint_id\": 99\n    },\n    {\n      \"kind\": \"advance_clock\"",
-        );
+    let window_raw =
+        include_str!("../../../test/fixtures/contracts/tumbling_window.json").replace("\r\n", "\n");
+    let bad_restore = window_raw.replace(
+        "\"checkpoint_id\": 1\n    },\n    {\n      \"kind\": \"advance_clock\"",
+        "\"checkpoint_id\": 99\n    },\n    {\n      \"kind\": \"advance_clock\"",
+    );
+    assert!(bad_restore.contains("\"checkpoint_id\": 99"));
     let err = FixtureDocument::from_json_str(&bad_restore)
         .expect_err("unknown restore checkpoint must fail");
     assert!(matches!(err, FixtureError::Validation(_)));

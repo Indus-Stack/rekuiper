@@ -677,13 +677,18 @@ impl KafkaReliablePartitionReader {
         self.tombstone_policy
     }
 
-    /// Advances the durable boundary only after all records expanded from
-    /// `msg` have been accepted/committed together, allowing partition offset gaps
-    /// (compacted topics / transactional control records) while rejecting out-of-order commits.
-    pub fn commit_message(
-        &mut self,
+    /// Validates that `msg` matches this partition/generation and is the next
+    /// eligible prepared offset without mutating reader state.
+    pub fn validate_commit(
+        &self,
         msg: &KafkaPreparedMessage,
-    ) -> std::result::Result<rekuiper_core::contracts::SourcePosition, KafkaReliableError> {
+    ) -> std::result::Result<(), KafkaReliableError> {
+        if msg.position.partition != self.partition || msg.position.generation != self.generation {
+            return Err(KafkaReliableError::OutOfOrderCommit {
+                expected_offset: self.committed_next_offset,
+                actual_offset: msg.offset,
+            });
+        }
         if msg.offset < self.committed_next_offset {
             return Err(KafkaReliableError::OutOfOrderCommit {
                 expected_offset: self.committed_next_offset,
@@ -697,7 +702,22 @@ impl KafkaReliablePartitionReader {
                     actual_offset: msg.offset,
                 });
             }
-            self.prepared_offsets.pop_front();
+        }
+        Ok(())
+    }
+
+    /// Advances the durable boundary only after all records expanded from
+    /// `msg` have been accepted/committed together, allowing partition offset gaps
+    /// (compacted topics / transactional control records) while rejecting out-of-order commits.
+    pub fn commit_message(
+        &mut self,
+        msg: &KafkaPreparedMessage,
+    ) -> std::result::Result<rekuiper_core::contracts::SourcePosition, KafkaReliableError> {
+        self.validate_commit(msg)?;
+        if let Some(&(expected_offset, _)) = self.prepared_offsets.front() {
+            if msg.offset == expected_offset {
+                self.prepared_offsets.pop_front();
+            }
         }
         self.committed_next_offset = msg.next_offset;
         Ok(msg.position.clone())

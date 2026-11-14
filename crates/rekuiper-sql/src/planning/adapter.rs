@@ -87,20 +87,63 @@ fn is_secret_key(key: &str) -> bool {
         || k == "dsn"
 }
 
+fn is_secret_url_param(key: &str) -> bool {
+    if is_secret_key(key) {
+        return true;
+    }
+    let normalized = key.to_ascii_lowercase().replace(['_', '-'], "");
+    matches!(
+        normalized.as_str(),
+        "key" | "sig" | "signature" | "auth" | "jwt" | "bearer" | "session" | "sessionid"
+    )
+}
+
 fn redact_url_userinfo(s: &str) -> String {
-    let Some(scheme_end) = s.find("://") else {
-        return s.to_string();
-    };
-    let rest = &s[scheme_end + 3..];
-    let Some(at_pos) = rest.find('@') else {
-        return s.to_string();
-    };
-    let authority_end = rest.find('/').unwrap_or(rest.len());
-    if at_pos < authority_end {
-        format!("{}://[REDACTED]@{}", &s[..scheme_end], &rest[at_pos + 1..])
+    let out = if let Some(scheme_end) = s.find("://") {
+        let rest = &s[scheme_end + 3..];
+        let authority_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+        if let Some(at_pos) = rest[..authority_end].find('@') {
+            format!("{}://[REDACTED]@{}", &s[..scheme_end], &rest[at_pos + 1..])
+        } else {
+            s.to_string()
+        }
     } else {
         s.to_string()
+    };
+
+    if !(out.contains("://") || out.starts_with('/')) {
+        return out;
     }
+    let Some(q_idx) = out.find('?') else {
+        return out;
+    };
+    let (base, query_and_frag) = out.split_at(q_idx);
+    let after_q = &query_and_frag[1..];
+    let (query, frag) = match after_q.find('#') {
+        Some(f_idx) => (&after_q[..f_idx], Some(&after_q[f_idx..])),
+        None => (after_q, None),
+    };
+    let mut changed = false;
+    let redacted_params: Vec<String> = query
+        .split('&')
+        .map(|part| {
+            if let Some((k, _v)) = part.split_once('=') {
+                if is_secret_url_param(k) {
+                    changed = true;
+                    return format!("{k}=[REDACTED]");
+                }
+            }
+            part.to_string()
+        })
+        .collect();
+    if changed {
+        let mut rebuilt = format!("{base}?{}", redacted_params.join("&"));
+        if let Some(f) = frag {
+            rebuilt.push_str(f);
+        }
+        return rebuilt;
+    }
+    out
 }
 
 /// Recursively redacts credentials and secrets from JSON values.

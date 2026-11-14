@@ -622,15 +622,97 @@ pub mod reliable {
         KafkaPositionCodec, KafkaPreparedMessage, KafkaReliableError, KafkaReliablePartitionReader,
     };
     use rekuiper_core::contracts::{
-        CheckpointError, CheckpointId, CheckpointStore, Clock, DeadlineCancellation, EffectOutcome,
-        OutboxBoundary, PlanIdentity, SourcePartition, StateError, StateParticipant,
+        CheckpointError, CheckpointId, CheckpointStore, Clock, ContentChecksum,
+        DeadlineCancellation, EffectOutcome, OperatorId, OutboxBoundary, PlanIdentity,
+        SourcePartition, StateError, StateParticipant, StateResourceUsage, StateSchemaVersion,
+        StateSnapshot, STATE_ENVELOPE_VERSION,
     };
     use rekuiper_core::model::StreamRecord;
     use rekuiper_core::reliability::{CheckpointCoordinator, CoordinatorError};
     use rekuiper_sql::ast::{TimeUnit, WindowDef};
     use rekuiper_sql::{Evaluator, SelectStmt};
+    use serde::{Deserialize, Serialize};
     use serde_json::Value;
     use std::time::Duration;
+
+    const RUNNER_WINDOW_OPERATOR_ID: &str = "__runner_window_state__";
+    const RUNNER_WINDOW_STATE_VERSION: StateSchemaVersion = StateSchemaVersion(1);
+
+    #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+    struct PersistedRunnerWindowState {
+        window_buffer: Vec<(i64, IndexMap<String, Value>)>,
+        tumbling_start_ms: Option<i64>,
+    }
+
+    struct RunnerWindowStateParticipant {
+        operator_id: OperatorId,
+        state: PersistedRunnerWindowState,
+    }
+
+    impl RunnerWindowStateParticipant {
+        fn new(
+            window_buffer: Vec<(i64, IndexMap<String, Value>)>,
+            tumbling_start_ms: Option<i64>,
+        ) -> Self {
+            let operator_id = OperatorId::try_from(RUNNER_WINDOW_OPERATOR_ID)
+                .expect("valid static runner window operator id");
+            Self {
+                operator_id,
+                state: PersistedRunnerWindowState {
+                    window_buffer,
+                    tumbling_start_ms,
+                },
+            }
+        }
+    }
+
+    impl StateParticipant for RunnerWindowStateParticipant {
+        fn operator_id(&self) -> &OperatorId {
+            &self.operator_id
+        }
+
+        fn state_version(&self) -> StateSchemaVersion {
+            RUNNER_WINDOW_STATE_VERSION
+        }
+
+        fn resource_usage(&self) -> StateResourceUsage {
+            let bytes = serde_json::to_vec(&self.state)
+                .map(|b| u64::try_from(b.len()).unwrap_or(u64::MAX))
+                .unwrap_or(0);
+            StateResourceUsage {
+                records: u64::try_from(self.state.window_buffer.len()).unwrap_or(u64::MAX),
+                bytes,
+            }
+        }
+
+        fn capture_snapshot(&self) -> Result<StateSnapshot, StateError> {
+            let payload = serde_json::to_vec(&self.state)
+                .map_err(|e| StateError::CorruptSnapshot(e.to_string()))?;
+            let bytes = u64::try_from(payload.len()).unwrap_or(u64::MAX);
+            Ok(StateSnapshot {
+                envelope_version: STATE_ENVELOPE_VERSION,
+                operator_id: self.operator_id.clone(),
+                state_version: RUNNER_WINDOW_STATE_VERSION,
+                checksum: ContentChecksum::sha256_bytes(&payload),
+                payload,
+                usage: StateResourceUsage {
+                    records: u64::try_from(self.state.window_buffer.len()).unwrap_or(u64::MAX),
+                    bytes,
+                },
+            })
+        }
+
+        fn restore_snapshot(&mut self, snapshot: &StateSnapshot) -> Result<(), StateError> {
+            snapshot.validate(&self.operator_id, &[RUNNER_WINDOW_STATE_VERSION])?;
+            let expected_checksum = ContentChecksum::sha256_bytes(&snapshot.payload);
+            if expected_checksum != snapshot.checksum {
+                return Err(StateError::ChecksumMismatch(self.operator_id.clone()));
+            }
+            self.state = serde_json::from_slice(&snapshot.payload)
+                .map_err(|e| StateError::CorruptSnapshot(e.to_string()))?;
+            Ok(())
+        }
+    }
 
     /// Exact delivery guarantee exposed by the single-source reliable engine.
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -817,6 +899,18 @@ pub mod reliable {
                 };
                 participant.restore_snapshot(snapshot)?;
             }
+            if self.stmt.window.is_some() {
+                let mut runner_window = RunnerWindowStateParticipant::new(Vec::new(), None);
+                let op_id = runner_window.operator_id().clone();
+                let Some(snapshot) = envelope.payloads.get(&op_id) else {
+                    return Err(ReliableRuntimeError::Checkpoint(
+                        CheckpointError::MissingParticipant(op_id),
+                    ));
+                };
+                runner_window.restore_snapshot(snapshot)?;
+                self.window_buffer = runner_window.state.window_buffer;
+                self.tumbling_start_ms = runner_window.state.tumbling_start_ms;
+            }
             let mut restored_offset = None;
             for pos in &envelope.metadata.source_positions {
                 if pos.partition == self.partition {
@@ -941,14 +1035,17 @@ pub mod reliable {
             clock: &dyn Clock,
             cancellation: &DeadlineCancellation,
         ) -> Result<CheckpointId, ReliableRuntimeError> {
+            reader.validate_commit(prepared)?;
             let records: Vec<StreamRecord> = prepared.decode(reader.tombstone_policy())?;
+            let prev_window_buffer = self.window_buffer.clone();
+            let prev_tumbling_start_ms = self.tumbling_start_ms;
             let mut assembler = ActionBatchAssembler::new(BatchConfig::legacy(1024, None));
             let mut pending_batches: Vec<Vec<BatchItem<Value>>> = Vec::new();
             let now_snap = clock.now();
             let now_elapsed = now_snap.elapsed;
             let mut out_seq: u64 = 0;
 
-            match self.stmt.window.clone() {
+            let eval_res: Result<(), ReliableRuntimeError> = match self.stmt.window.clone() {
                 None => {
                     for rec in records {
                         if let Some(projected) = Evaluator::eval_select(&self.stmt, &rec.data) {
@@ -963,6 +1060,7 @@ pub mod reliable {
                             out_seq = out_seq.saturating_add(1);
                         }
                     }
+                    Ok(())
                 }
                 Some(WindowDef::Count { size, interval }) => {
                     let win_size = size.max(1);
@@ -970,7 +1068,7 @@ pub mod reliable {
                     for rec in records {
                         if Evaluator::passes_where(&self.stmt, &rec.data) {
                             self.window_buffer
-                                .push((rec.timestamp, rec.data.into_inner()));
+                                .push((now_snap.wall_millis, rec.data.into_inner()));
                             while self.window_buffer.len() >= win_size {
                                 let window_rows: Vec<IndexMap<String, Value>> = self.window_buffer
                                     [..win_size]
@@ -982,32 +1080,41 @@ pub mod reliable {
                                 for out in Evaluator::eval_window_filtered(&self.stmt, window_rows)
                                 {
                                     let val = Value::Object(out.into_iter().collect());
-                                    Self::stage_output_value(
+                                    if let Err(err) = Self::stage_output_value(
                                         &mut assembler,
                                         &mut pending_batches,
                                         out_seq,
                                         val,
                                         now_elapsed,
-                                    )?;
+                                    ) {
+                                        self.window_buffer = prev_window_buffer;
+                                        self.tumbling_start_ms = prev_tumbling_start_ms;
+                                        return Err(err);
+                                    }
                                     out_seq = out_seq.saturating_add(1);
                                 }
                             }
                         }
                     }
+                    Ok(())
                 }
                 Some(WindowDef::TumblingTime { unit, length }) => {
                     let win_ms = Self::window_duration_ms(&unit, length);
                     for rec in records {
                         if Evaluator::passes_where(&self.stmt, &rec.data) {
-                            let ev_ts = rec.timestamp;
-                            self.flush_due_tumbling_windows(
+                            let ev_ts = now_snap.wall_millis;
+                            if let Err(err) = self.flush_due_tumbling_windows(
                                 ev_ts,
                                 win_ms,
                                 &mut assembler,
                                 &mut pending_batches,
                                 &mut out_seq,
                                 now_elapsed,
-                            )?;
+                            ) {
+                                self.window_buffer = prev_window_buffer;
+                                self.tumbling_start_ms = prev_tumbling_start_ms;
+                                return Err(err);
+                            }
                             if self.tumbling_start_ms.is_none() {
                                 self.tumbling_start_ms = Some(ev_ts.div_euclid(win_ms) * win_ms);
                             }
@@ -1021,17 +1128,36 @@ pub mod reliable {
                         &mut pending_batches,
                         &mut out_seq,
                         now_elapsed,
-                    )?;
+                    )
                 }
-                Some(_) => {
-                    return Err(ReliableRuntimeError::UnsupportedShape(
-                        "only tumbling, count, or analytic (windowless) plans are supported",
-                    ));
-                }
+                Some(_) => Err(ReliableRuntimeError::UnsupportedShape(
+                    "only tumbling, count, or analytic (windowless) plans are supported",
+                )),
+            };
+            if let Err(err) = eval_res {
+                self.window_buffer = prev_window_buffer;
+                self.tumbling_start_ms = prev_tumbling_start_ms;
+                return Err(err);
             }
 
             if !assembler.is_empty() {
                 pending_batches.push(assembler.take_batch());
+            }
+
+            let runner_window_participant = self.stmt.window.as_ref().map(|_| {
+                RunnerWindowStateParticipant::new(
+                    self.window_buffer.clone(),
+                    self.tumbling_start_ms,
+                )
+            });
+            let mut all_participants: Vec<&dyn StateParticipant> = participants.to_vec();
+            if let Some(ref rw) = runner_window_participant {
+                if !all_participants
+                    .iter()
+                    .any(|p| p.operator_id() == rw.operator_id())
+                {
+                    all_participants.push(rw);
+                }
             }
 
             let cp_id = CheckpointId(self.next_checkpoint_id);
@@ -1043,7 +1169,7 @@ pub mod reliable {
                 .run_checkpoint(
                     cp_id,
                     self.identity.generation,
-                    participants,
+                    &all_participants,
                     source_positions,
                     OutboxBoundary::default(),
                     clock,
@@ -1106,6 +1232,8 @@ pub mod reliable {
                     Ok(envelope.metadata.checkpoint_id)
                 }
                 Err(err) => {
+                    self.window_buffer = prev_window_buffer;
+                    self.tumbling_start_ms = prev_tumbling_start_ms;
                     let msg = err.to_string();
                     self.status.last_failure = Some(msg);
                     Err(ReliableRuntimeError::Coordinator(err))

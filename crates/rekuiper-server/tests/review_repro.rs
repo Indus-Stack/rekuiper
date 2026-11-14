@@ -10,13 +10,15 @@ use rekuiper_connectors::kafka::{
 };
 use rekuiper_core::contracts::{
     ActionId, CheckpointEnvelope, CheckpointError, CheckpointId, CheckpointMetadata,
-    ContentChecksum, DeadlineCancellation, EdgeId, EffectDestination, EffectId, EffectOutcome,
-    EffectRecord, EventTimestamp, Generation, OperatorId, OrderedEnvelope, OutboxBoundary,
-    PartitionId, PlanIdentity, RuleId, SourceId, SourcePartition, StateError, StateParticipant,
-    StateResourceUsage, StateSchemaVersion, StateSnapshot, TestClock, CHECKPOINT_FORMAT_VERSION,
-    STATE_ENVELOPE_VERSION,
+    CheckpointStore, ContentChecksum, DeadlineCancellation, EdgeId, EffectDestination, EffectId,
+    EffectOutcome, EffectRecord, EventTimestamp, Generation, OperatorId, OrderedEnvelope,
+    OutboxBoundary, PartitionId, PlanIdentity, RuleId, SourceId, SourcePartition, StateError,
+    StateParticipant, StateResourceUsage, StateSchemaVersion, StateSnapshot, TestClock,
+    CHECKPOINT_FORMAT_VERSION, STATE_ENVELOPE_VERSION,
 };
-use rekuiper_core::model::{GraphDefinition, GraphNode, GraphTopo, RuleStatus, StreamRecord};
+use rekuiper_core::model::{
+    EdgeTargets, GraphDefinition, GraphNode, GraphTopo, RuleStatus, StreamRecord,
+};
 use rekuiper_core::reliability::{
     GenerationFence, OutboxCapacity, OutboxEntry, OutboxError, ReliableSqliteStore,
     SqliteDurabilityMode, SqliteOutbox,
@@ -24,7 +26,9 @@ use rekuiper_core::reliability::{
 use rekuiper_core::resources::{BudgetLimits, ResourceBudget};
 use rekuiper_core::{RuleCounters, RuleManager, StreamBus, StreamManager, TableManager};
 use rekuiper_server::comms::CommsHub;
-use rekuiper_server::engine::barrier_alignment::{AlignmentOutcome, BarrierAligner};
+use rekuiper_server::engine::barrier_alignment::{
+    AlignmentOutcome, BarrierAligner, BarrierAlignmentError,
+};
 use rekuiper_server::engine::operators::{
     RateLimitEnqueueOutcome, RateLimitNode, RateLimitOverflowPolicy,
 };
@@ -965,5 +969,661 @@ fn repro_kafka_offset_beyond_high_watermark() {
             requested_next_offset: 51,
             high_watermark_offset: 50,
         }
+    );
+}
+
+#[tokio::test]
+async fn repro_dag_backpressure_does_not_drop_records() {
+    let mut nodes = HashMap::new();
+    nodes.insert(
+        "src".to_string(),
+        GraphNode {
+            node_category: "source".to_string(),
+            node_type: "memory".to_string(),
+            props: HashMap::from([("datasource".to_string(), json!("bp_topic"))]),
+        },
+    );
+    nodes.insert(
+        "rl".to_string(),
+        GraphNode {
+            node_category: "operator".to_string(),
+            node_type: "rate_limit".to_string(),
+            props: HashMap::from([
+                ("rate".to_string(), json!(40)),
+                ("burst".to_string(), json!(2)),
+                ("strategy".to_string(), json!("buffer")),
+                ("max_buffer".to_string(), json!(2)),
+                ("max_buffer_bytes".to_string(), json!(4096)),
+                ("overflow_policy".to_string(), json!("backpressure")),
+            ]),
+        },
+    );
+    nodes.insert(
+        "snk".to_string(),
+        GraphNode {
+            node_category: "sink".to_string(),
+            node_type: "log".to_string(),
+            props: HashMap::new(),
+        },
+    );
+
+    let mut edges = HashMap::new();
+    edges.insert(
+        "src".to_string(),
+        EdgeTargets::Single(vec!["rl".to_string()]),
+    );
+    edges.insert(
+        "rl".to_string(),
+        EdgeTargets::Single(vec!["snk".to_string()]),
+    );
+
+    let graph = GraphDefinition {
+        nodes,
+        topo: GraphTopo {
+            sources: vec!["src".to_string()],
+            edges,
+        },
+    };
+
+    let bus = StreamBus::new();
+    let rule_mgr = RuleManager::new(bus.clone());
+    let counters = Arc::new(RuleCounters::default());
+    let running = Arc::new(RwLock::new(RuleStatus {
+        status: "running".to_string(),
+        ..RuleStatus::default()
+    }));
+    let handle = tokio::spawn(run_graph_rule(
+        "bp_rule".to_string(),
+        graph,
+        bus.clone(),
+        rule_mgr,
+        counters.clone(),
+        running.clone(),
+        CommsHub::new(64),
+        1,
+    ));
+
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    for i in 0..20 {
+        let mut data = indexmap::IndexMap::new();
+        data.insert("seq".to_string(), json!(i));
+        let delivered = bus
+            .publish_async("bp_topic", StreamRecord::new(data))
+            .await
+            .expect("publish should succeed");
+        assert_eq!(delivered, 1);
+    }
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    while counters.sink_out.load(std::sync::atomic::Ordering::Relaxed) < 20
+        && tokio::time::Instant::now() < deadline
+    {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+
+    let reached = counters.sink_out.load(std::sync::atomic::Ordering::Relaxed);
+    {
+        let mut st = running.write();
+        st.status = "stopped".to_string();
+    }
+    let _ = handle.await;
+    assert_eq!(
+        reached, 20,
+        "all 20 published records must reach the sink under backpressure, got {reached}"
+    );
+}
+
+#[tokio::test]
+async fn repro_restart_preserves_open_window_rows() {
+    let store = ReliableSqliteStore::open(":memory:", SqliteDurabilityMode::Full)
+        .await
+        .unwrap();
+    let stmt = Parser::new("SELECT count(*) AS cnt FROM k GROUP BY COUNTWINDOW(2)")
+        .parse_select()
+        .unwrap();
+    let id = identity("r_win_restart", 1);
+
+    let mut runner1 = ReliableSingleSourceRunner::new(
+        id.clone(),
+        partition(),
+        stmt.clone(),
+        RetryPolicy::default(),
+    )
+    .unwrap();
+    let mut reader1 = KafkaReliablePartitionReader::new(
+        partition(),
+        Generation(1),
+        None,
+        0,
+        KafkaTombstonePolicy::Fail,
+    );
+    let sink1 = CountingSink {
+        delivered: Mutex::new(Vec::new()),
+    };
+    let clock = TestClock::new(0);
+    let cancel = DeadlineCancellation::default();
+
+    let m0 = reader1.prepare(KafkaRawRecord {
+        offset: 0,
+        payload: Some(br#"{"v":10}"#.to_vec()),
+    });
+    runner1
+        .process_and_checkpoint(&mut reader1, &m0, &[], &sink1, &store, &clock, &cancel)
+        .await
+        .unwrap();
+    assert_eq!(sink1.delivered.lock().len(), 0);
+    drop(runner1);
+
+    // Restart runner and restore persisted open window state alongside offset 1.
+    let mut runner2 =
+        ReliableSingleSourceRunner::new(id, partition(), stmt, RetryPolicy::default()).unwrap();
+    let restored = runner2
+        .restore_before_intake(&store, &mut [])
+        .await
+        .unwrap();
+    assert_eq!(restored, Some(1));
+
+    let mut reader2 = KafkaReliablePartitionReader::new(
+        partition(),
+        Generation(1),
+        None,
+        restored.unwrap(),
+        KafkaTombstonePolicy::Fail,
+    );
+    let sink2 = CountingSink {
+        delivered: Mutex::new(Vec::new()),
+    };
+    let m1 = reader2.prepare(KafkaRawRecord {
+        offset: 1,
+        payload: Some(br#"{"v":20}"#.to_vec()),
+    });
+    runner2
+        .process_and_checkpoint(&mut reader2, &m1, &[], &sink2, &store, &clock, &cancel)
+        .await
+        .unwrap();
+
+    {
+        let delivered = sink2.delivered.lock();
+        assert_eq!(
+            delivered.len(),
+            1,
+            "open count window must complete after restart"
+        );
+        assert_eq!(delivered[0]["cnt"], json!(2));
+    }
+
+    // Also verify TUMBLINGWINDOW preserves open rows and tumbling_start_ms across restart.
+    let tumble_stmt = Parser::new("SELECT count(*) AS cnt FROM k GROUP BY TUMBLINGWINDOW(ss, 10)")
+        .parse_select()
+        .unwrap();
+    let tumble_id = identity("r_tumble_restart", 1);
+    let mut t_runner1 = ReliableSingleSourceRunner::new(
+        tumble_id.clone(),
+        partition(),
+        tumble_stmt.clone(),
+        RetryPolicy::default(),
+    )
+    .unwrap();
+    let mut t_reader1 = KafkaReliablePartitionReader::new(
+        partition(),
+        Generation(1),
+        None,
+        0,
+        KafkaTombstonePolicy::Fail,
+    );
+    let t_sink1 = CountingSink {
+        delivered: Mutex::new(Vec::new()),
+    };
+    let t_clock1 = TestClock::new(1_000);
+    let tm0 = t_reader1.prepare(KafkaRawRecord {
+        offset: 0,
+        payload: Some(br#"{"v":10}"#.to_vec()),
+    });
+    t_runner1
+        .process_and_checkpoint(
+            &mut t_reader1,
+            &tm0,
+            &[],
+            &t_sink1,
+            &store,
+            &t_clock1,
+            &cancel,
+        )
+        .await
+        .unwrap();
+    assert!(t_sink1.delivered.lock().is_empty());
+    drop(t_runner1);
+
+    let mut t_runner2 = ReliableSingleSourceRunner::new(
+        tumble_id,
+        partition(),
+        tumble_stmt,
+        RetryPolicy::default(),
+    )
+    .unwrap();
+    let t_restored = t_runner2
+        .restore_before_intake(&store, &mut [])
+        .await
+        .unwrap();
+    assert_eq!(t_restored, Some(1));
+    let mut t_reader2 = KafkaReliablePartitionReader::new(
+        partition(),
+        Generation(1),
+        None,
+        t_restored.unwrap(),
+        KafkaTombstonePolicy::Fail,
+    );
+    let t_sink2 = CountingSink {
+        delivered: Mutex::new(Vec::new()),
+    };
+    let t_clock2 = TestClock::new(12_000);
+    let tm1 = t_reader2.prepare(KafkaRawRecord {
+        offset: 1,
+        payload: Some(br#"{"v":20}"#.to_vec()),
+    });
+    t_runner2
+        .process_and_checkpoint(
+            &mut t_reader2,
+            &tm1,
+            &[],
+            &t_sink2,
+            &store,
+            &t_clock2,
+            &cancel,
+        )
+        .await
+        .unwrap();
+    let t_delivered = t_sink2.delivered.lock();
+    assert!(
+        !t_delivered.is_empty(),
+        "restored tumbling window row must flush once window closes"
+    );
+    assert_eq!(t_delivered[0]["cnt"], json!(1));
+}
+
+#[tokio::test]
+async fn repro_out_of_order_kafka_message_rejected_before_checkpoint() {
+    let store = ReliableSqliteStore::open(":memory:", SqliteDurabilityMode::Full)
+        .await
+        .unwrap();
+    let stmt = Parser::new("SELECT id FROM k").parse_select().unwrap();
+    let id = identity("r_ooo", 1);
+    let mut runner =
+        ReliableSingleSourceRunner::new(id.clone(), partition(), stmt, RetryPolicy::default())
+            .unwrap();
+    let mut reader = KafkaReliablePartitionReader::new(
+        partition(),
+        Generation(1),
+        None,
+        0,
+        KafkaTombstonePolicy::Fail,
+    );
+    let _m0 = reader.prepare(KafkaRawRecord {
+        offset: 0,
+        payload: Some(br#"{"id":0}"#.to_vec()),
+    });
+    let m1 = reader.prepare(KafkaRawRecord {
+        offset: 1,
+        payload: Some(br#"{"id":1}"#.to_vec()),
+    });
+
+    let sink = CountingSink {
+        delivered: Mutex::new(Vec::new()),
+    };
+    let clock = TestClock::new(0);
+    let cancel = DeadlineCancellation::default();
+
+    let err = runner
+        .process_and_checkpoint(&mut reader, &m1, &[], &sink, &store, &clock, &cancel)
+        .await
+        .expect_err("processing offset 1 before offset 0 must fail");
+    assert!(matches!(
+        err,
+        ReliableRuntimeError::Kafka(KafkaReliableError::OutOfOrderCommit {
+            expected_offset: 0,
+            actual_offset: 1,
+        })
+    ));
+    assert!(
+        sink.delivered.lock().is_empty(),
+        "no effects may be delivered for rejected out-of-order message"
+    );
+    assert!(
+        store.load_latest(&id.rule_id).await.unwrap().is_none(),
+        "SQLite must not record a checkpoint for rejected out-of-order message"
+    );
+    assert_eq!(reader.committed_next_offset(), 0);
+}
+
+#[tokio::test]
+async fn repro_rule_explain_redacts_stored_url_query_credentials() {
+    let app = create_router(build_test_state());
+
+    let create_stream = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/streams")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({ "sql": "CREATE STREAM s_explain () WITH (TYPE=\"memory\")" })
+                        .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert!(create_stream.status().is_success());
+
+    let create_rule = json!({
+        "id": "r_explain_url",
+        "sql": "SELECT * FROM s_explain",
+        "actions": [{
+            "rest": {
+                "url": "https://user:SECRET_PASS@example.invalid/hook?token=SECRET_Q&api_key=SECRET_K&keep=1"
+            }
+        }]
+    });
+    let create_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/rules")
+                .header("content-type", "application/json")
+                .body(Body::from(create_rule.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(create_resp.status(), StatusCode::CREATED);
+
+    let explain_resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/rules/r_explain_url/explain")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(explain_resp.status(), StatusCode::OK);
+    let body_bytes = axum::body::to_bytes(explain_resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let body_str = String::from_utf8(body_bytes.to_vec()).unwrap();
+    for leaked in ["SECRET_PASS", "SECRET_Q", "SECRET_K"] {
+        assert!(
+            !body_str.contains(leaked),
+            "explain response leaked secret {leaked}: {body_str}"
+        );
+    }
+    let explain_json: Value = serde_json::from_str(&body_str).unwrap();
+    let redacted_url = explain_json["plan"]["redacted_actions"][0]["rest"]["url"]
+        .as_str()
+        .expect("redacted rest url present");
+    assert_eq!(
+        redacted_url,
+        "https://[REDACTED]@example.invalid/hook?token=[REDACTED]&api_key=[REDACTED]&keep=1"
+    );
+}
+
+#[tokio::test]
+async fn repro_native_dag_rejects_checkpoint_enabled() {
+    let app = create_router(build_test_state());
+
+    let create_stream = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/streams")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({ "sql": "CREATE STREAM s_dag_mem () WITH (TYPE=\"memory\")" })
+                        .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert!(create_stream.status().is_success());
+
+    let native_dag_rule = json!({
+        "id": "dag_native_cp",
+        "sql": "",
+        "actions": [{ "log": {} }],
+        "options": { "checkpointEnabled": true },
+        "graph": {
+            "nodes": {
+                "src": { "type": "source", "nodeType": "memory", "props": { "datasource": "s_dag_mem" } },
+                "rl": { "type": "operator", "nodeType": "rate_limit", "props": { "rate": 10, "strategy": "buffer" } },
+                "snk": { "type": "sink", "nodeType": "log", "props": {} }
+            },
+            "topo": {
+                "sources": ["src"],
+                "edges": { "src": ["rl"], "rl": ["snk"] }
+            }
+        }
+    });
+
+    for (method, uri) in [("POST", "/rules/validate"), ("POST", "/rules")] {
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(method)
+                    .uri(uri)
+                    .header("content-type", "application/json")
+                    .body(Body::from(native_dag_rule.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::BAD_REQUEST,
+            "native DAG with checkpointEnabled must be rejected at {uri}"
+        );
+    }
+
+    let linear_mem_dag_rule = json!({
+        "id": "dag_linear_cp",
+        "sql": "",
+        "actions": [{ "log": {} }],
+        "options": { "checkpointEnabled": true },
+        "graph": {
+            "nodes": {
+                "src": { "type": "source", "nodeType": "memory", "props": { "datasource": "s_dag_mem" } },
+                "f": { "type": "operator", "nodeType": "filter", "props": { "expr": "v > 1" } },
+                "snk": { "type": "sink", "nodeType": "log", "props": {} }
+            },
+            "topo": {
+                "sources": ["src"],
+                "edges": { "src": ["f"], "f": ["snk"] }
+            }
+        }
+    });
+
+    for (method, uri) in [("POST", "/rules/validate"), ("POST", "/rules")] {
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(method)
+                    .uri(uri)
+                    .header("content-type", "application/json")
+                    .body(Body::from(linear_mem_dag_rule.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::BAD_REQUEST,
+            "memory-source linear DAG with checkpointEnabled must be rejected at {uri}"
+        );
+    }
+
+    // Creating the native DAG without checkpointEnabled succeeds, and updating it via PUT with
+    // checkpointEnabled: true must be rejected.
+    let valid_native = json!({
+        "id": "dag_native_ok",
+        "sql": "",
+        "actions": [{ "log": {} }],
+        "graph": {
+            "nodes": {
+                "src": { "type": "source", "nodeType": "memory", "props": { "datasource": "s_dag_mem" } },
+                "rl": { "type": "operator", "nodeType": "rate_limit", "props": { "rate": 10, "strategy": "buffer" } },
+                "snk": { "type": "sink", "nodeType": "log", "props": {} }
+            },
+            "topo": {
+                "sources": ["src"],
+                "edges": { "src": ["rl"], "rl": ["snk"] }
+            }
+        }
+    });
+    let ok_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/rules")
+                .header("content-type", "application/json")
+                .body(Body::from(valid_native.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(ok_resp.status(), StatusCode::CREATED);
+
+    let mut updated_native = valid_native;
+    updated_native["options"] = json!({ "checkpointEnabled": true });
+    let put_resp = app
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/rules/dag_native_ok")
+                .header("content-type", "application/json")
+                .body(Body::from(updated_native.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        put_resp.status(),
+        StatusCode::BAD_REQUEST,
+        "updating native DAG to checkpointEnabled must be rejected"
+    );
+}
+
+#[tokio::test]
+async fn repro_outbox_worker_cannot_overtake_leased_same_key_effect() {
+    let store = ReliableSqliteStore::open(":memory:", SqliteDurabilityMode::Full)
+        .await
+        .unwrap();
+    let outbox = SqliteOutbox::new(&store, OutboxCapacity::default());
+    let mut e1 = effect("r_order", "eff_order_1");
+    e1.order_key = Some("k1".to_string());
+    let mut e2 = effect("r_order", "eff_order_2");
+    e2.order_key = Some("k1".to_string());
+
+    outbox
+        .commit_state_and_enqueue(
+            envelope("r_order", 1),
+            vec![
+                OutboxEntry {
+                    effect: e1.clone(),
+                    payload: b"first".to_vec(),
+                },
+                OutboxEntry {
+                    effect: e2,
+                    payload: b"second".to_vec(),
+                },
+            ],
+        )
+        .await
+        .unwrap();
+
+    let rule = RuleId::try_from("r_order").unwrap();
+    let act = ActionId::try_from("mqtt_0").unwrap();
+    let a = outbox
+        .claim_pending(&rule, &act, "worker_a", 1)
+        .await
+        .unwrap();
+    assert_eq!(a.len(), 1);
+    assert_eq!(a[0].effect.effect_id, e1.effect_id);
+
+    let b = outbox
+        .claim_pending(&rule, &act, "worker_b", 10)
+        .await
+        .unwrap();
+    assert!(
+        b.is_empty(),
+        "worker_b must not claim second effect while worker_a holds unsettled earlier effect on same order_key"
+    );
+}
+
+#[test]
+fn repro_paused_watermarks_charged_against_alignment_budget() {
+    const FAST: EdgeId = EdgeId(1);
+    const SLOW: EdgeId = EdgeId(2);
+    let budget = ResourceBudget::new(BudgetLimits {
+        max_items: Some(1),
+        max_logical_bytes: Some(4096),
+        max_tasks: None,
+    });
+    let mut aligner: BarrierAligner<&'static str> =
+        BarrierAligner::new(vec![FAST, SLOW], vec!["s1".to_string()], budget, 1_000).unwrap();
+
+    aligner
+        .push_envelope(
+            FAST,
+            OrderedEnvelope::Barrier {
+                checkpoint: CheckpointId(1),
+                generation: Generation(1),
+            },
+            0,
+            100,
+        )
+        .unwrap();
+
+    let first = aligner
+        .push_envelope(
+            FAST,
+            OrderedEnvelope::Watermark {
+                edge: FAST,
+                timestamp: EventTimestamp::Millis(100),
+            },
+            0,
+            110,
+        )
+        .unwrap();
+    assert!(matches!(
+        first,
+        AlignmentOutcome::BufferedPaused {
+            edge: FAST,
+            buffered_on_edge: 1
+        }
+    ));
+
+    let second = aligner.push_envelope(
+        FAST,
+        OrderedEnvelope::Watermark {
+            edge: FAST,
+            timestamp: EventTimestamp::Millis(200),
+        },
+        0,
+        120,
+    );
+    assert!(
+        matches!(
+            second,
+            Err(BarrierAlignmentError::PausedBufferBudgetExceeded { edge: FAST, .. })
+        ),
+        "second watermark on paused edge must respect 1-item alignment buffer budget, got {second:?}"
     );
 }
