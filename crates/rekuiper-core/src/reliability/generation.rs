@@ -182,6 +182,8 @@ impl<'a> GenerationFence<'a> {
 
     /// Cancels the active runtime token and persists revocation of the target
     /// generation before any replacement starts or after stop/delete.
+    /// Requires a generation-bound `DeadlineCancellation` token so an unbound
+    /// `DeadlineCancellation::default()` cannot revoke a replacement generation.
     /// Does NOT discard already-durable pending or ambiguous outbox effects.
     pub async fn fence_and_revoke(
         &self,
@@ -190,6 +192,13 @@ impl<'a> GenerationFence<'a> {
     ) -> Result<Generation, CheckpointError> {
         cancel.cancel();
 
+        let Some(target_gen) = cancel.target_generation() else {
+            return Err(CheckpointError::StorageFailure(
+                "durable revocation requires an explicit target generation on DeadlineCancellation"
+                    .to_owned(),
+            ));
+        };
+
         let mut tx = self
             .store
             .pool()
@@ -197,22 +206,6 @@ impl<'a> GenerationFence<'a> {
             .await
             .map_err(|e| CheckpointError::StorageFailure(e.to_string()))?;
 
-        let existing: Option<(i64,)> =
-            sqlx::query_as("SELECT generation FROM reliable_generations WHERE rule_id = ?")
-                .bind(rule_id.as_str())
-                .fetch_optional(&mut *tx)
-                .await
-                .map_err(|e| CheckpointError::StorageFailure(e.to_string()))?;
-
-        let current_gen = match existing {
-            Some((g,)) => u64::try_from(g).map_err(|_| {
-                CheckpointError::StorageFailure("corrupt negative generation".to_owned())
-            })?,
-            None => 0,
-        };
-        let target_gen = cancel
-            .target_generation()
-            .unwrap_or(Generation(current_gen));
         let target_gen_i64 = i64::try_from(target_gen.0)
             .map_err(|_| CheckpointError::StorageFailure("generation overflow".to_owned()))?;
         sqlx::query(

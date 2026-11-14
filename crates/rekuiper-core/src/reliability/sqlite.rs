@@ -886,6 +886,7 @@ impl CheckpointStore for ReliableSqliteStore {
         }
         let positions_match_meta = |left: &SourcePosition, right: &SourcePosition| {
             left.partition == right.partition
+                && left.generation == right.generation
                 && left.codec == right.codec
                 && left.cursor == right.cursor
         };

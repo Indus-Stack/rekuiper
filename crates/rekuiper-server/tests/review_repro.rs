@@ -374,7 +374,7 @@ async fn repro_same_worker_id_dispatch_coordinator_and_fenced_dispatch() {
     let fence = GenerationFence::new(&store);
     let rule = RuleId::try_from("r_coord").unwrap();
     let act = ActionId::try_from("mqtt_0").unwrap();
-    let (gen1, _cancel) = fence.activate_next(&rule).await.unwrap();
+    let (gen1, cancel) = fence.activate_next(&rule).await.unwrap();
 
     let coord = DispatchCoordinator::new();
     let lease1 = coord
@@ -405,7 +405,6 @@ async fn repro_same_worker_id_dispatch_coordinator_and_fenced_dispatch() {
         .unwrap();
 
     let clock = TestClock::new(0);
-    let cancel = DeadlineCancellation::default();
     let rep = dispatcher
         .dispatch_once_fenced(
             &outbox,
@@ -2789,6 +2788,182 @@ async fn repro_handoff_rejects_conflicting_stored_cursor_bytes_and_codec() {
         .expect_err("conflicting cursor codec must fail restore");
     assert!(matches!(
         err_codec,
+        ReliableRuntimeError::Checkpoint(CheckpointError::StorageFailure(_))
+    ));
+
+    raw_pool.close().await;
+    drop(store);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn repro_default_token_stop_cannot_revoke_initial_or_replacement_generation() {
+    let store = ReliableSqliteStore::open(":memory:", SqliteDurabilityMode::Full)
+        .await
+        .unwrap();
+    let fence = GenerationFence::new(&store);
+    let rule = RuleId::try_from("r_default_token_stop").unwrap();
+    let stmt = Parser::new("SELECT v FROM k").parse_select().unwrap();
+
+    // Establish generation 1 via the initial-checkpoint path without calling activate_next.
+    let mut runner1 = ReliableSingleSourceRunner::new(
+        identity("r_default_token_stop", 1),
+        partition(),
+        stmt.clone(),
+        RetryPolicy::default(),
+    )
+    .unwrap();
+    let mut reader1 = KafkaReliablePartitionReader::new(
+        partition(),
+        Generation(1),
+        None,
+        0,
+        KafkaTombstonePolicy::Fail,
+    );
+    let sink1 = CountingSink {
+        delivered: Mutex::new(Vec::new()),
+    };
+    let clock = TestClock::new(0);
+    let m0 = reader1.prepare(KafkaRawRecord {
+        offset: 0,
+        payload: Some(br#"{"v":1}"#.to_vec()),
+    });
+    runner1
+        .process_and_checkpoint(
+            &mut reader1,
+            &m0,
+            &[],
+            &sink1,
+            &store,
+            &clock,
+            &DeadlineCancellation::default(),
+        )
+        .await
+        .unwrap();
+    fence.assert_active(&rule, Generation(1)).await.unwrap();
+
+    // Stopping with an unbound DeadlineCancellation::default() must be rejected.
+    let default_cancel = DeadlineCancellation::default();
+    let err = fence
+        .fence_and_revoke(&rule, &default_cancel)
+        .await
+        .expect_err("unbound default token must not durably revoke");
+    assert!(matches!(err, CheckpointError::StorageFailure(_)));
+    fence.assert_active(&rule, Generation(1)).await.unwrap();
+
+    // Revoking with an explicit generation-1 token succeeds, then activating generation 2 works.
+    let explicit_gen1 = DeadlineCancellation::for_generation(Generation(1));
+    assert_eq!(
+        fence.fence_and_revoke(&rule, &explicit_gen1).await.unwrap(),
+        Generation(1)
+    );
+    let (gen2, _cancel2) = fence.activate_next(&rule).await.unwrap();
+    assert_eq!(gen2, Generation(2));
+    fence.assert_active(&rule, gen2).await.unwrap();
+
+    // Retrying stop with either default token or generation 1 token must not revoke generation 2.
+    assert!(fence
+        .fence_and_revoke(&rule, &default_cancel)
+        .await
+        .is_err());
+    assert_eq!(
+        fence.fence_and_revoke(&rule, &explicit_gen1).await.unwrap(),
+        Generation(1)
+    );
+    fence
+        .assert_active(&rule, gen2)
+        .await
+        .expect("retrying default or gen-1 stop must leave gen 2 active");
+}
+
+#[tokio::test]
+async fn repro_restore_rejects_conflicting_cursor_generation_in_metadata() {
+    let dir = std::env::temp_dir().join(format!(
+        "rekuiper_restore_pos_gen_{}_{}",
+        std::process::id(),
+        chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let db_path = dir.join("state.db");
+    let db_str = db_path.to_str().unwrap();
+
+    let store = ReliableSqliteStore::open(db_str, SqliteDurabilityMode::Full)
+        .await
+        .unwrap();
+    let raw_pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(2)
+        .after_connect(|conn, _| {
+            Box::pin(async move {
+                sqlx::query("PRAGMA busy_timeout = 5000;")
+                    .execute(conn)
+                    .await?;
+                Ok(())
+            })
+        })
+        .connect(&format!("sqlite://{}", db_path.display()))
+        .await
+        .unwrap();
+
+    let fence = GenerationFence::new(&store);
+    let rule = RuleId::try_from("r_restore_gen_conflict").unwrap();
+    let stmt = Parser::new("SELECT v FROM k").parse_select().unwrap();
+    let (gen1, cancel1) = fence.activate_next(&rule).await.unwrap();
+    let id1 = identity("r_restore_gen_conflict", gen1.0);
+    let mut runner1 = ReliableSingleSourceRunner::new(
+        id1.clone(),
+        partition(),
+        stmt.clone(),
+        RetryPolicy::default(),
+    )
+    .unwrap();
+    let mut reader1 =
+        KafkaReliablePartitionReader::new(partition(), gen1, None, 0, KafkaTombstonePolicy::Fail);
+    let sink1 = CountingSink {
+        delivered: Mutex::new(Vec::new()),
+    };
+    let clock = TestClock::new(0);
+    let m42 = reader1.prepare(KafkaRawRecord {
+        offset: 42,
+        payload: Some(br#"{"v":42}"#.to_vec()),
+    });
+    runner1
+        .process_and_checkpoint(&mut reader1, &m42, &[], &sink1, &store, &clock, &cancel1)
+        .await
+        .unwrap();
+
+    // Mutate only metadata_json's source_positions[0].generation to 99 while keeping
+    // reliable_positions at generation 1.
+    let meta_json: String =
+        sqlx::query_scalar("SELECT metadata_json FROM reliable_checkpoints WHERE rule_id = ?")
+            .bind(rule.as_str())
+            .fetch_one(&raw_pool)
+            .await
+            .unwrap();
+    let mut meta: CheckpointMetadata = serde_json::from_str(&meta_json).unwrap();
+    meta.source_positions[0].generation = Generation(99);
+    let mutated_json = serde_json::to_string(&meta).unwrap();
+    sqlx::query("UPDATE reliable_checkpoints SET metadata_json = ? WHERE rule_id = ?")
+        .bind(mutated_json)
+        .bind(rule.as_str())
+        .execute(&raw_pool)
+        .await
+        .unwrap();
+
+    // Direct load_latest and runner restore must both fail rather than masking the mismatch.
+    let load_err = store
+        .load_latest(&rule)
+        .await
+        .expect_err("load_latest must reject conflicting cursor generation in metadata");
+    assert!(matches!(load_err, CheckpointError::StorageFailure(_)));
+
+    let mut runner_restore =
+        ReliableSingleSourceRunner::new(id1, partition(), stmt, RetryPolicy::default()).unwrap();
+    let restore_err = runner_restore
+        .restore_before_intake(&store, &mut [])
+        .await
+        .expect_err("restore must reject conflicting cursor generation in metadata");
+    assert!(matches!(
+        restore_err,
         ReliableRuntimeError::Checkpoint(CheckpointError::StorageFailure(_))
     ));
 
