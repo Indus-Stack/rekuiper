@@ -383,6 +383,23 @@ pub async fn reconcile_manifest_internal(
                         .any(|e| matches!(e, EdgeTargets::Multi(_)));
 
                 if is_native_dag {
+                    if let Err(e) = crate::engine::validate_graph_nodes(graph) {
+                        tracing::warn!(
+                            rule_id = %rule_id,
+                            error = %e,
+                            "Skipping invalid declarative native DAG rule"
+                        );
+                        continue;
+                    }
+                    if rekuiper_sql::planning::is_durable_options(
+                        resolved_rule_def.options.as_ref(),
+                    ) {
+                        tracing::warn!(
+                            rule_id = %rule_id,
+                            "Skipping declarative native DAG rule with unsupported durable/checkpointEnabled options"
+                        );
+                        continue;
+                    }
                     let _ = state
                         .rule_manager
                         .create_rule(resolved_rule_def.clone())

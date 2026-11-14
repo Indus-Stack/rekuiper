@@ -136,7 +136,10 @@ async fn transactional_outbox_deduplicates_enforces_capacity_and_preserves_actio
     assert_eq!(claimed_b.len(), 1);
     assert_eq!(claimed_b[0].effect.effect_id, id_b);
     assert_eq!(
-        outbox.ack(&id_b, EffectOutcome::Delivered).await.unwrap(),
+        outbox
+            .ack(&id_b, "w1", EffectOutcome::Delivered)
+            .await
+            .unwrap(),
         Some(CompletionStatus::Applied)
     );
 

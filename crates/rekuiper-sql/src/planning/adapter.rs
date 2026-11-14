@@ -69,8 +69,15 @@ pub struct TypedPlanReport {
     pub diagnostics: Vec<PlanDiagnosticReport>,
 }
 
+fn normalize_secret_key(key: &str) -> String {
+    key.to_ascii_lowercase()
+        .chars()
+        .filter(|c| !matches!(c, '_' | '-' | ' ') && !c.is_ascii_control())
+        .collect()
+}
+
 fn is_secret_key(key: &str) -> bool {
-    let k = key.to_ascii_lowercase().replace(['_', '-'], "");
+    let k = normalize_secret_key(key);
     k.contains("password")
         || k.contains("passwd")
         || k.contains("passphrase")
@@ -87,15 +94,54 @@ fn is_secret_key(key: &str) -> bool {
         || k == "dsn"
 }
 
-fn is_secret_url_param(key: &str) -> bool {
-    if is_secret_key(key) {
-        return true;
+fn percent_decode_once(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let (Some(h), Some(l)) = (
+                (bytes[i + 1] as char).to_digit(16),
+                (bytes[i + 2] as char).to_digit(16),
+            ) {
+                out.push(((h << 4) | l) as u8);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
     }
-    let normalized = key.to_ascii_lowercase().replace(['_', '-'], "");
-    matches!(
-        normalized.as_str(),
-        "key" | "sig" | "signature" | "auth" | "jwt" | "bearer" | "session" | "sessionid"
-    )
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+fn decode_query_key(key: &str) -> String {
+    let mut cur = key.replace('+', " ");
+    for _ in 0..4 {
+        let next = percent_decode_once(&cur).replace('+', " ");
+        if next == cur {
+            break;
+        }
+        cur = next;
+    }
+    cur
+}
+
+fn is_secret_url_param(key: &str) -> bool {
+    let decoded = decode_query_key(key);
+    for candidate in [key, decoded.as_str()] {
+        if is_secret_key(candidate) {
+            return true;
+        }
+        let normalized = normalize_secret_key(candidate);
+        if matches!(
+            normalized.as_str(),
+            "key" | "sig" | "signature" | "auth" | "jwt" | "bearer" | "session" | "sessionid"
+        ) {
+            return true;
+        }
+    }
+    false
 }
 
 fn redact_url_userinfo(s: &str) -> String {

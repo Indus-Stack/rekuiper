@@ -185,7 +185,30 @@ pub fn validate_graph_nodes(graph: &GraphDefinition) -> Result<(), String> {
             _ => {}
         }
     }
+    validate_graph_acyclic(graph)?;
     Ok(())
+}
+
+/// Rejects feedback cycles and self-loops in a graph topology.
+pub fn validate_graph_acyclic(graph: &GraphDefinition) -> Result<(), String> {
+    let mut nodes: Vec<String> = graph.nodes.keys().cloned().collect();
+    let mut edge_pairs: Vec<(String, String)> = Vec::new();
+    for (src, targets) in &graph.topo.edges {
+        if !nodes.contains(src) {
+            nodes.push(src.clone());
+        }
+        for t in targets.all_targets() {
+            if !nodes.iter().any(|n| n == t) {
+                nodes.push(t.to_string());
+            }
+            let pair = (src.clone(), t.to_string());
+            if !edge_pairs.contains(&pair) {
+                edge_pairs.push(pair);
+            }
+        }
+    }
+    crate::engine::barrier_alignment::validate_acyclic_reliable_graph(&nodes, &edge_pairs)
+        .map_err(|e| e.to_string())
 }
 
 /// Spawns a native DAG rule execution pipeline.
@@ -734,26 +757,7 @@ pub fn validate_reliable_dag_shape(
     graph: &GraphDefinition,
     registered_participants: &[&str],
 ) -> Result<(), String> {
-    let mut nodes: Vec<String> = graph.nodes.keys().cloned().collect();
-    let mut edge_pairs: Vec<(String, String)> = Vec::new();
-    for (src, targets) in &graph.topo.edges {
-        if !nodes.contains(src) {
-            nodes.push(src.clone());
-        }
-        for port in 0..8 {
-            for t in targets.targets_for_port(port) {
-                if !nodes.contains(t) {
-                    nodes.push(t.clone());
-                }
-                let pair = (src.clone(), t.clone());
-                if !edge_pairs.contains(&pair) {
-                    edge_pairs.push(pair);
-                }
-            }
-        }
-    }
-    crate::engine::barrier_alignment::validate_acyclic_reliable_graph(&nodes, &edge_pairs)
-        .map_err(|e| e.to_string())?;
+    validate_graph_acyclic(graph)?;
 
     for (node_id, node) in &graph.nodes {
         let nt = node.node_type.to_ascii_lowercase();

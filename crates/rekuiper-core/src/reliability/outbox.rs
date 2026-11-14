@@ -49,6 +49,11 @@ pub enum OutboxError {
         incoming: usize,
         limit: usize,
     },
+    #[error("outbox effect {effect_id:?} lease is not held by worker '{worker_id}'")]
+    LeaseMismatch {
+        effect_id: EffectId,
+        worker_id: String,
+    },
     #[error(transparent)]
     Checkpoint(#[from] CheckpointError),
     #[error("outbox storage error: {0}")]
@@ -330,15 +335,16 @@ impl<'a> SqliteOutbox<'a> {
         Ok(())
     }
 
-    /// Acknowledges an effect outcome idempotently.
+    /// Acknowledges an effect outcome idempotently, requiring the active lease holder (`worker_id`)
+    /// when settling a non-terminal effect.
     pub async fn ack(
         &self,
         effect_id: &EffectId,
+        worker_id: &str,
         outcome: EffectOutcome,
     ) -> Result<Option<CompletionStatus>, OutboxError> {
         self.store
-            .record_effect_completion(effect_id, outcome)
+            .record_claimed_effect_completion(effect_id, worker_id, outcome)
             .await
-            .map_err(OutboxError::from)
     }
 }

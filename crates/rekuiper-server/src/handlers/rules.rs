@@ -1072,6 +1072,18 @@ fn stream_catalog_entry(
     }
 }
 
+fn is_native_dag_rule(graph: &rekuiper_core::model::GraphDefinition) -> bool {
+    graph
+        .nodes
+        .values()
+        .any(|n| matches!(n.node_type.as_str(), "switch" | "rate_limit" | "watchdog"))
+        || graph
+            .topo
+            .edges
+            .values()
+            .any(|e| matches!(e, EdgeTargets::Multi(_)))
+}
+
 fn reject_unsupported_native_dag_options(
     options: Option<&HashMap<String, Value>>,
 ) -> Option<Response> {
@@ -1086,6 +1098,29 @@ fn reject_unsupported_native_dag_options(
             )
                 .into_response(),
         );
+    }
+    None
+}
+
+fn validate_stored_rule_before_start(rule: &RuleDefinition) -> Option<Response> {
+    if rule.sql.trim().is_empty() {
+        if let Some(ref graph) = rule.graph {
+            if let Err(e) = validate_graph_nodes(graph) {
+                return Some(
+                    (
+                        StatusCode::BAD_REQUEST,
+                        Json(json!({
+                            "error": 1000,
+                            "message": format!("Invalid graph node configuration: {}", e)
+                        })),
+                    )
+                        .into_response(),
+                );
+            }
+            if is_native_dag_rule(graph) {
+                return reject_unsupported_native_dag_options(rule.options.as_ref());
+            }
+        }
     }
     None
 }
@@ -1644,15 +1679,22 @@ pub fn activate_rule(state: &AppState, rule_id: &str) {
     if let Some(rule) = state.rule_manager.get_rule(rule_id) {
         if rule.sql.trim().is_empty() {
             if let Some(ref graph) = rule.graph {
-                let is_native_dag =
-                    graph.nodes.values().any(|n| {
-                        matches!(n.node_type.as_str(), "switch" | "rate_limit" | "watchdog")
-                    }) || graph
-                        .topo
-                        .edges
-                        .values()
-                        .any(|e| matches!(e, EdgeTargets::Multi(_)));
-                if is_native_dag {
+                if is_native_dag_rule(graph) {
+                    if let Err(e) = validate_graph_nodes(graph) {
+                        tracing::warn!(
+                            rule_id = %rule_id,
+                            error = %e,
+                            "Refusing to activate invalid native DAG rule"
+                        );
+                        return;
+                    }
+                    if rekuiper_sql::planning::is_durable_options(rule.options.as_ref()) {
+                        tracing::warn!(
+                            rule_id = %rule_id,
+                            "Refusing to activate native DAG rule with unsupported durable/checkpointEnabled options"
+                        );
+                        return;
+                    }
                     let buffer_len = rule
                         .options
                         .as_ref()
@@ -1698,7 +1740,7 @@ pub async fn start_rule(State(state): State<AppState>, Path(name): Path<String>)
     if let Err(resp) = check_valid_name(&name) {
         return resp;
     }
-    if state.rule_manager.get_rule(&name).is_none() {
+    let Some(rule) = state.rule_manager.get_rule(&name) else {
         return (
             StatusCode::NOT_FOUND,
             Json(json!({
@@ -1707,6 +1749,9 @@ pub async fn start_rule(State(state): State<AppState>, Path(name): Path<String>)
             })),
         )
             .into_response();
+    };
+    if let Some(resp) = validate_stored_rule_before_start(&rule) {
+        return resp;
     }
     if let Some(status) = state.rule_manager.get_rule_status(&name) {
         if status.status == "running" {
@@ -1755,7 +1800,7 @@ pub async fn restart_rule(State(state): State<AppState>, Path(name): Path<String
     if let Err(resp) = check_valid_name(&name) {
         return resp;
     }
-    if state.rule_manager.get_rule(&name).is_none() {
+    let Some(rule) = state.rule_manager.get_rule(&name) else {
         return (
             StatusCode::NOT_FOUND,
             Json(json!({
@@ -1764,6 +1809,9 @@ pub async fn restart_rule(State(state): State<AppState>, Path(name): Path<String
             })),
         )
             .into_response();
+    };
+    if let Some(resp) = validate_stored_rule_before_start(&rule) {
+        return resp;
     }
     match state.rule_manager.restart_rule(&name).await {
         Ok(_) => {
@@ -2047,6 +2095,14 @@ pub async fn bulk_start_rules(State(state): State<AppState>, body: Bytes) -> imp
     let mut results = Vec::new();
     for rule in state.rule_manager.list_rules() {
         if !target_tags.is_empty() && !target_tags.iter().any(|t| rule.tags.contains(t)) {
+            continue;
+        }
+        if validate_stored_rule_before_start(&rule).is_some() {
+            results.push(json!({
+                "ruleId": rule.id,
+                "success": false,
+                "error": "Invalid rule options or graph configuration for native DAG execution"
+            }));
             continue;
         }
         match state.rule_manager.start_rule(&rule.id).await {

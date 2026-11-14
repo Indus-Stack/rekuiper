@@ -640,6 +640,8 @@ pub mod reliable {
 
     #[derive(Debug, Clone, Default, Serialize, Deserialize)]
     struct PersistedRunnerWindowState {
+        #[serde(default)]
+        stmt_fingerprint: Option<String>,
         window_buffer: Vec<(i64, IndexMap<String, Value>)>,
         tumbling_start_ms: Option<i64>,
     }
@@ -651,6 +653,7 @@ pub mod reliable {
 
     impl RunnerWindowStateParticipant {
         fn new(
+            stmt_fingerprint: Option<String>,
             window_buffer: Vec<(i64, IndexMap<String, Value>)>,
             tumbling_start_ms: Option<i64>,
         ) -> Self {
@@ -659,6 +662,7 @@ pub mod reliable {
             Self {
                 operator_id,
                 state: PersistedRunnerWindowState {
+                    stmt_fingerprint,
                     window_buffer,
                     tumbling_start_ms,
                 },
@@ -881,6 +885,12 @@ pub mod reliable {
             &self.status
         }
 
+        fn stmt_fingerprint(&self) -> String {
+            ContentChecksum::sha256_bytes(format!("{:?}", self.stmt).as_bytes())
+                .as_str()
+                .to_owned()
+        }
+
         /// Restores participant state and Kafka next-offset BEFORE intake begins.
         pub async fn restore_before_intake(
             &mut self,
@@ -890,6 +900,41 @@ pub mod reliable {
             let Some(envelope) = store.load_latest(&self.identity.rule_id).await? else {
                 return Ok(None);
             };
+            let mut expected_participants: std::collections::BTreeSet<OperatorId> = participants
+                .iter()
+                .map(|p| p.operator_id().clone())
+                .collect();
+            if self.stmt.window.is_some() {
+                expected_participants.insert(
+                    OperatorId::try_from(RUNNER_WINDOW_OPERATOR_ID)
+                        .expect("valid static runner window operator id"),
+                );
+            }
+            envelope.validate_restore(&self.identity, &expected_participants)?;
+
+            let restored_window = if self.stmt.window.is_some() {
+                let mut runner_window = RunnerWindowStateParticipant::new(None, Vec::new(), None);
+                let op_id = runner_window.operator_id().clone();
+                let Some(snapshot) = envelope.payloads.get(&op_id) else {
+                    return Err(ReliableRuntimeError::Checkpoint(
+                        CheckpointError::MissingParticipant(op_id),
+                    ));
+                };
+                runner_window.restore_snapshot(snapshot)?;
+                let expected_fp = self.stmt_fingerprint();
+                if runner_window.state.stmt_fingerprint.as_deref() != Some(expected_fp.as_str()) {
+                    return Err(ReliableRuntimeError::Checkpoint(
+                        CheckpointError::PlanFingerprintMismatch,
+                    ));
+                }
+                Some((
+                    runner_window.state.window_buffer,
+                    runner_window.state.tumbling_start_ms,
+                ))
+            } else {
+                None
+            };
+
             for participant in participants.iter_mut() {
                 let op_id = participant.operator_id().clone();
                 let Some(snapshot) = envelope.payloads.get(&op_id) else {
@@ -899,17 +944,9 @@ pub mod reliable {
                 };
                 participant.restore_snapshot(snapshot)?;
             }
-            if self.stmt.window.is_some() {
-                let mut runner_window = RunnerWindowStateParticipant::new(Vec::new(), None);
-                let op_id = runner_window.operator_id().clone();
-                let Some(snapshot) = envelope.payloads.get(&op_id) else {
-                    return Err(ReliableRuntimeError::Checkpoint(
-                        CheckpointError::MissingParticipant(op_id),
-                    ));
-                };
-                runner_window.restore_snapshot(snapshot)?;
-                self.window_buffer = runner_window.state.window_buffer;
-                self.tumbling_start_ms = runner_window.state.tumbling_start_ms;
+            if let Some((window_buffer, tumbling_start_ms)) = restored_window {
+                self.window_buffer = window_buffer;
+                self.tumbling_start_ms = tumbling_start_ms;
             }
             let mut restored_offset = None;
             for pos in &envelope.metadata.source_positions {
@@ -1146,6 +1183,7 @@ pub mod reliable {
 
             let runner_window_participant = self.stmt.window.as_ref().map(|_| {
                 RunnerWindowStateParticipant::new(
+                    Some(self.stmt_fingerprint()),
                     self.window_buffer.clone(),
                     self.tumbling_start_ms,
                 )
@@ -1479,6 +1517,11 @@ pub mod reliable {
             let Some(envelope) = store.load_latest(&self.identity.rule_id).await? else {
                 return Ok(Vec::new());
             };
+            let expected_participants: std::collections::BTreeSet<OperatorId> = participants
+                .iter()
+                .map(|p| p.operator_id().clone())
+                .collect();
+            envelope.validate_restore(&self.identity, &expected_participants)?;
             for participant in participants.iter_mut() {
                 let op_id = participant.operator_id().clone();
                 let Some(snapshot) = envelope.payloads.get(&op_id) else {

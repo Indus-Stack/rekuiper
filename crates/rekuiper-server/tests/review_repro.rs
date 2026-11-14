@@ -1627,3 +1627,379 @@ fn repro_paused_watermarks_charged_against_alignment_budget() {
         "second watermark on paused edge must respect 1-item alignment buffer budget, got {second:?}"
     );
 }
+
+#[tokio::test]
+async fn repro_explain_redacts_percent_encoded_query_credentials() {
+    let app = create_router(build_test_state());
+
+    let create_stream = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/streams")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({ "sql": "CREATE STREAM s_explain_pct () WITH (TYPE=\"memory\")" })
+                        .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert!(create_stream.status().is_success());
+
+    let create_rule = json!({
+        "id": "r_explain_pct_url",
+        "sql": "SELECT * FROM s_explain_pct",
+        "actions": [{
+            "rest": {
+                "url": "https://hooks.example.com/ingest?%74oken=top_secret_123&%61pi_%6Bey=key_456&ok=1"
+            }
+        }]
+    });
+    let create_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/rules")
+                .header("content-type", "application/json")
+                .body(Body::from(create_rule.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(create_resp.status(), StatusCode::CREATED);
+
+    let explain_resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/rules/r_explain_pct_url/explain")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(explain_resp.status(), StatusCode::OK);
+    let body_bytes = axum::body::to_bytes(explain_resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let body_str = String::from_utf8(body_bytes.to_vec()).unwrap();
+    for leaked in ["top_secret_123", "key_456"] {
+        assert!(
+            !body_str.contains(leaked),
+            "explain response leaked secret {leaked}: {body_str}"
+        );
+    }
+    let explain_json: Value = serde_json::from_str(&body_str).unwrap();
+    let redacted_url = explain_json["plan"]["redacted_actions"][0]["rest"]["url"]
+        .as_str()
+        .expect("redacted rest url present");
+    assert_eq!(
+        redacted_url,
+        "https://hooks.example.com/ingest?%74oken=[REDACTED]&%61pi_%6Bey=[REDACTED]&ok=1"
+    );
+}
+
+#[tokio::test]
+async fn repro_backpressured_graph_rejects_self_loop_cycle() {
+    let app = create_router(build_test_state());
+
+    let create_stream = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/streams")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({ "sql": "CREATE STREAM s_dag_cycle () WITH (TYPE=\"memory\")" })
+                        .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert!(create_stream.status().is_success());
+
+    let graph_json = json!({
+        "nodes": {
+            "src": { "type": "source", "nodeType": "memory", "props": { "datasource": "s_dag_cycle" } },
+            "rl": { "type": "operator", "nodeType": "rate_limit", "props": { "rate": 10, "strategy": "buffer" } },
+            "snk": { "type": "sink", "nodeType": "log", "props": {} }
+        },
+        "topo": {
+            "sources": ["src"],
+            "edges": { "src": ["rl"], "rl": ["rl", "snk"] }
+        }
+    });
+    let graph: rekuiper_core::model::GraphDefinition =
+        serde_json::from_value(graph_json.clone()).unwrap();
+    assert!(
+        rekuiper_server::engine::validate_graph_nodes(&graph).is_err(),
+        "self-loop on rate_limit node must fail graph validation"
+    );
+
+    let cyclic_rule = json!({
+        "id": "dag_self_loop",
+        "sql": "",
+        "actions": [{ "log": {} }],
+        "graph": graph_json
+    });
+    for (method, uri) in [("POST", "/rules/validate"), ("POST", "/rules")] {
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(method)
+                    .uri(uri)
+                    .header("content-type", "application/json")
+                    .body(Body::from(cyclic_rule.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::BAD_REQUEST,
+            "self-loop native DAG must be rejected at {uri}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn repro_window_restore_rejects_mismatched_sql_plan() {
+    let store = ReliableSqliteStore::open(":memory:", SqliteDurabilityMode::Full)
+        .await
+        .unwrap();
+    let stmt1 = Parser::new("SELECT count(*) AS cnt FROM k WHERE v > 0 GROUP BY COUNTWINDOW(2)")
+        .parse_select()
+        .unwrap();
+    let stmt2 = Parser::new("SELECT count(*) AS cnt FROM k WHERE v > 10 GROUP BY COUNTWINDOW(2)")
+        .parse_select()
+        .unwrap();
+    let id1 = identity("r_win_plan_check", 1);
+    let mut id2 = identity("r_win_plan_check", 1);
+    let hex_b: String = std::iter::repeat_n('b', 64).collect();
+    id2.plan_fingerprint = ContentChecksum::try_from(format!("sha256:{hex_b}")).unwrap();
+
+    let mut runner1 = ReliableSingleSourceRunner::new(
+        id1.clone(),
+        partition(),
+        stmt1.clone(),
+        RetryPolicy::default(),
+    )
+    .unwrap();
+    let mut reader1 = KafkaReliablePartitionReader::new(
+        partition(),
+        Generation(1),
+        None,
+        0,
+        KafkaTombstonePolicy::Fail,
+    );
+    let sink1 = CountingSink {
+        delivered: Mutex::new(Vec::new()),
+    };
+    let clock = TestClock::new(0);
+    let cancel = DeadlineCancellation::default();
+
+    let m0 = reader1.prepare(KafkaRawRecord {
+        offset: 0,
+        payload: Some(br#"{"v":20}"#.to_vec()),
+    });
+    runner1
+        .process_and_checkpoint(&mut reader1, &m0, &[], &sink1, &store, &clock, &cancel)
+        .await
+        .unwrap();
+    assert_eq!(sink1.delivered.lock().len(), 0);
+    drop(runner1);
+
+    let mut runner_diff_fp =
+        ReliableSingleSourceRunner::new(id2, partition(), stmt2.clone(), RetryPolicy::default())
+            .unwrap();
+    let err_fp = runner_diff_fp
+        .restore_before_intake(&store, &mut [])
+        .await
+        .expect_err("different plan_fingerprint must reject restore");
+    assert!(matches!(
+        err_fp,
+        rekuiper_server::engine::runtime::reliable::ReliableRuntimeError::Checkpoint(
+            rekuiper_core::contracts::CheckpointError::PlanFingerprintMismatch
+        )
+    ));
+    assert_eq!(runner_diff_fp.status().restored_next_offset, None);
+
+    let mut runner_diff_stmt =
+        ReliableSingleSourceRunner::new(id1, partition(), stmt2, RetryPolicy::default()).unwrap();
+    let err_stmt = runner_diff_stmt
+        .restore_before_intake(&store, &mut [])
+        .await
+        .expect_err("different WHERE predicate stmt must reject window restore");
+    assert!(matches!(
+        err_stmt,
+        rekuiper_server::engine::runtime::reliable::ReliableRuntimeError::Checkpoint(
+            rekuiper_core::contracts::CheckpointError::PlanFingerprintMismatch
+        )
+    ));
+    assert_eq!(runner_diff_stmt.status().restored_next_offset, None);
+}
+
+#[tokio::test]
+async fn repro_stored_native_dag_rejects_start_with_checkpoint_enabled() {
+    let state = build_test_state();
+    let stored_rule: rekuiper_core::model::RuleDefinition = serde_json::from_value(json!({
+        "id": "dag_stored_cp",
+        "sql": "",
+        "actions": [{ "log": {} }],
+        "options": { "checkpointEnabled": true },
+        "graph": {
+            "nodes": {
+                "src": { "type": "source", "nodeType": "memory", "props": { "datasource": "s_stored_cp" } },
+                "rl": { "type": "operator", "nodeType": "rate_limit", "props": { "rate": 10, "strategy": "buffer" } },
+                "snk": { "type": "sink", "nodeType": "log", "props": {} }
+            },
+            "topo": {
+                "sources": ["src"],
+                "edges": { "src": ["rl"], "rl": ["snk"] }
+            }
+        }
+    }))
+    .unwrap();
+    state.rule_manager.create_rule(stored_rule).await.unwrap();
+    state.rule_manager.stop_rule("dag_stored_cp").await.unwrap();
+
+    let app = create_router(state.clone());
+
+    for uri in ["/rules/dag_stored_cp/start", "/rules/dag_stored_cp/restart"] {
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(uri)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::BAD_REQUEST,
+            "{uri} must reject stored native DAG with checkpointEnabled"
+        );
+        let status = state
+            .rule_manager
+            .get_rule_status("dag_stored_cp")
+            .expect("rule status exists");
+        assert_eq!(status.status, "stopped");
+    }
+
+    let bulk_resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/rules/bulkstart")
+                .header("content-type", "application/json")
+                .body(Body::from("{}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(bulk_resp.status(), StatusCode::OK);
+    let bulk_bytes = axum::body::to_bytes(bulk_resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let bulk_json: Value = serde_json::from_slice(&bulk_bytes).unwrap();
+    let entry = bulk_json
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["ruleId"] == "dag_stored_cp")
+        .expect("bulk start result entry present");
+    assert_eq!(entry["success"], false);
+    assert_eq!(
+        state
+            .rule_manager
+            .get_rule_status("dag_stored_cp")
+            .unwrap()
+            .status,
+        "stopped"
+    );
+}
+
+#[tokio::test]
+async fn repro_expired_outbox_worker_cannot_settle_reassigned_effect() {
+    let unique = format!(
+        "rekuiper_outbox_lease_{}_{}.db",
+        std::process::id(),
+        chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
+    );
+    let db_path = std::env::temp_dir().join(unique);
+    let _ = std::fs::remove_file(&db_path);
+
+    let store = ReliableSqliteStore::open(&db_path, SqliteDurabilityMode::Full)
+        .await
+        .unwrap();
+    let outbox = SqliteOutbox::new(&store, OutboxCapacity::default());
+    let eff = effect("r_lease", "eff_lease_1");
+    outbox
+        .commit_state_and_enqueue(
+            envelope("r_lease", 1),
+            vec![OutboxEntry {
+                effect: eff.clone(),
+                payload: b"payload".to_vec(),
+            }],
+        )
+        .await
+        .unwrap();
+
+    let rule = RuleId::try_from("r_lease").unwrap();
+    let act = ActionId::try_from("mqtt_0").unwrap();
+    let claimed_a = outbox
+        .claim_pending_with_lease(&rule, &act, "worker-a", 1, 0, None)
+        .await
+        .unwrap();
+    assert_eq!(claimed_a.len(), 1);
+
+    let claimed_b = outbox
+        .claim_pending_with_lease(&rule, &act, "worker-b", 1, 60_000, None)
+        .await
+        .unwrap();
+    assert_eq!(claimed_b.len(), 1);
+    assert_eq!(claimed_b[0].effect.effect_id, eff.effect_id);
+
+    let err = outbox
+        .ack(&eff.effect_id, "worker-a", EffectOutcome::Delivered)
+        .await
+        .expect_err("expired worker-a must not settle effect reassigned to worker-b");
+    assert!(matches!(
+        err,
+        rekuiper_core::reliability::OutboxError::LeaseMismatch { .. }
+    ));
+
+    let db_url = format!("sqlite:{}", db_path.to_string_lossy().replace('\\', "/"));
+    let raw_pool = sqlx::SqlitePool::connect(&db_url).await.unwrap();
+    let row: (Option<String>, Option<String>) = sqlx::query_as(
+        "SELECT claimed_by, terminal_outcome_json FROM reliable_outbox_effects WHERE effect_id = ?",
+    )
+    .bind(eff.effect_id.as_str())
+    .fetch_one(&raw_pool)
+    .await
+    .unwrap();
+    assert_eq!(row.0.as_deref(), Some("worker-b"));
+    assert_eq!(row.1, None);
+    drop(raw_pool);
+
+    let ack_b = outbox
+        .ack(&eff.effect_id, "worker-b", EffectOutcome::Delivered)
+        .await
+        .unwrap();
+    assert_eq!(
+        ack_b,
+        Some(rekuiper_core::contracts::CompletionStatus::Applied)
+    );
+    drop(store);
+    let _ = std::fs::remove_file(&db_path);
+}

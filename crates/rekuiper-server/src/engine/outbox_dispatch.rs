@@ -281,7 +281,11 @@ impl OutboxDispatcher {
             match exec.outcome {
                 EffectOutcome::Delivered => {
                     outbox
-                        .ack(&entry.effect.effect_id, EffectOutcome::Delivered)
+                        .ack(
+                            &entry.effect.effect_id,
+                            &claim_owner,
+                            EffectOutcome::Delivered,
+                        )
                         .await?;
                     report.delivered += 1;
                     report.delivered_ids.push(entry.effect.effect_id.clone());
@@ -293,6 +297,7 @@ impl OutboxDispatcher {
                     outbox
                         .ack(
                             &entry.effect.effect_id,
+                            &claim_owner,
                             EffectOutcome::PermanentFailure { error },
                         )
                         .await?;

@@ -300,7 +300,8 @@ impl ReliableSqliteStore {
             .map_err(|err| match err {
                 OutboxError::Checkpoint(ce) => ce,
                 OutboxError::Storage(msg) => CheckpointError::StorageFailure(msg),
-                other @ OutboxError::CapacityExceeded { .. } => {
+                other @ (OutboxError::CapacityExceeded { .. }
+                | OutboxError::LeaseMismatch { .. }) => {
                     CheckpointError::StorageFailure(other.to_string())
                 }
             })
@@ -655,6 +656,77 @@ impl ReliableSqliteStore {
         tx.commit()
             .await
             .map_err(|e| CheckpointError::StorageFailure(e.to_string()))?;
+        Ok(Some(status))
+    }
+
+    /// Records an effect completion while verifying the acknowledging `worker_id` still holds the active lease.
+    pub async fn record_claimed_effect_completion(
+        &self,
+        effect_id: &EffectId,
+        worker_id: &str,
+        outcome: EffectOutcome,
+    ) -> Result<Option<CompletionStatus>, crate::reliability::outbox::OutboxError> {
+        use crate::reliability::outbox::OutboxError;
+
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| OutboxError::Storage(e.to_string()))?;
+
+        let row = sqlx::query(
+            "SELECT effect_id, rule_id, generation, action_id, connection_id, order_key, attempt, terminal_outcome_json, claimed_by
+             FROM reliable_outbox_effects WHERE effect_id = ?",
+        )
+        .bind(effect_id.as_str())
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|e| OutboxError::Storage(e.to_string()))?;
+
+        let Some(row) = row else {
+            return Ok(None);
+        };
+        let mut record = Self::decode_effect_row(&row)?;
+        let claimed_by: Option<String> = row.get("claimed_by");
+        if record.terminal_outcome.is_none() && claimed_by.as_deref() != Some(worker_id) {
+            return Err(OutboxError::LeaseMismatch {
+                effect_id: effect_id.clone(),
+                worker_id: worker_id.to_owned(),
+            });
+        }
+
+        let status = record.record_completion(outcome);
+
+        if status == CompletionStatus::Applied {
+            let outcome_json = record
+                .terminal_outcome
+                .as_ref()
+                .map(serde_json::to_string)
+                .transpose()
+                .map_err(|e| OutboxError::Storage(e.to_string()))?;
+            let res = sqlx::query(
+                "UPDATE reliable_outbox_effects
+                 SET attempt = ?, terminal_outcome_json = ?, claimed_by = NULL, claimed_until_ms = NULL
+                 WHERE effect_id = ? AND claimed_by = ? AND terminal_outcome_json IS NULL",
+            )
+            .bind(i64::from(record.attempt))
+            .bind(outcome_json)
+            .bind(effect_id.as_str())
+            .bind(worker_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| OutboxError::Storage(e.to_string()))?;
+            if res.rows_affected() != 1 {
+                return Err(OutboxError::LeaseMismatch {
+                    effect_id: effect_id.clone(),
+                    worker_id: worker_id.to_owned(),
+                });
+            }
+        }
+
+        tx.commit()
+            .await
+            .map_err(|e| OutboxError::Storage(e.to_string()))?;
         Ok(Some(status))
     }
 

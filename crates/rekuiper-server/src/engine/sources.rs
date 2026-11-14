@@ -1267,6 +1267,16 @@ pub async fn restore_running_rules(state: &AppState) {
                         .values()
                         .any(|e| matches!(e, rekuiper_core::model::EdgeTargets::Multi(_)));
                 if is_native_dag {
+                    if crate::engine::validate_graph_nodes(graph).is_err()
+                        || rekuiper_sql::planning::is_durable_options(rule.options.as_ref())
+                    {
+                        tracing::warn!(
+                            "Skipping restore of invalid native DAG rule {} (unsupported durable options or invalid graph)",
+                            rule.id
+                        );
+                        let _ = state.rule_manager.stop_rule(&rule.id).await;
+                        continue;
+                    }
                     let buffer_len = rule
                         .options
                         .as_ref()
