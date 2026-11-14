@@ -87,7 +87,7 @@ impl<'a> GenerationFence<'a> {
                 let mut metadata: CheckpointMetadata = serde_json::from_str(&metadata_json)
                     .map_err(|e| CheckpointError::StorageFailure(e.to_string()))?;
                 let pos_rows = sqlx::query(
-                    "SELECT source_id, partition_id, generation
+                    "SELECT source_id, partition_id, generation, codec, cursor
                      FROM reliable_positions
                      WHERE rule_id = ? AND checkpoint_id = ?",
                 )
@@ -97,6 +97,20 @@ impl<'a> GenerationFence<'a> {
                 .await
                 .map_err(|e| CheckpointError::StorageFailure(e.to_string()))?;
 
+                let row_matches_pos =
+                    |r: &sqlx::sqlite::SqliteRow, pos: &crate::contracts::SourcePosition| {
+                        let s: String = r.get("source_id");
+                        let p: String = r.get("partition_id");
+                        let g: i64 = r.get("generation");
+                        let codec: String = r.get("codec");
+                        let cursor: Vec<u8> = r.get("cursor");
+                        s == pos.partition.source_id.as_str()
+                            && p == pos.partition.partition_id.as_str()
+                            && g == cp_gen_i64
+                            && codec == pos.codec.as_str()
+                            && cursor.as_slice() == pos.cursor.as_slice()
+                    };
+
                 let meta_positions_valid = metadata.identity.generation == orig_gen
                     && metadata
                         .source_positions
@@ -104,25 +118,15 @@ impl<'a> GenerationFence<'a> {
                         .all(|pos| pos.generation == orig_gen);
                 let db_positions_valid = pos_rows.len() == metadata.source_positions.len()
                     && pos_rows.iter().all(|r| {
-                        let s: String = r.get("source_id");
-                        let p: String = r.get("partition_id");
-                        let g: i64 = r.get("generation");
-                        g == cp_gen_i64
-                            && metadata.source_positions.iter().any(|pos| {
-                                pos.partition.source_id.as_str() == s
-                                    && pos.partition.partition_id.as_str() == p
-                            })
+                        metadata
+                            .source_positions
+                            .iter()
+                            .any(|pos| row_matches_pos(r, pos))
                     })
-                    && metadata.source_positions.iter().all(|pos| {
-                        pos_rows.iter().any(|r| {
-                            let s: String = r.get("source_id");
-                            let p: String = r.get("partition_id");
-                            let g: i64 = r.get("generation");
-                            s == pos.partition.source_id.as_str()
-                                && p == pos.partition.partition_id.as_str()
-                                && g == cp_gen_i64
-                        })
-                    });
+                    && metadata
+                        .source_positions
+                        .iter()
+                        .all(|pos| pos_rows.iter().any(|r| row_matches_pos(r, pos)));
 
                 if meta_positions_valid && db_positions_valid {
                     metadata.identity.generation = Generation(next_gen);
@@ -170,10 +174,13 @@ impl<'a> GenerationFence<'a> {
             .await
             .map_err(|e| CheckpointError::StorageFailure(e.to_string()))?;
 
-        Ok((Generation(next_gen), DeadlineCancellation::default()))
+        Ok((
+            Generation(next_gen),
+            DeadlineCancellation::for_generation(Generation(next_gen)),
+        ))
     }
 
-    /// Cancels the active runtime token and persists revocation of the current
+    /// Cancels the active runtime token and persists revocation of the target
     /// generation before any replacement starts or after stop/delete.
     /// Does NOT discard already-durable pending or ambiguous outbox effects.
     pub async fn fence_and_revoke(
@@ -203,14 +210,18 @@ impl<'a> GenerationFence<'a> {
             })?,
             None => 0,
         };
-        let current_gen_i64 = i64::try_from(current_gen)
+        let target_gen = cancel
+            .target_generation()
+            .unwrap_or(Generation(current_gen));
+        let target_gen_i64 = i64::try_from(target_gen.0)
             .map_err(|_| CheckpointError::StorageFailure("generation overflow".to_owned()))?;
         sqlx::query(
             "INSERT INTO reliable_generations (rule_id, generation, revoked) VALUES (?, ?, 1)
-             ON CONFLICT(rule_id) DO UPDATE SET revoked = 1",
+             ON CONFLICT(rule_id) DO UPDATE SET revoked = 1
+             WHERE reliable_generations.generation = excluded.generation",
         )
         .bind(rule_id.as_str())
-        .bind(current_gen_i64)
+        .bind(target_gen_i64)
         .execute(&mut *tx)
         .await
         .map_err(|e| CheckpointError::StorageFailure(e.to_string()))?;
@@ -219,7 +230,7 @@ impl<'a> GenerationFence<'a> {
             .await
             .map_err(|e| CheckpointError::StorageFailure(e.to_string()))?;
 
-        Ok(Generation(current_gen))
+        Ok(target_gen)
     }
 
     /// Verifies that `generation` is currently active and unrevoked.

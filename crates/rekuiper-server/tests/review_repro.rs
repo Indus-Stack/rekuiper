@@ -2603,3 +2603,196 @@ async fn repro_activation_rejects_cursor_matching_next_generation() {
         ReliableRuntimeError::Checkpoint(CheckpointError::SourcePositionGenerationMismatch)
     ));
 }
+
+#[tokio::test]
+async fn repro_retrying_old_stop_does_not_revoke_replacement_generation() {
+    let store = ReliableSqliteStore::open(":memory:", SqliteDurabilityMode::Full)
+        .await
+        .unwrap();
+    let fence = GenerationFence::new(&store);
+    let rule = RuleId::try_from("r_retry_old_stop").unwrap();
+    let stmt = Parser::new("SELECT v FROM k").parse_select().unwrap();
+
+    // Activate generation 1, then revoke generation 1.
+    let (gen1, cancel1) = fence.activate_next(&rule).await.unwrap();
+    assert_eq!(gen1, Generation(1));
+    assert_eq!(fence.fence_and_revoke(&rule, &cancel1).await.unwrap(), gen1);
+    assert!(fence.assert_active(&rule, gen1).await.is_err());
+
+    // Activate replacement generation 2.
+    let (gen2, cancel2) = fence.activate_next(&rule).await.unwrap();
+    assert_eq!(gen2, Generation(2));
+    fence.assert_active(&rule, gen2).await.unwrap();
+
+    // Retrying revocation with generation 1's token must NOT revoke generation 2.
+    let retried = fence.fence_and_revoke(&rule, &cancel1).await.unwrap();
+    assert_eq!(retried, gen1);
+    fence
+        .assert_active(&rule, gen2)
+        .await
+        .expect("retrying gen 1 stop must leave gen 2 active");
+    assert!(fence.assert_active(&rule, gen1).await.is_err());
+
+    // Generation 2 runner must still be able to process and commit checkpoints.
+    let mut runner2 = ReliableSingleSourceRunner::new(
+        identity("r_retry_old_stop", gen2.0),
+        partition(),
+        stmt,
+        RetryPolicy::default(),
+    )
+    .unwrap();
+    let mut reader2 =
+        KafkaReliablePartitionReader::new(partition(), gen2, None, 0, KafkaTombstonePolicy::Fail);
+    let sink2 = CountingSink {
+        delivered: Mutex::new(Vec::new()),
+    };
+    let clock = TestClock::new(0);
+    let m0 = reader2.prepare(KafkaRawRecord {
+        offset: 0,
+        payload: Some(br#"{"v":7}"#.to_vec()),
+    });
+    let cp = runner2
+        .process_and_checkpoint(&mut reader2, &m0, &[], &sink2, &store, &clock, &cancel2)
+        .await
+        .expect("gen 2 runner must still commit after retried gen 1 stop");
+    assert_eq!(cp, CheckpointId(1));
+}
+
+#[tokio::test]
+async fn repro_handoff_rejects_conflicting_stored_cursor_bytes_and_codec() {
+    let dir = std::env::temp_dir().join(format!("rekuiper_repro_cursor_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let db_path = dir.join("reliable.db");
+    let store = ReliableSqliteStore::open(&db_path, SqliteDurabilityMode::Full)
+        .await
+        .unwrap();
+    let raw_pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(sqlx::sqlite::SqliteConnectOptions::new().filename(&db_path))
+        .await
+        .unwrap();
+    sqlx::query("PRAGMA busy_timeout = 5000;")
+        .execute(&raw_pool)
+        .await
+        .unwrap();
+    let fence = GenerationFence::new(&store);
+    let rule = RuleId::try_from("r_cursor_conflict").unwrap();
+    let stmt = Parser::new("SELECT v FROM k").parse_select().unwrap();
+
+    let (gen1, cancel1) = fence.activate_next(&rule).await.unwrap();
+    assert_eq!(gen1, Generation(1));
+    let id1 = identity("r_cursor_conflict", gen1.0);
+    let mut runner1 = ReliableSingleSourceRunner::new(
+        id1.clone(),
+        partition(),
+        stmt.clone(),
+        RetryPolicy::default(),
+    )
+    .unwrap();
+    let mut reader1 =
+        KafkaReliablePartitionReader::new(partition(), gen1, None, 0, KafkaTombstonePolicy::Fail);
+    let sink1 = CountingSink {
+        delivered: Mutex::new(Vec::new()),
+    };
+    let clock = TestClock::new(0);
+    let m0 = reader1.prepare(KafkaRawRecord {
+        offset: 0,
+        payload: Some(br#"{"v":1}"#.to_vec()),
+    });
+    runner1
+        .process_and_checkpoint(&mut reader1, &m0, &[], &sink1, &store, &clock, &cancel1)
+        .await
+        .unwrap();
+
+    // Mutate only the normalized SQLite cursor from offset 1 to 42 while leaving metadata_json at 1.
+    sqlx::query("UPDATE reliable_positions SET cursor = ? WHERE rule_id = ?")
+        .bind(42i64.to_be_bytes().to_vec())
+        .bind(rule.as_str())
+        .execute(&raw_pool)
+        .await
+        .unwrap();
+
+    fence.fence_and_revoke(&rule, &cancel1).await.unwrap();
+    let (gen2, _cancel2) = fence.activate_next(&rule).await.unwrap();
+    assert_eq!(gen2, Generation(2));
+
+    let (stored_cp_gen,): (i64,) =
+        sqlx::query_as("SELECT generation FROM reliable_checkpoints WHERE rule_id = ?")
+            .bind(rule.as_str())
+            .fetch_one(&raw_pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        stored_cp_gen, 1,
+        "handoff must not rewrite checkpoint when cursor bytes conflict"
+    );
+
+    let mut id2 = id1;
+    id2.generation = gen2;
+    let mut runner2 = ReliableSingleSourceRunner::new(
+        id2.clone(),
+        partition(),
+        stmt.clone(),
+        RetryPolicy::default(),
+    )
+    .unwrap();
+    let err_bytes = runner2
+        .restore_before_intake(&store, &mut [])
+        .await
+        .expect_err("conflicting cursor bytes must fail restore rather than resuming at 42");
+    assert!(matches!(
+        err_bytes,
+        ReliableRuntimeError::Checkpoint(CheckpointError::StorageFailure(_))
+    ));
+
+    // Also verify conflicting codec values block handoff and restore.
+    let rule_codec = RuleId::try_from("r_codec_conflict").unwrap();
+    let (c_gen1, c_cancel1) = fence.activate_next(&rule_codec).await.unwrap();
+    let cid1 = identity("r_codec_conflict", c_gen1.0);
+    let mut crunner1 = ReliableSingleSourceRunner::new(
+        cid1.clone(),
+        partition(),
+        stmt.clone(),
+        RetryPolicy::default(),
+    )
+    .unwrap();
+    let mut creader1 =
+        KafkaReliablePartitionReader::new(partition(), c_gen1, None, 0, KafkaTombstonePolicy::Fail);
+    let cm0 = creader1.prepare(KafkaRawRecord {
+        offset: 0,
+        payload: Some(br#"{"v":2}"#.to_vec()),
+    });
+    crunner1
+        .process_and_checkpoint(&mut creader1, &cm0, &[], &sink1, &store, &clock, &c_cancel1)
+        .await
+        .unwrap();
+
+    sqlx::query("UPDATE reliable_positions SET codec = ? WHERE rule_id = ?")
+        .bind("other.codec")
+        .bind(rule_codec.as_str())
+        .execute(&raw_pool)
+        .await
+        .unwrap();
+
+    fence
+        .fence_and_revoke(&rule_codec, &c_cancel1)
+        .await
+        .unwrap();
+    let (c_gen2, _c_cancel2) = fence.activate_next(&rule_codec).await.unwrap();
+    let mut cid2 = cid1;
+    cid2.generation = c_gen2;
+    let mut crunner2 =
+        ReliableSingleSourceRunner::new(cid2, partition(), stmt, RetryPolicy::default()).unwrap();
+    let err_codec = crunner2
+        .restore_before_intake(&store, &mut [])
+        .await
+        .expect_err("conflicting cursor codec must fail restore");
+    assert!(matches!(
+        err_codec,
+        ReliableRuntimeError::Checkpoint(CheckpointError::StorageFailure(_))
+    ));
+
+    raw_pool.close().await;
+    drop(store);
+    let _ = std::fs::remove_dir_all(&dir);
+}

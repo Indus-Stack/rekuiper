@@ -1,5 +1,6 @@
 //! Wall time, monotonic time, and cancellable deadlines.
 
+use super::Generation;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -41,23 +42,40 @@ pub struct DeadlineCancelled;
 
 /// Shared, one-shot cancellation for any number of deadline waiters.
 #[derive(Debug, Clone)]
-pub struct DeadlineCancellation(watch::Sender<bool>);
+pub struct DeadlineCancellation {
+    sender: watch::Sender<bool>,
+    target_generation: Option<Generation>,
+}
 
 impl Default for DeadlineCancellation {
     fn default() -> Self {
-        Self(watch::channel(false).0)
+        Self {
+            sender: watch::channel(false).0,
+            target_generation: None,
+        }
     }
 }
 
 impl DeadlineCancellation {
+    pub fn for_generation(generation: Generation) -> Self {
+        Self {
+            sender: watch::channel(false).0,
+            target_generation: Some(generation),
+        }
+    }
+
+    pub fn target_generation(&self) -> Option<Generation> {
+        self.target_generation
+    }
+
     pub fn cancel(&self) {
-        self.0.send_replace(true);
+        self.sender.send_replace(true);
     }
 
     /// Waits until cancellation is requested. Once cancelled, this returns
     /// immediately for every caller, including callers that start waiting later.
     pub async fn cancelled(&self) {
-        let mut receiver = self.0.subscribe();
+        let mut receiver = self.sender.subscribe();
         let _ = receiver.wait_for(|cancelled| *cancelled).await;
     }
 }

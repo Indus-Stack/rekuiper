@@ -884,6 +884,28 @@ impl CheckpointStore for ReliableSqliteStore {
                 cursor,
             });
         }
+        let positions_match_meta = |left: &SourcePosition, right: &SourcePosition| {
+            left.partition == right.partition
+                && left.codec == right.codec
+                && left.cursor == right.cursor
+        };
+        if positions.len() != metadata.source_positions.len()
+            || !positions.iter().all(|pos| {
+                metadata
+                    .source_positions
+                    .iter()
+                    .any(|mpos| positions_match_meta(pos, mpos))
+            })
+            || !metadata
+                .source_positions
+                .iter()
+                .all(|mpos| positions.iter().any(|pos| positions_match_meta(pos, mpos)))
+        {
+            return Err(CheckpointError::StorageFailure(
+                "checkpoint source positions conflict between metadata and positions table"
+                    .to_owned(),
+            ));
+        }
         if !positions.is_empty() {
             metadata.source_positions = positions;
         }
