@@ -146,6 +146,7 @@ pub async fn start_ruletest(State(state): State<AppState>, Path(name): Path<Stri
         let loop_data = conf.as_ref().is_some_and(|c| c.loop_data);
         let rule_state = RuleState::default();
         let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10 * 60);
+        let mut step = 0usize;
         loop {
             for record in &data {
                 if tokio::time::Instant::now() >= deadline {
@@ -155,9 +156,18 @@ pub async fn start_ruletest(State(state): State<AppState>, Path(name): Path<Stri
                 {
                     emit_ruletest_line(&session, &row);
                 }
-                tokio::select! {
-                    _ = session.shutdown.notified() => return,
-                    _ = tokio::time::sleep(interval) => {}
+                step = step.wrapping_add(1);
+                if interval.is_zero() && !step.is_multiple_of(64) {
+                    tokio::select! {
+                        biased;
+                        _ = session.shutdown.notified() => return,
+                        _ = tokio::task::yield_now() => {}
+                    }
+                } else {
+                    tokio::select! {
+                        _ = session.shutdown.notified() => return,
+                        _ = tokio::time::sleep(interval) => {}
+                    }
                 }
             }
             if !loop_data {

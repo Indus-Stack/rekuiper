@@ -97,52 +97,51 @@ impl<'a> GenerationFence<'a> {
                 .await
                 .map_err(|e| CheckpointError::StorageFailure(e.to_string()))?;
 
-                if metadata.identity.generation == orig_gen {
-                    metadata.identity.generation = Generation(next_gen);
-                    for pos in &mut metadata.source_positions {
-                        let db_matches = pos_rows.iter().all(|r| {
+                let meta_positions_valid = metadata.identity.generation == orig_gen
+                    && metadata
+                        .source_positions
+                        .iter()
+                        .all(|pos| pos.generation == orig_gen);
+                let db_positions_valid = pos_rows.len() == metadata.source_positions.len()
+                    && pos_rows.iter().all(|r| {
+                        let s: String = r.get("source_id");
+                        let p: String = r.get("partition_id");
+                        let g: i64 = r.get("generation");
+                        g == cp_gen_i64
+                            && metadata.source_positions.iter().any(|pos| {
+                                pos.partition.source_id.as_str() == s
+                                    && pos.partition.partition_id.as_str() == p
+                            })
+                    })
+                    && metadata.source_positions.iter().all(|pos| {
+                        pos_rows.iter().any(|r| {
                             let s: String = r.get("source_id");
                             let p: String = r.get("partition_id");
                             let g: i64 = r.get("generation");
-                            if s == pos.partition.source_id.as_str()
+                            s == pos.partition.source_id.as_str()
                                 && p == pos.partition.partition_id.as_str()
-                            {
-                                g == cp_gen_i64
-                            } else {
-                                true
-                            }
-                        });
-                        if pos.generation == orig_gen && db_matches {
-                            pos.generation = Generation(next_gen);
-                            sqlx::query(
-                                "UPDATE reliable_positions
-                                 SET generation = ?
-                                 WHERE rule_id = ?
-                                   AND checkpoint_id = ?
-                                   AND source_id = ?
-                                   AND partition_id = ?
-                                   AND generation = ?",
-                            )
-                            .bind(next_gen_i64)
-                            .bind(rule_id.as_str())
-                            .bind(cp_id)
-                            .bind(pos.partition.source_id.as_str())
-                            .bind(pos.partition.partition_id.as_str())
-                            .bind(cp_gen_i64)
-                            .execute(&mut *tx)
-                            .await
-                            .map_err(|e| CheckpointError::StorageFailure(e.to_string()))?;
-                        }
-                    }
-                    if metadata.source_positions.is_empty() {
+                                && g == cp_gen_i64
+                        })
+                    });
+
+                if meta_positions_valid && db_positions_valid {
+                    metadata.identity.generation = Generation(next_gen);
+                    for pos in &mut metadata.source_positions {
+                        pos.generation = Generation(next_gen);
                         sqlx::query(
                             "UPDATE reliable_positions
                              SET generation = ?
-                             WHERE rule_id = ? AND checkpoint_id = ? AND generation = ?",
+                             WHERE rule_id = ?
+                               AND checkpoint_id = ?
+                               AND source_id = ?
+                               AND partition_id = ?
+                               AND generation = ?",
                         )
                         .bind(next_gen_i64)
                         .bind(rule_id.as_str())
                         .bind(cp_id)
+                        .bind(pos.partition.source_id.as_str())
+                        .bind(pos.partition.partition_id.as_str())
                         .bind(cp_gen_i64)
                         .execute(&mut *tx)
                         .await

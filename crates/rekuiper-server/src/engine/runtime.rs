@@ -913,6 +913,13 @@ pub mod reliable {
                         .expect("valid static runner window operator id"),
                 );
             }
+            for pos in &envelope.metadata.source_positions {
+                if pos.generation != envelope.metadata.identity.generation {
+                    return Err(ReliableRuntimeError::Checkpoint(
+                        CheckpointError::SourcePositionGenerationMismatch,
+                    ));
+                }
+            }
             envelope.validate_restore(&self.identity, &expected_participants)?;
 
             let restored_window = if self.stmt.window.is_some() {
@@ -1077,10 +1084,28 @@ pub mod reliable {
             clock: &dyn Clock,
             cancellation: &DeadlineCancellation,
         ) -> Result<CheckpointId, ReliableRuntimeError> {
-            reader.validate_commit(prepared)?;
             store
                 .verify_generation(&self.identity.rule_id, self.identity.generation)
                 .await?;
+            let reader_pos = reader.committed_position();
+            if prepared.position.generation != self.identity.generation
+                || reader_pos.generation != self.identity.generation
+            {
+                let err = CheckpointError::SourcePositionGenerationMismatch;
+                self.status.last_failure = Some(err.to_string());
+                return Err(ReliableRuntimeError::Checkpoint(err));
+            }
+            if prepared.position.partition != self.partition
+                || reader_pos.partition != self.partition
+            {
+                let err = KafkaReliableError::OutOfOrderCommit {
+                    expected_offset: reader.committed_next_offset(),
+                    actual_offset: prepared.offset,
+                };
+                self.status.last_failure = Some(err.to_string());
+                return Err(ReliableRuntimeError::Kafka(err));
+            }
+            reader.validate_commit(prepared)?;
             let records: Vec<StreamRecord> = prepared.decode(reader.tombstone_policy())?;
             let prev_window_buffer = self.window_buffer.clone();
             let prev_tumbling_start_ms = self.tumbling_start_ms;
@@ -1532,6 +1557,13 @@ pub mod reliable {
                 .iter()
                 .map(|p| p.operator_id().clone())
                 .collect();
+            for pos in &envelope.metadata.source_positions {
+                if pos.generation != envelope.metadata.identity.generation {
+                    return Err(ReliableRuntimeError::Checkpoint(
+                        CheckpointError::SourcePositionGenerationMismatch,
+                    ));
+                }
+            }
             envelope.validate_restore(&self.identity, &expected_participants)?;
             for participant in participants.iter_mut() {
                 let op_id = participant.operator_id().clone();
@@ -1561,6 +1593,13 @@ pub mod reliable {
             store
                 .verify_generation(&self.identity.rule_id, self.identity.generation)
                 .await?;
+            for pos in &source_positions {
+                if pos.generation != self.identity.generation {
+                    let err = CheckpointError::SourcePositionGenerationMismatch;
+                    self.status.last_failure = Some(err.to_string());
+                    return Err(ReliableRuntimeError::Checkpoint(err));
+                }
+            }
             let missing_actions: Vec<String> = self
                 .expected_actions
                 .difference(acked_actions)
