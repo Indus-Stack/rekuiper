@@ -82,39 +82,88 @@ impl<'a> GenerationFence<'a> {
                 CheckpointError::StorageFailure("corrupt negative checkpoint generation".to_owned())
             })?;
             if cp_gen_u64 < next_gen {
+                let orig_gen = Generation(cp_gen_u64);
                 let metadata_json: String = cp_row.get("metadata_json");
                 let mut metadata: CheckpointMetadata = serde_json::from_str(&metadata_json)
                     .map_err(|e| CheckpointError::StorageFailure(e.to_string()))?;
-                metadata.identity.generation = Generation(next_gen);
-                for pos in &mut metadata.source_positions {
-                    pos.generation = Generation(next_gen);
-                }
-                let updated_metadata_json = serde_json::to_string(&metadata)
-                    .map_err(|e| CheckpointError::StorageFailure(e.to_string()))?;
-                sqlx::query(
-                    "UPDATE reliable_checkpoints
-                     SET generation = ?, metadata_json = ?
+                let pos_rows = sqlx::query(
+                    "SELECT source_id, partition_id, generation
+                     FROM reliable_positions
                      WHERE rule_id = ? AND checkpoint_id = ?",
                 )
-                .bind(next_gen_i64)
-                .bind(updated_metadata_json)
                 .bind(rule_id.as_str())
                 .bind(cp_id)
-                .execute(&mut *tx)
+                .fetch_all(&mut *tx)
                 .await
                 .map_err(|e| CheckpointError::StorageFailure(e.to_string()))?;
 
-                sqlx::query(
-                    "UPDATE reliable_positions
-                     SET generation = ?
-                     WHERE rule_id = ? AND checkpoint_id = ?",
-                )
-                .bind(next_gen_i64)
-                .bind(rule_id.as_str())
-                .bind(cp_id)
-                .execute(&mut *tx)
-                .await
-                .map_err(|e| CheckpointError::StorageFailure(e.to_string()))?;
+                if metadata.identity.generation == orig_gen {
+                    metadata.identity.generation = Generation(next_gen);
+                    for pos in &mut metadata.source_positions {
+                        let db_matches = pos_rows.iter().all(|r| {
+                            let s: String = r.get("source_id");
+                            let p: String = r.get("partition_id");
+                            let g: i64 = r.get("generation");
+                            if s == pos.partition.source_id.as_str()
+                                && p == pos.partition.partition_id.as_str()
+                            {
+                                g == cp_gen_i64
+                            } else {
+                                true
+                            }
+                        });
+                        if pos.generation == orig_gen && db_matches {
+                            pos.generation = Generation(next_gen);
+                            sqlx::query(
+                                "UPDATE reliable_positions
+                                 SET generation = ?
+                                 WHERE rule_id = ?
+                                   AND checkpoint_id = ?
+                                   AND source_id = ?
+                                   AND partition_id = ?
+                                   AND generation = ?",
+                            )
+                            .bind(next_gen_i64)
+                            .bind(rule_id.as_str())
+                            .bind(cp_id)
+                            .bind(pos.partition.source_id.as_str())
+                            .bind(pos.partition.partition_id.as_str())
+                            .bind(cp_gen_i64)
+                            .execute(&mut *tx)
+                            .await
+                            .map_err(|e| CheckpointError::StorageFailure(e.to_string()))?;
+                        }
+                    }
+                    if metadata.source_positions.is_empty() {
+                        sqlx::query(
+                            "UPDATE reliable_positions
+                             SET generation = ?
+                             WHERE rule_id = ? AND checkpoint_id = ? AND generation = ?",
+                        )
+                        .bind(next_gen_i64)
+                        .bind(rule_id.as_str())
+                        .bind(cp_id)
+                        .bind(cp_gen_i64)
+                        .execute(&mut *tx)
+                        .await
+                        .map_err(|e| CheckpointError::StorageFailure(e.to_string()))?;
+                    }
+                    let updated_metadata_json = serde_json::to_string(&metadata)
+                        .map_err(|e| CheckpointError::StorageFailure(e.to_string()))?;
+                    sqlx::query(
+                        "UPDATE reliable_checkpoints
+                         SET generation = ?, metadata_json = ?
+                         WHERE rule_id = ? AND checkpoint_id = ? AND generation = ?",
+                    )
+                    .bind(next_gen_i64)
+                    .bind(updated_metadata_json)
+                    .bind(rule_id.as_str())
+                    .bind(cp_id)
+                    .bind(cp_gen_i64)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(|e| CheckpointError::StorageFailure(e.to_string()))?;
+                }
             }
         }
 

@@ -799,6 +799,32 @@ impl CheckpointStore for ReliableSqliteStore {
         self.commit_with_outbox(envelope, Vec::new()).await
     }
 
+    async fn verify_generation(
+        &self,
+        rule_id: &RuleId,
+        incoming_gen: Generation,
+    ) -> Result<(), CheckpointError> {
+        let existing: Option<(i64, i64)> = sqlx::query_as(
+            "SELECT generation, revoked FROM reliable_generations WHERE rule_id = ?",
+        )
+        .bind(rule_id.as_str())
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| CheckpointError::StorageFailure(e.to_string()))?;
+
+        if let Some((existing_gen, revoked)) = existing {
+            let existing_gen_u64 = u64::try_from(existing_gen)
+                .map_err(|_| CheckpointError::StorageFailure("corrupt generation".to_owned()))?;
+            if revoked != 0 || incoming_gen.0 != existing_gen_u64 {
+                return Err(CheckpointError::GenerationMismatch {
+                    expected: Generation(existing_gen_u64.saturating_add(u64::from(revoked != 0))),
+                    actual: incoming_gen,
+                });
+            }
+        }
+        Ok(())
+    }
+
     async fn load_latest(
         &self,
         rule_id: &RuleId,

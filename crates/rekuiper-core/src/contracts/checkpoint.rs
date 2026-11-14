@@ -327,4 +327,14 @@ pub trait CheckpointStore: Send + Sync {
         &self,
         rule_id: &RuleId,
     ) -> Result<Option<CheckpointEnvelope>, CheckpointError>;
+
+    /// Verifies that `generation` is permitted to act for `rule_id` when a
+    /// generation fence record exists in the store.
+    async fn verify_generation(
+        &self,
+        _rule_id: &RuleId,
+        _generation: Generation,
+    ) -> Result<(), CheckpointError> {
+        Ok(())
+    }
 }

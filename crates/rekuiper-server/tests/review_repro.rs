@@ -2261,3 +2261,194 @@ async fn repro_reclaimed_effect_with_same_worker_id_rejects_original_claim_token
     let lease2 = coord2.try_acquire(&rule, &act, "worker-a").unwrap();
     assert_ne!(lease1.claim_owner(), lease2.claim_owner());
 }
+
+#[tokio::test]
+async fn repro_unactivated_generation_cannot_restore_or_emit_sink_effects() {
+    let store = ReliableSqliteStore::open(":memory:", SqliteDurabilityMode::Full)
+        .await
+        .unwrap();
+    let fence = GenerationFence::new(&store);
+    let rule = RuleId::try_from("r_unactivated_gen").unwrap();
+    let stmt = Parser::new("SELECT v FROM k").parse_select().unwrap();
+
+    let (gen1, cancel1) = fence.activate_next(&rule).await.unwrap();
+    assert_eq!(gen1, Generation(1));
+    let id1 = identity("r_unactivated_gen", gen1.0);
+    let mut runner1 = ReliableSingleSourceRunner::new(
+        id1.clone(),
+        partition(),
+        stmt.clone(),
+        RetryPolicy::default(),
+    )
+    .unwrap();
+    let mut reader1 =
+        KafkaReliablePartitionReader::new(partition(), gen1, None, 0, KafkaTombstonePolicy::Fail);
+    let sink1 = CountingSink {
+        delivered: Mutex::new(Vec::new()),
+    };
+    let clock = TestClock::new(0);
+    let m0 = reader1.prepare(KafkaRawRecord {
+        offset: 0,
+        payload: Some(br#"{"v":10}"#.to_vec()),
+    });
+    runner1
+        .process_and_checkpoint(&mut reader1, &m0, &[], &sink1, &store, &clock, &cancel1)
+        .await
+        .unwrap();
+    assert_eq!(sink1.delivered.lock().len(), 1);
+
+    // While generation 1 is active (and before generation 2 is activated), an
+    // unactivated generation 2 runner must be rejected before restoring or delivering effects.
+    let mut id2 = id1;
+    id2.generation = Generation(2);
+    let mut unactivated_runner = ReliableSingleSourceRunner::new(
+        id2.clone(),
+        partition(),
+        stmt.clone(),
+        RetryPolicy::default(),
+    )
+    .unwrap();
+    let restore_err = unactivated_runner
+        .restore_before_intake(&store, &mut [])
+        .await
+        .expect_err("unactivated generation 2 must not restore while generation 1 is active");
+    assert!(matches!(
+        restore_err,
+        ReliableRuntimeError::Checkpoint(CheckpointError::GenerationMismatch { .. })
+    ));
+    assert_eq!(unactivated_runner.status().restored_next_offset, None);
+
+    let mut unactivated_reader = KafkaReliablePartitionReader::new(
+        partition(),
+        Generation(2),
+        None,
+        1,
+        KafkaTombstonePolicy::Fail,
+    );
+    let unactivated_sink = CountingSink {
+        delivered: Mutex::new(Vec::new()),
+    };
+    let m1 = unactivated_reader.prepare(KafkaRawRecord {
+        offset: 1,
+        payload: Some(br#"{"v":20}"#.to_vec()),
+    });
+    let deliver_err = unactivated_runner
+        .process_and_checkpoint(
+            &mut unactivated_reader,
+            &m1,
+            &[],
+            &unactivated_sink,
+            &store,
+            &clock,
+            &cancel1,
+        )
+        .await
+        .expect_err("unactivated generation 2 must fail before emitting sink effects");
+    assert!(matches!(
+        deliver_err,
+        ReliableRuntimeError::Checkpoint(CheckpointError::GenerationMismatch { .. })
+    ));
+    assert_eq!(
+        unactivated_sink.delivered.lock().len(),
+        0,
+        "unactivated generation must never deliver records to the sink"
+    );
+
+    // After explicit revocation and activation of generation 2, restore and delivery succeed.
+    fence.fence_and_revoke(&rule, &cancel1).await.unwrap();
+    let (gen2, cancel2) = fence.activate_next(&rule).await.unwrap();
+    assert_eq!(gen2, Generation(2));
+
+    let mut runner2 =
+        ReliableSingleSourceRunner::new(id2, partition(), stmt, RetryPolicy::default()).unwrap();
+    let restored = runner2
+        .restore_before_intake(&store, &mut [])
+        .await
+        .expect("activated generation 2 must restore");
+    assert_eq!(restored, Some(1));
+
+    let mut reader2 = KafkaReliablePartitionReader::new(
+        partition(),
+        gen2,
+        None,
+        restored.unwrap(),
+        KafkaTombstonePolicy::Fail,
+    );
+    let sink2 = CountingSink {
+        delivered: Mutex::new(Vec::new()),
+    };
+    let m1_ok = reader2.prepare(KafkaRawRecord {
+        offset: 1,
+        payload: Some(br#"{"v":20}"#.to_vec()),
+    });
+    runner2
+        .process_and_checkpoint(&mut reader2, &m1_ok, &[], &sink2, &store, &clock, &cancel2)
+        .await
+        .unwrap();
+    assert_eq!(sink2.delivered.lock().len(), 1);
+}
+
+#[tokio::test]
+async fn repro_activation_preserves_invalid_source_cursor_generation_mismatch() {
+    let store = ReliableSqliteStore::open(":memory:", SqliteDurabilityMode::Full)
+        .await
+        .unwrap();
+    let fence = GenerationFence::new(&store);
+    let rule = RuleId::try_from("r_invalid_cursor_gen").unwrap();
+    let stmt = Parser::new("SELECT v FROM k").parse_select().unwrap();
+
+    let (gen1, cancel1) = fence.activate_next(&rule).await.unwrap();
+    assert_eq!(gen1, Generation(1));
+
+    // Persist a generation 1 checkpoint whose source cursor claims generation 99 at offset 42.
+    let mut bad_reader = KafkaReliablePartitionReader::new(
+        partition(),
+        Generation(99),
+        None,
+        41,
+        KafkaTombstonePolicy::Fail,
+    );
+    let bad_pos = bad_reader
+        .prepare(KafkaRawRecord {
+            offset: 41,
+            payload: Some(br#"{"v":42}"#.to_vec()),
+        })
+        .position;
+    let mut env = envelope("r_invalid_cursor_gen", 1);
+    env.metadata.source_positions = vec![bad_pos];
+    store.commit_checkpoint(env).await.unwrap();
+
+    let id1 = identity("r_invalid_cursor_gen", 1);
+    let mut runner1 = ReliableSingleSourceRunner::new(
+        id1.clone(),
+        partition(),
+        stmt.clone(),
+        RetryPolicy::default(),
+    )
+    .unwrap();
+    let err_before = runner1
+        .restore_before_intake(&store, &mut [])
+        .await
+        .expect_err("generation 1 checkpoint with gen 99 cursor must fail before activation");
+    assert!(matches!(
+        err_before,
+        ReliableRuntimeError::Checkpoint(CheckpointError::SourcePositionGenerationMismatch)
+    ));
+
+    fence.fence_and_revoke(&rule, &cancel1).await.unwrap();
+    let (gen2, _cancel2) = fence.activate_next(&rule).await.unwrap();
+    assert_eq!(gen2, Generation(2));
+
+    let mut id2 = id1;
+    id2.generation = gen2;
+    let mut runner2 =
+        ReliableSingleSourceRunner::new(id2, partition(), stmt, RetryPolicy::default()).unwrap();
+    let err_after = runner2
+        .restore_before_intake(&store, &mut [])
+        .await
+        .expect_err("activating generation 2 must not rewrite invalid gen 99 cursor");
+    assert!(matches!(
+        err_after,
+        ReliableRuntimeError::Checkpoint(CheckpointError::SourcePositionGenerationMismatch)
+    ));
+}

@@ -897,7 +897,10 @@ pub mod reliable {
             store: &dyn CheckpointStore,
             participants: &mut [&mut dyn StateParticipant],
         ) -> Result<Option<i64>, ReliableRuntimeError> {
-            let Some(mut envelope) = store.load_latest(&self.identity.rule_id).await? else {
+            store
+                .verify_generation(&self.identity.rule_id, self.identity.generation)
+                .await?;
+            let Some(envelope) = store.load_latest(&self.identity.rule_id).await? else {
                 return Ok(None);
             };
             let mut expected_participants: std::collections::BTreeSet<OperatorId> = participants
@@ -910,7 +913,6 @@ pub mod reliable {
                         .expect("valid static runner window operator id"),
                 );
             }
-            envelope.handoff_to_generation(self.identity.generation)?;
             envelope.validate_restore(&self.identity, &expected_participants)?;
 
             let restored_window = if self.stmt.window.is_some() {
@@ -1076,6 +1078,9 @@ pub mod reliable {
             cancellation: &DeadlineCancellation,
         ) -> Result<CheckpointId, ReliableRuntimeError> {
             reader.validate_commit(prepared)?;
+            store
+                .verify_generation(&self.identity.rule_id, self.identity.generation)
+                .await?;
             let records: Vec<StreamRecord> = prepared.decode(reader.tombstone_policy())?;
             let prev_window_buffer = self.window_buffer.clone();
             let prev_tumbling_start_ms = self.tumbling_start_ms;
@@ -1517,14 +1522,16 @@ pub mod reliable {
         ) -> Result<Vec<rekuiper_core::contracts::SourcePosition>, ReliableRuntimeError> {
             let refs: Vec<&dyn StateParticipant> = participants.iter().map(|p| &**p).collect();
             validate_participant_coverage(&self.required_participants, &refs)?;
-            let Some(mut envelope) = store.load_latest(&self.identity.rule_id).await? else {
+            store
+                .verify_generation(&self.identity.rule_id, self.identity.generation)
+                .await?;
+            let Some(envelope) = store.load_latest(&self.identity.rule_id).await? else {
                 return Ok(Vec::new());
             };
             let expected_participants: std::collections::BTreeSet<OperatorId> = participants
                 .iter()
                 .map(|p| p.operator_id().clone())
                 .collect();
-            envelope.handoff_to_generation(self.identity.generation)?;
             envelope.validate_restore(&self.identity, &expected_participants)?;
             for participant in participants.iter_mut() {
                 let op_id = participant.operator_id().clone();
@@ -1551,6 +1558,9 @@ pub mod reliable {
             cancellation: &DeadlineCancellation,
         ) -> Result<CheckpointId, ReliableRuntimeError> {
             validate_participant_coverage(&self.required_participants, participants)?;
+            store
+                .verify_generation(&self.identity.rule_id, self.identity.generation)
+                .await?;
             let missing_actions: Vec<String> = self
                 .expected_actions
                 .difference(acked_actions)
