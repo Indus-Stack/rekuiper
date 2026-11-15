@@ -319,8 +319,11 @@ impl KafkaSource {
                             Ok((records, _high_watermark)) => {
                                 for rec in records {
                                     offset = rec.offset + 1;
-                                    let payload = rec.record.value.as_deref().unwrap_or_default();
-                                    match decode_kafka_payload(payload, Some(topic)) {
+                                    match decode_kafka_record_with_meta(
+                                        &rec,
+                                        Some(topic),
+                                        self.config.partition,
+                                    ) {
                                         Ok(decoded) => {
                                             for record in decoded {
                                                 // All subscribers dropped: shut down cleanly.
@@ -363,14 +366,99 @@ impl KafkaSource {
 
 /// Decode one Kafka record payload: a JSON object yields a single record, a
 /// JSON array yields one record per object element.
+/// Declares metadata capabilities of the underlying Kafka client (`rskafka`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KafkaMetadataCapabilities {
+    /// `rskafka::record::Record::headers` is a `BTreeMap<String, Vec<u8>>`, so
+    /// duplicate header keys cannot be preserved by the client.
+    pub preserves_duplicate_headers: bool,
+    pub limitation: &'static str,
+}
+
+pub const KAFKA_METADATA_CAPABILITIES: KafkaMetadataCapabilities = KafkaMetadataCapabilities {
+    preserves_duplicate_headers: false,
+    limitation: "rskafka::record::Record::headers uses BTreeMap<String, Vec<u8>> and collapses duplicate keys",
+};
+
+/// Decodes a broker `RecordAndOffset` at the connector boundary, attaching shared
+/// `RecordMeta` (partition, offset, timestamp, binary/UTF-8 key, headers) across all
+/// decoded rows without mutating payload `data`.
+pub fn decode_kafka_record_with_meta(
+    rec: &rskafka::record::RecordAndOffset,
+    topic: Option<&str>,
+    partition: i32,
+) -> Result<Vec<StreamRecord>> {
+    use base64::Engine as _;
+
+    let payload = rec.record.value.as_deref().unwrap_or_default();
+    let mut custom = IndexMap::new();
+    custom.insert("partition".to_owned(), Value::from(partition));
+    custom.insert("offset".to_owned(), Value::from(rec.offset));
+    custom.insert(
+        "timestamp".to_owned(),
+        Value::from(rec.record.timestamp.timestamp_millis()),
+    );
+    custom.insert(
+        "duplicateHeadersSupported".to_owned(),
+        Value::from(KAFKA_METADATA_CAPABILITIES.preserves_duplicate_headers),
+    );
+
+    if let Some(key_bytes) = rec.record.key.as_deref() {
+        let key_b64 = base64::engine::general_purpose::STANDARD.encode(key_bytes);
+        let key_val = match std::str::from_utf8(key_bytes) {
+            Ok(s) => Value::String(s.to_owned()),
+            Err(_) => Value::String(key_b64.clone()),
+        };
+        custom.insert("key".to_owned(), key_val);
+        custom.insert("keyBase64".to_owned(), Value::String(key_b64));
+    }
+
+    if !rec.record.headers.is_empty() {
+        let mut headers_compat = serde_json::Map::new();
+        let mut headers_raw = serde_json::Map::new();
+        for (k, v) in &rec.record.headers {
+            let b64 = base64::engine::general_purpose::STANDARD.encode(v);
+            let val = match std::str::from_utf8(v) {
+                Ok(s) => Value::String(s.to_owned()),
+                Err(_) => Value::String(b64.clone()),
+            };
+            headers_compat.insert(k.clone(), val);
+            headers_raw.insert(k.clone(), Value::String(b64));
+        }
+        custom.insert("headers".to_owned(), Value::Object(headers_compat));
+        custom.insert("headersRawBase64".to_owned(), Value::Object(headers_raw));
+    }
+
+    let rec_meta = Arc::new(RecordMeta::new().with_source("kafka").with_custom(custom));
+    let rec_meta = if let Some(t) = topic {
+        Arc::new(RecordMeta {
+            topic: Some(Arc::from(t)),
+            source: rec_meta.source.clone(),
+            custom: rec_meta.custom.clone(),
+        })
+    } else {
+        rec_meta
+    };
+
+    decode_kafka_payload_with_meta(payload, rec_meta)
+}
+
+#[allow(dead_code)]
 fn decode_kafka_payload(payload: &[u8], topic: Option<&str>) -> Result<Vec<StreamRecord>> {
-    let value: Value =
-        serde_json::from_slice(payload).context("Kafka payload is not valid JSON")?;
     let rec_meta = Arc::new(RecordMeta {
         topic: topic.map(Arc::from),
         source: Some(Arc::from("kafka")),
         custom: None,
     });
+    decode_kafka_payload_with_meta(payload, rec_meta)
+}
+
+fn decode_kafka_payload_with_meta(
+    payload: &[u8],
+    rec_meta: Arc<RecordMeta>,
+) -> Result<Vec<StreamRecord>> {
+    let value: Value =
+        serde_json::from_slice(payload).context("Kafka payload is not valid JSON")?;
     match value {
         Value::Object(map) => {
             let mut rec = StreamRecord::new(map.into_iter().collect::<IndexMap<_, _>>());

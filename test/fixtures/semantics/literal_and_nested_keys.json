@@ -1,0 +1,30 @@
+{
+  "category": "literal_and_nested_keys",
+  "contract": "Literal keys with dots vs nested path lookup (P01-T09)",
+  "cases": [
+    {
+      "id": "backtick_literal_dotted_key",
+      "contract_citation": "Backticked identifier resolves literal key containing dot",
+      "disposition": "intentional",
+      "sql": "SELECT `a.b` AS v FROM s",
+      "input": { "a.b": 99, "a": { "b": 1 } },
+      "expected": { "kind": "row", "row": { "v": 99 } }
+    },
+    {
+      "id": "unquoted_nested_key",
+      "contract_citation": "Unquoted dotted identifier navigates nested object",
+      "disposition": "intentional",
+      "sql": "SELECT a.b AS v FROM s",
+      "input": { "a.b": 99, "a": { "b": 1 } },
+      "expected": { "kind": "row", "row": { "v": 1 } }
+    },
+    {
+      "id": "string_literal_vs_column",
+      "contract_citation": "Single-quoted string literal is not resolved as column name",
+      "disposition": "intentional",
+      "sql": "SELECT 'a' AS v FROM s",
+      "input": { "a": 123 },
+      "expected": { "kind": "row", "row": { "v": "a" } }
+    }
+  ]
+}

@@ -477,7 +477,7 @@ pub fn resend_copy(cfg: &CacheConfig, record: &StreamRecord) -> StreamRecord {
     copy
 }
 
-/// Cache directory for one rule action.
+/// Cache directory for one rule action by positional index.
 pub fn cache_dir(root: &Path, rule_id: &str, action_index: usize) -> PathBuf {
     let safe: String = rule_id
         .chars()
@@ -490,6 +490,193 @@ pub fn cache_dir(root: &Path, rule_id: &str, action_index: usize) -> PathBuf {
         })
         .collect();
     root.join(safe).join(action_index.to_string())
+}
+
+/// Cache directory keyed by stable [`rekuiper_core::contracts::ActionId`].
+pub fn cache_dir_for_identity(
+    root: &Path,
+    rule_id: &str,
+    action_id: &rekuiper_core::contracts::ActionId,
+) -> PathBuf {
+    let safe_rule: String = rule_id
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let safe_action: String = action_id
+        .as_str()
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    root.join(safe_rule).join(safe_action)
+}
+
+/// Versioned backlog ownership manifest stored alongside a sink cache directory.
+/// Credentials are intentionally excluded from `destination_fingerprint`.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct CacheOwnershipManifest {
+    pub version: u32,
+    pub rule_id: String,
+    pub action_id: String,
+    pub sink_type: String,
+    pub destination_fingerprint: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CacheOwnershipError {
+    UnownedLegacyCache,
+    OwnershipMismatch { expected: String, actual: String },
+    Storage(String),
+}
+
+impl std::fmt::Display for CacheOwnershipError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::UnownedLegacyCache => {
+                write!(
+                    f,
+                    "existing cache directory has no ownership manifest and cannot be silently adopted"
+                )
+            }
+            Self::OwnershipMismatch { expected, actual } => {
+                write!(
+                    f,
+                    "cache ownership mismatch: expected {expected}, found {actual}"
+                )
+            }
+            Self::Storage(msg) => write!(f, "cache ownership storage error: {msg}"),
+        }
+    }
+}
+
+impl std::error::Error for CacheOwnershipError {}
+
+fn is_credential_prop(key: &str) -> bool {
+    let lower = key.to_ascii_lowercase();
+    matches!(
+        lower.as_str(),
+        "password"
+            | "pass"
+            | "secret"
+            | "token"
+            | "apikey"
+            | "api_key"
+            | "auth"
+            | "authorization"
+            | "headers"
+            | "username"
+            | "user"
+            | "saslpassword"
+            | "sasl_password"
+            | "saslusername"
+            | "sasl_username"
+            | "cert"
+            | "key"
+            | "privatekey"
+            | "private_key"
+    )
+}
+
+/// Computes a deterministic destination ownership fingerprint excluding credentials.
+pub fn compute_destination_fingerprint(sink_type: &str, props: &HashMap<String, Value>) -> String {
+    let mut non_cred = std::collections::BTreeMap::new();
+    for (k, v) in props {
+        if k != "name" && !is_credential_prop(k) {
+            non_cred.insert(k.as_str(), v);
+        }
+    }
+    let payload = serde_json::to_vec(&(sink_type, non_cred)).unwrap_or_default();
+    rekuiper_core::contracts::ContentChecksum::sha256_bytes(&payload)
+        .as_str()
+        .to_owned()
+}
+
+impl CacheOwnershipManifest {
+    pub fn new(
+        rule_id: impl Into<String>,
+        action_id: &rekuiper_core::contracts::ActionId,
+        sink_type: impl Into<String>,
+        props: &HashMap<String, Value>,
+    ) -> Self {
+        let sink_type = sink_type.into();
+        let destination_fingerprint = compute_destination_fingerprint(&sink_type, props);
+        Self {
+            version: 1,
+            rule_id: rule_id.into(),
+            action_id: action_id.as_str().to_owned(),
+            sink_type,
+            destination_fingerprint,
+        }
+    }
+}
+
+impl SinkCache {
+    /// Opens a sink cache only if ownership manifest matches (or directory is fresh).
+    /// Refuses to silently adopt an unowned legacy cache or a different destination.
+    pub fn open_with_ownership(
+        cfg: CacheConfig,
+        dir: PathBuf,
+        manifest: &CacheOwnershipManifest,
+    ) -> Result<Self, CacheOwnershipError> {
+        let manifest_path = dir.join("ownership_manifest.json");
+        if manifest_path.exists() {
+            let raw = std::fs::read_to_string(&manifest_path)
+                .map_err(|e| CacheOwnershipError::Storage(e.to_string()))?;
+            let existing: CacheOwnershipManifest = serde_json::from_str(&raw)
+                .map_err(|e| CacheOwnershipError::Storage(e.to_string()))?;
+            if existing.version != manifest.version
+                || existing.rule_id != manifest.rule_id
+                || existing.action_id != manifest.action_id
+                || existing.sink_type != manifest.sink_type
+                || existing.destination_fingerprint != manifest.destination_fingerprint
+            {
+                return Err(CacheOwnershipError::OwnershipMismatch {
+                    expected: format!(
+                        "{}:{}:{}:{}",
+                        manifest.rule_id,
+                        manifest.action_id,
+                        manifest.sink_type,
+                        manifest.destination_fingerprint
+                    ),
+                    actual: format!(
+                        "{}:{}:{}:{}",
+                        existing.rule_id,
+                        existing.action_id,
+                        existing.sink_type,
+                        existing.destination_fingerprint
+                    ),
+                });
+            }
+        } else {
+            if dir.exists() {
+                let has_entries = std::fs::read_dir(&dir)
+                    .map_err(|e| CacheOwnershipError::Storage(e.to_string()))?
+                    .next()
+                    .is_some();
+                if has_entries {
+                    return Err(CacheOwnershipError::UnownedLegacyCache);
+                }
+            }
+            std::fs::create_dir_all(&dir)
+                .map_err(|e| CacheOwnershipError::Storage(e.to_string()))?;
+            let encoded = serde_json::to_vec_pretty(manifest)
+                .map_err(|e| CacheOwnershipError::Storage(e.to_string()))?;
+            std::fs::write(&manifest_path, encoded)
+                .map_err(|e| CacheOwnershipError::Storage(e.to_string()))?;
+        }
+        Ok(Self::open(cfg, dir))
+    }
 }
 
 #[cfg(test)]

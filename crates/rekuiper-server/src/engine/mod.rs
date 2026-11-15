@@ -3,6 +3,7 @@ pub mod batching;
 pub mod dag;
 pub mod dlq;
 pub mod joins;
+pub mod lookup_runtime;
 pub mod operators;
 pub mod outbox_dispatch;
 pub mod reliable_input;

@@ -6,6 +6,7 @@ use rekuiper_connectors::{
     MqttConfig, MqttSink, PayloadFormat, RabbitMqConfig, RabbitMqSink, RedisSink, RedisSinkConfig,
     Sink, SqlConnectorConfig, SqlSink, WebSocketConfig, WebSocketSink,
 };
+use rekuiper_core::contracts::{resolve_action_identities, ActionId};
 use rekuiper_core::model::StreamRecord;
 use rekuiper_core::{RuleCounters, RuleManager, StreamBus};
 use rekuiper_sql::eval::RowLookup;
@@ -277,6 +278,13 @@ pub(crate) fn to_sink_payload(val: Value, send_single: bool) -> Value {
 pub(crate) const BATCH_ROWS_KEY: &str = "__batch_rows__";
 
 /// One sink action parsed once at rule start (never per record).
+/// Validates optional action names and resolves stable per-action identities.
+pub fn resolve_rule_action_identities(
+    actions: &[HashMap<String, HashMap<String, Value>>],
+) -> anyhow::Result<Vec<ActionId>> {
+    resolve_action_identities(actions).map_err(|e| anyhow::anyhow!(e))
+}
+
 #[derive(Debug, Clone)]
 pub(crate) enum PreparedAction {
     Log,

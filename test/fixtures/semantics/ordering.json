@@ -1,0 +1,30 @@
+{
+  "category": "ordering",
+  "contract": "Comparison and CASE/relational ordering semantics (P01-T11)",
+  "cases": [
+    {
+      "id": "string_lexicographic_lt",
+      "contract_citation": "UTF-8 lexicographic ordering on strings",
+      "disposition": "intentional",
+      "sql": "SELECT id FROM s WHERE a < b",
+      "input": { "id": 1, "a": "alpha", "b": "beta" },
+      "expected": { "kind": "row", "row": { "id": 1 } }
+    },
+    {
+      "id": "numeric_lt_cross_type",
+      "contract_citation": "Numeric ordering across integer and float",
+      "disposition": "intentional",
+      "sql": "SELECT id FROM s WHERE a < b",
+      "input": { "id": 2, "a": 2, "b": 2.5 },
+      "expected": { "kind": "row", "row": { "id": 2 } }
+    },
+    {
+      "id": "null_lt_filtered",
+      "contract_citation": "SQL-92 3VL: NULL < 1 is UNKNOWN (filtered out in WHERE)",
+      "disposition": "intentional",
+      "sql": "SELECT id FROM s WHERE a < 1",
+      "input": { "id": 3, "a": null },
+      "expected": { "kind": "filtered_out" }
+    }
+  ]
+}

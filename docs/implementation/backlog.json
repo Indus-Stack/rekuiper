@@ -73,8 +73,11 @@
       "build_after": [],
       "integrate_after": [],
       "conditional_dependencies": [],
-      "status": "proposed",
-      "evidence": []
+      "status": "component_done",
+      "evidence": [
+        "docs/implementation/dependencies.md",
+        "docs/implementation/tickets/C06.md"
+      ]
     },
     {
       "id": "C07",
@@ -107,8 +110,11 @@
       "build_after": [],
       "integrate_after": [],
       "conditional_dependencies": [],
-      "status": "proposed",
-      "evidence": []
+      "status": "component_done",
+      "evidence": [
+        "crates/rekuiper-server/tests/ticket_a01_t01.rs",
+        "docs/implementation/tickets/A01-T01.md"
+      ]
     },
     {
       "id": "A01-T02",
@@ -127,8 +133,14 @@
       "build_after": [],
       "integrate_after": [],
       "conditional_dependencies": [],
-      "status": "proposed",
-      "evidence": []
+      "status": "component_done",
+      "evidence": [
+        "crates/rekuiper-connectors/src/image_paths.rs",
+        "crates/rekuiper-connectors/src/image_sink.rs",
+        "crates/rekuiper-connectors/src/lib.rs",
+        "crates/rekuiper-connectors/tests/ticket_a02_t01.rs",
+        "docs/implementation/tickets/A02-T01.md"
+      ]
     },
     {
       "id": "A02-T02",
@@ -177,8 +189,12 @@
       "build_after": [],
       "integrate_after": [],
       "conditional_dependencies": [],
-      "status": "proposed",
-      "evidence": []
+      "status": "component_done",
+      "evidence": [
+        "crates/rekuiper-sql/src/eval/array.rs",
+        "crates/rekuiper-sql/tests/ticket_a07_t01.rs",
+        "docs/implementation/tickets/A07-T01.md"
+      ]
     },
     {
       "id": "A07-T02",
@@ -186,8 +202,12 @@
       "build_after": [],
       "integrate_after": [],
       "conditional_dependencies": [],
-      "status": "proposed",
-      "evidence": []
+      "status": "component_done",
+      "evidence": [
+        "crates/rekuiper-sql/src/eval/array.rs",
+        "crates/rekuiper-sql/tests/ticket_a07_t02.rs",
+        "docs/implementation/tickets/A07-T02.md"
+      ]
     },
     {
       "id": "A07-T03",
@@ -204,8 +224,17 @@
       "build_after": [],
       "integrate_after": [],
       "conditional_dependencies": [],
-      "status": "proposed",
-      "evidence": []
+      "status": "component_done",
+      "evidence": [
+        "test/fixtures/semantics/null_and_missing.json",
+        "test/fixtures/semantics/numeric_comparison_overflow.json",
+        "test/fixtures/semantics/deep_values.json",
+        "test/fixtures/semantics/literal_and_nested_keys.json",
+        "test/fixtures/semantics/ordering.json",
+        "test/fixtures/semantics/timestamp_conversions.json",
+        "crates/rekuiper-sql/tests/ticket_p01_t01.rs",
+        "docs/implementation/tickets/P01-T01.md"
+      ]
     },
     {
       "id": "P01-T02",
@@ -468,8 +497,10 @@
       ],
       "integrate_after": [],
       "conditional_dependencies": [],
-      "status": "proposed",
-      "evidence": []
+      "status": "component_done",
+      "evidence": [
+        "docs/implementation/tickets/P02-T07.md"
+      ]
     },
     {
       "id": "P02-T08",
@@ -479,8 +510,10 @@
       ],
       "integrate_after": [],
       "conditional_dependencies": [],
-      "status": "proposed",
-      "evidence": []
+      "status": "component_done",
+      "evidence": [
+        "docs/implementation/tickets/P02-T08.md"
+      ]
     },
     {
       "id": "P03-T01",
@@ -724,8 +757,10 @@
       ],
       "integrate_after": [],
       "conditional_dependencies": [],
-      "status": "proposed",
-      "evidence": []
+      "status": "component_done",
+      "evidence": [
+        "docs/implementation/tickets/P03-T16.md"
+      ]
     },
     {
       "id": "P03-T17",
@@ -802,8 +837,13 @@
       ],
       "integrate_after": [],
       "conditional_dependencies": [],
-      "status": "proposed",
-      "evidence": []
+      "status": "component_done",
+      "evidence": [
+        "crates/rekuiper-core/src/reliability/segmented_outbox.rs",
+        "crates/rekuiper-core/src/reliability/mod.rs",
+        "crates/rekuiper-core/tests/ticket_p03_t21.rs",
+        "docs/implementation/tickets/P03-T21.md"
+      ]
     },
     {
       "id": "P03-T22",
@@ -1012,8 +1052,14 @@
       ],
       "integrate_after": [],
       "conditional_dependencies": [],
-      "status": "proposed",
-      "evidence": []
+      "status": "component_done",
+      "evidence": [
+        "crates/rekuiper-server/src/testing/mod.rs",
+        "crates/rekuiper-server/src/testing/fixture_runner.rs",
+        "crates/rekuiper-server/src/lib.rs",
+        "crates/rekuiper-server/tests/ticket_p06_t01.rs",
+        "docs/implementation/tickets/P06-T01.md"
+      ]
     },
     {
       "id": "P06-T02",
@@ -1587,8 +1633,14 @@
       ],
       "integrate_after": [],
       "conditional_dependencies": [],
-      "status": "proposed",
-      "evidence": []
+      "status": "component_done",
+      "evidence": [
+        "crates/rekuiper-core/src/contracts/identity.rs",
+        "crates/rekuiper-server/src/sink_cache.rs",
+        "crates/rekuiper-server/src/engine/sinks.rs",
+        "crates/rekuiper-server/tests/ticket_p11_t01.rs",
+        "docs/implementation/tickets/P11-T01.md"
+      ]
     },
     {
       "id": "P11-T02",
@@ -1599,8 +1651,15 @@
       ],
       "integrate_after": [],
       "conditional_dependencies": [],
-      "status": "proposed",
-      "evidence": []
+      "status": "component_done",
+      "evidence": [
+        "crates/rekuiper-core/src/catalog/mod.rs",
+        "crates/rekuiper-core/src/catalog/model.rs",
+        "crates/rekuiper-core/src/catalog/store.rs",
+        "crates/rekuiper-core/src/lib.rs",
+        "crates/rekuiper-core/tests/ticket_p11_t02.rs",
+        "docs/implementation/tickets/P11-T02.md"
+      ]
     },
     {
       "id": "P11-T03",
@@ -2031,8 +2090,13 @@
       ],
       "integrate_after": [],
       "conditional_dependencies": [],
-      "status": "proposed",
-      "evidence": []
+      "status": "component_done",
+      "evidence": [
+        "crates/rekuiper-core/src/model.rs",
+        "crates/rekuiper-connectors/src/kafka.rs",
+        "crates/rekuiper-connectors/tests/ticket_p15_t01.rs",
+        "docs/implementation/tickets/P15-T01.md"
+      ]
     },
     {
       "id": "P15-T02",
@@ -2040,8 +2104,12 @@
       "build_after": [],
       "integrate_after": [],
       "conditional_dependencies": [],
-      "status": "proposed",
-      "evidence": []
+      "status": "component_done",
+      "evidence": [
+        "crates/rekuiper-connectors/src/codec.rs",
+        "crates/rekuiper-connectors/tests/ticket_p15_t02.rs",
+        "docs/implementation/tickets/P15-T02.md"
+      ]
     },
     {
       "id": "P15-T03",

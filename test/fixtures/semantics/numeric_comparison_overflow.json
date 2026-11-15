@@ -1,0 +1,38 @@
+{
+  "category": "numeric_comparison_overflow",
+  "contract": "Exact integer/float comparisons and arithmetic boundary errors (P01-T08)",
+  "cases": [
+    {
+      "id": "int_float_cross_type_eq",
+      "contract_citation": "Numeric equality: 1 = 1.0 is true",
+      "disposition": "intentional",
+      "sql": "SELECT id FROM s WHERE a = b",
+      "input": { "id": 1, "a": 1, "b": 1.0 },
+      "expected": { "kind": "row", "row": { "id": 1 } }
+    },
+    {
+      "id": "negative_zero_eq_zero",
+      "contract_citation": "IEEE-754: -0.0 = 0 is true",
+      "disposition": "intentional",
+      "sql": "SELECT id FROM s WHERE a = 0",
+      "input": { "id": 2, "a": -0.0 },
+      "expected": { "kind": "row", "row": { "id": 2 } }
+    },
+    {
+      "id": "div_by_zero_error",
+      "contract_citation": "Division by zero must fail visibly in fallible evaluation",
+      "disposition": "intentional",
+      "sql": "SELECT 10 / 0 AS v FROM s",
+      "input": {},
+      "expected": { "kind": "error" }
+    },
+    {
+      "id": "i64_max_boundary_passthrough",
+      "contract_citation": "64-bit signed integer boundary preserved without precision loss",
+      "disposition": "intentional",
+      "sql": "SELECT a AS v FROM s",
+      "input": { "a": 9223372036854775807 },
+      "expected": { "kind": "row", "row": { "v": 9223372036854775807 } }
+    }
+  ]
+}

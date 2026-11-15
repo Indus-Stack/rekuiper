@@ -1,3 +1,4 @@
+pub mod catalog;
 pub mod contracts;
 pub mod kv;
 pub mod manager;

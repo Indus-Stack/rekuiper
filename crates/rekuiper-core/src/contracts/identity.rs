@@ -125,3 +125,67 @@ pub struct Generation(pub u64);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct CheckpointId(pub u64);
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum ActionIdentityError {
+    #[error("action entry must contain exactly one sink type")]
+    InvalidActionShape,
+    #[error("invalid action name '{0}': {1}")]
+    InvalidName(String, InvalidId),
+    #[error("duplicate action name '{0}' within rule")]
+    DuplicateName(String),
+}
+
+/// Resolves stable [`ActionId`] values for a rule's action list.
+///
+/// Named actions (`props["name"]`) receive `named.<name>` so reordering actions
+/// preserves their identity and cache ownership. Duplicate names fail visibly.
+/// Unnamed actions preserve positional `index.<idx>` identifiers.
+pub fn resolve_action_identities(
+    actions: &[std::collections::HashMap<
+        String,
+        std::collections::HashMap<String, serde_json::Value>,
+    >],
+) -> Result<Vec<ActionId>, ActionIdentityError> {
+    let mut seen_names = std::collections::BTreeSet::new();
+    let mut out = Vec::with_capacity(actions.len());
+
+    for (idx, action) in actions.iter().enumerate() {
+        if action.len() != 1 {
+            return Err(ActionIdentityError::InvalidActionShape);
+        }
+        let (_, props) = action.iter().next().expect("checked len == 1");
+        if let Some(name_val) = props.get("name") {
+            let name = name_val
+                .as_str()
+                .ok_or_else(|| {
+                    ActionIdentityError::InvalidName(
+                        "<non-string>".to_owned(),
+                        InvalidId::Characters,
+                    )
+                })?
+                .trim();
+            if name.is_empty() {
+                return Err(ActionIdentityError::InvalidName(
+                    name.to_owned(),
+                    InvalidId::Length,
+                ));
+            }
+            if let Err(err) = validate_id(name) {
+                return Err(ActionIdentityError::InvalidName(name.to_owned(), err));
+            }
+            if !seen_names.insert(name.to_owned()) {
+                return Err(ActionIdentityError::DuplicateName(name.to_owned()));
+            }
+            let id = ActionId::try_from(format!("named.{name}"))
+                .map_err(|err| ActionIdentityError::InvalidName(name.to_owned(), err))?;
+            out.push(id);
+        } else {
+            let id = ActionId::try_from(format!("index.{idx}"))
+                .map_err(|err| ActionIdentityError::InvalidName(format!("index.{idx}"), err))?;
+            out.push(id);
+        }
+    }
+
+    Ok(out)
+}

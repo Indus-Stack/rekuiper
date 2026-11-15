@@ -1,0 +1,46 @@
+{
+  "category": "null_and_missing",
+  "contract": "SQL three-valued logic and null vs missing field handling (P01-T01 / P01-T07)",
+  "cases": [
+    {
+      "id": "null_is_null_true",
+      "contract_citation": "SQL-92 IS NULL predicate: explicit null satisfies IS NULL",
+      "disposition": "intentional",
+      "sql": "SELECT id FROM s WHERE x IS NULL",
+      "input": { "id": 1, "x": null },
+      "expected": { "kind": "row", "row": { "id": 1 } }
+    },
+    {
+      "id": "missing_is_null_true",
+      "contract_citation": "JSON stream semantics: missing key evaluates as null for IS NULL",
+      "disposition": "intentional",
+      "sql": "SELECT id FROM s WHERE missing_col IS NULL",
+      "input": { "id": 2 },
+      "expected": { "kind": "row", "row": { "id": 2 } }
+    },
+    {
+      "id": "null_equals_null_filtered",
+      "contract_citation": "SQL-92 3VL: NULL = NULL is UNKNOWN (falsy in WHERE)",
+      "disposition": "intentional",
+      "sql": "SELECT id FROM s WHERE a = b",
+      "input": { "id": 3, "a": null, "b": null },
+      "expected": { "kind": "filtered_out" }
+    },
+    {
+      "id": "coalesce_skips_null_and_missing",
+      "contract_citation": "COALESCE returns first non-null argument",
+      "disposition": "intentional",
+      "sql": "SELECT coalesce(missing_col, x, 42) AS v FROM s",
+      "input": { "x": null },
+      "expected": { "kind": "row", "row": { "v": 42 } }
+    },
+    {
+      "id": "null_arithmetic_yields_null",
+      "contract_citation": "SQL-92: arithmetic with NULL yields NULL",
+      "disposition": "intentional",
+      "sql": "SELECT a + 1 AS v FROM s",
+      "input": { "a": null },
+      "expected": { "kind": "row", "row": { "v": null } }
+    }
+  ]
+}
