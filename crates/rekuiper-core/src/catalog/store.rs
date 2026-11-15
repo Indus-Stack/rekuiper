@@ -23,7 +23,8 @@ impl CatalogStore {
         let url = if path_str == ":memory:" {
             "sqlite::memory:".to_owned()
         } else {
-            format!("sqlite://{path_str}")
+            let normalized = path_str.replace('\\', "/");
+            format!("sqlite://{normalized}")
         };
         let opts = SqliteConnectOptions::from_str(&url)
             .map_err(|e| CatalogError::Storage(e.to_string()))?

@@ -90,10 +90,12 @@ pub enum OutboxError {
 }
 
 /// Computes a deterministic, action-order-independent `EffectId` from stable
-/// rule generation, operator identity, sequence number, and output ordinal.
+/// rule identity, operator identity, action identity, source sequence, and
+/// output ordinal. Generation is intentionally excluded so replayed source
+/// sequences produce the same idempotency key across rule restarts.
 pub fn deterministic_effect_id(
     rule_id: &RuleId,
-    generation: Generation,
+    _generation: Generation,
     operator_id: &OperatorId,
     action_id: &ActionId,
     sequence: u64,
@@ -115,8 +117,7 @@ pub fn deterministic_effect_id(
         }
     }
     let raw = format!(
-        "eff_{}_{}_{}_{}_{:016x}",
-        generation.0,
+        "eff_{}_{}_{}_{:016x}",
         sequence,
         ordinal,
         action_id.as_str(),
@@ -125,10 +126,7 @@ pub fn deterministic_effect_id(
     if raw.len() <= 128 {
         EffectId::try_from(raw)
     } else {
-        EffectId::try_from(format!(
-            "eff_{}_{}_{}_{:016x}",
-            generation.0, sequence, ordinal, hash
-        ))
+        EffectId::try_from(format!("eff_{}_{}_{:016x}", sequence, ordinal, hash))
     }
 }
 

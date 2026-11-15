@@ -377,9 +377,9 @@ pub async fn reconcile_manifest_internal(
             continue;
         }
 
-        // Rule is new or modified: stop old version if present
+        // Validate new rule definition BEFORE stopping or deleting any existing rule.
         let is_restart = existing_rule_ids.contains(rule_id);
-        if is_restart {
+        async fn stop_and_delete_existing(state: &AppState, rule_id: &str) {
             cancel_rule_source(state, rule_id);
             let _ = state.rule_manager.stop_rule(rule_id).await;
             let _ = state.rule_manager.delete_rule(rule_id).await;
@@ -404,16 +404,30 @@ pub async fn reconcile_manifest_internal(
                             error = %e,
                             "Skipping invalid declarative native DAG rule"
                         );
+                        report.rules_failed += 1;
+                        report
+                            .rule_errors
+                            .insert(rule_id.clone(), format!("Invalid graph: {e}"));
+                        report.status = "partial_error".to_string();
                         continue;
                     }
                     if rekuiper_sql::planning::is_durable_options(
                         resolved_rule_def.options.as_ref(),
                     ) {
+                        let msg =
+                            "Native DAG rules do not support durable/checkpointEnabled options"
+                                .to_string();
                         tracing::warn!(
                             rule_id = %rule_id,
-                            "Skipping declarative native DAG rule with unsupported durable/checkpointEnabled options"
+                            "{msg}"
                         );
+                        report.rules_failed += 1;
+                        report.rule_errors.insert(rule_id.clone(), msg);
+                        report.status = "partial_error".to_string();
                         continue;
+                    }
+                    if is_restart {
+                        stop_and_delete_existing(state, rule_id).await;
                     }
                     let _ = state
                         .rule_manager
@@ -451,11 +465,17 @@ pub async fn reconcile_manifest_internal(
             }
         }
 
-        // Parse and start new rule actor
+        // Parse SQL before stopping/deleting any existing rule
         let mut parser = Parser::new(&resolved_rule_def.sql);
         let select_stmt = parser
             .parse_select()
             .map_err(|e| format!("Failed to parse SQL for rule '{}': {}", rule_id, e))?;
+
+        if is_restart {
+            stop_and_delete_existing(state, rule_id).await;
+        }
+
+        // Start new rule actor
 
         let _ = state
             .rule_manager

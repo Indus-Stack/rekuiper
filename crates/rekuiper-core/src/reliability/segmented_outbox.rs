@@ -7,8 +7,8 @@ use super::outbox::{
     EnqueueReport, OutboxCapacity, OutboxEntry, OutboxError, DEFAULT_CLAIM_LEASE_MS,
 };
 use crate::contracts::{
-    ActionId, CheckpointEnvelope, CompletionStatus, ContentChecksum, EffectId, EffectOutcome,
-    Generation, RuleId,
+    ActionId, CheckpointEnvelope, CheckpointError, CompletionStatus, ContentChecksum, EffectId,
+    EffectOutcome, Generation, RuleId,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -98,6 +98,8 @@ struct OutboxManifest {
     next_segment_id: u64,
     latest_checkpoints: BTreeMap<String, CheckpointEnvelope>,
     entries: Vec<ManifestEntry>,
+    #[serde(default)]
+    settled_effect_ids: BTreeSet<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -169,6 +171,7 @@ impl SegmentedOutbox {
                 next_segment_id: 2,
                 latest_checkpoints: BTreeMap::new(),
                 entries: Vec::new(),
+                settled_effect_ids: BTreeSet::new(),
             }
         };
 
@@ -276,6 +279,34 @@ impl SegmentedOutbox {
         entries: Vec<OutboxEntry>,
         crash_at: Option<SegmentedCrashStep>,
     ) -> Result<EnqueueReport, OutboxError> {
+        let rule_key = envelope.metadata.identity.rule_id.as_str();
+        let incoming_gen = envelope.metadata.identity.generation;
+        if let Some(prev) = self.manifest.latest_checkpoints.get(rule_key) {
+            let expected_gen = prev.metadata.identity.generation;
+            if incoming_gen < expected_gen {
+                return Err(OutboxError::Checkpoint(
+                    CheckpointError::GenerationMismatch {
+                        expected: expected_gen,
+                        actual: incoming_gen,
+                    },
+                ));
+            }
+        }
+        for entry in &entries {
+            if entry.effect.rule_id != envelope.metadata.identity.rule_id
+                || entry.effect.generation != incoming_gen
+            {
+                return Err(OutboxError::Storage(format!(
+                    "outbox effect {} ({}@{}) does not match checkpoint envelope ({}@{})",
+                    entry.effect.effect_id.as_str(),
+                    entry.effect.rule_id.as_str(),
+                    entry.effect.generation.0,
+                    rule_key,
+                    incoming_gen.0
+                )));
+            }
+        }
+
         let existing_ids: BTreeSet<&str> = self
             .manifest
             .entries
@@ -289,7 +320,10 @@ impl SegmentedOutbox {
 
         for entry in entries {
             let eid = entry.effect.effect_id.as_str();
-            if existing_ids.contains(eid) || !seen_new.insert(eid.to_owned()) {
+            if existing_ids.contains(eid)
+                || self.manifest.settled_effect_ids.contains(eid)
+                || !seen_new.insert(eid.to_owned())
+            {
                 deduplicated += 1;
                 continue;
             }
@@ -592,12 +626,16 @@ impl SegmentedOutbox {
             next_segment_id: new_seg_id.saturating_add(1),
             latest_checkpoints: self.manifest.latest_checkpoints.clone(),
             entries: Vec::new(),
+            settled_effect_ids: self.manifest.settled_effect_ids.clone(),
         };
 
         let new_seg_path = segment_path(&self.config.root_dir, new_seg_id);
         let mut live_count = 0usize;
         for m in &self.manifest.entries {
             if m.terminal_outcome.is_some() {
+                next_manifest
+                    .settled_effect_ids
+                    .insert(m.effect_id.as_str().to_owned());
                 continue;
             }
             let old_path = segment_path(&self.config.root_dir, m.segment_ref.segment_id);

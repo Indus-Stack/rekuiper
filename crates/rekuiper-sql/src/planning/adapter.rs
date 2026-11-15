@@ -76,7 +76,7 @@ fn normalize_secret_key(key: &str) -> String {
         .collect()
 }
 
-fn is_secret_key(key: &str) -> bool {
+pub fn is_secret_key(key: &str) -> bool {
     let k = normalize_secret_key(key);
     k.contains("password")
         || k.contains("passwd")

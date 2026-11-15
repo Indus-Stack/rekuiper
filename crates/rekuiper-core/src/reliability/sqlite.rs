@@ -332,6 +332,21 @@ impl ReliableSqliteStore {
         entries: Vec<OutboxEntry>,
         capacity: Option<OutboxCapacity>,
     ) -> Result<EnqueueReport, OutboxError> {
+        for entry in &entries {
+            if entry.effect.rule_id != envelope.metadata.identity.rule_id
+                || entry.effect.generation != envelope.metadata.identity.generation
+            {
+                return Err(OutboxError::Storage(format!(
+                    "outbox effect {} ({}@{}) does not match checkpoint envelope ({}@{})",
+                    entry.effect.effect_id.as_str(),
+                    entry.effect.rule_id.as_str(),
+                    entry.effect.generation.0,
+                    envelope.metadata.identity.rule_id.as_str(),
+                    envelope.metadata.identity.generation.0
+                )));
+            }
+        }
+
         let mut tx = self
             .pool
             .begin()

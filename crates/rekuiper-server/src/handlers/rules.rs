@@ -1986,12 +1986,12 @@ pub async fn update_rule(
                     )
                         .into_response();
                 }
-                let was_running = match state
+                let update_guard = match state
                     .rule_manager
-                    .update_rule_with_cleanup(rule.clone(), source_cleanup_cb(&state, &name))
+                    .begin_update_with_cleanup(rule.clone(), source_cleanup_cb(&state, &name))
                     .await
                 {
-                    Ok(running) => running,
+                    Ok(guard) => guard,
                     Err(e) => {
                         return (
                             StatusCode::INTERNAL_SERVER_ERROR,
@@ -2003,8 +2003,9 @@ pub async fn update_rule(
                             .into_response();
                     }
                 };
-                if was_running {
-                    if let Err(e) = state.rule_manager.start_rule(&name).await {
+                if update_guard.was_running() {
+                    if let Err(e) = state.rule_manager.commit_update_start(&update_guard).await {
+                        let _ = rollback_and_respawn(&state, &name, &update_guard).await;
                         return (
                             StatusCode::INTERNAL_SERVER_ERROR,
                             Json(json!({
@@ -2031,6 +2032,7 @@ pub async fn update_rule(
                     );
                     bootstrap_graph_sources(&state, &name, graph);
                 }
+                drop(update_guard);
                 return (
                     StatusCode::OK,
                     format!("Rule {} was updated successfully.", name),
@@ -2123,12 +2125,12 @@ pub async fn update_rule(
         )
             .into_response();
     }
-    let was_running = match state
+    let update_guard = match state
         .rule_manager
-        .update_rule_with_cleanup(rule.clone(), source_cleanup_cb(&state, &name))
+        .begin_update_with_cleanup(rule.clone(), source_cleanup_cb(&state, &name))
         .await
     {
-        Ok(running) => running,
+        Ok(guard) => guard,
         Err(e) => {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -2140,8 +2142,9 @@ pub async fn update_rule(
                 .into_response();
         }
     };
-    if was_running {
-        if let Err(e) = state.rule_manager.start_rule(&name).await {
+    if update_guard.was_running() {
+        if let Err(e) = state.rule_manager.commit_update_start(&update_guard).await {
+            let _ = rollback_and_respawn(&state, &name, &update_guard).await;
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({
@@ -2165,6 +2168,7 @@ pub async fn update_rule(
             rule.actions.clone(),
             rule.options.clone(),
         ) {
+            let _ = rollback_and_respawn(&state, &name, &update_guard).await;
             return (
                 StatusCode::BAD_REQUEST,
                 Json(json!({
@@ -2176,11 +2180,71 @@ pub async fn update_rule(
         }
         bootstrap_rule_sources(&state, &name, &select_stmt);
     }
+    drop(update_guard);
     (
         StatusCode::OK,
         format!("Rule {} was updated successfully.", name),
     )
         .into_response()
+}
+
+/// Restores the previous rule definition and restarts its worker if `spawn_rule_task`
+/// or `commit_update_start` fails after draining the old worker.
+async fn rollback_and_respawn(
+    state: &AppState,
+    name: &str,
+    update_guard: &rekuiper_core::manager::RuleUpdateGuard,
+) -> anyhow::Result<()> {
+    let prev = update_guard.prev_def();
+    state
+        .rule_manager
+        .rollback_update(update_guard, true)
+        .await?;
+    if let Some(graph) = &prev.graph {
+        if is_native_dag_rule(graph) {
+            let buffer_len = prev
+                .options
+                .as_ref()
+                .and_then(|o| o.get("bufferLength"))
+                .and_then(|v| v.as_u64())
+                .map(|n| n as usize)
+                .unwrap_or(1024);
+            spawn_graph_rule_task(
+                &state.rule_manager,
+                &state.stream_bus,
+                name.to_string(),
+                graph.clone(),
+                state.comms_hub.clone(),
+                buffer_len,
+            );
+            bootstrap_graph_sources(state, name, graph);
+            return Ok(());
+        }
+    }
+    if let Ok(stmt) = Parser::new(&prev.sql).parse_select() {
+        if let Err(err) = spawn_rule_task(
+            &state.rule_manager,
+            &state.stream_bus,
+            &state.stream_manager,
+            &state.table_manager,
+            &state.source_configs,
+            &state.http_client,
+            &state.trace_manager,
+            &state.config,
+            name.to_string(),
+            stmt.clone(),
+            prev.actions.clone(),
+            prev.options.clone(),
+        ) {
+            let _ = state
+                .rule_manager
+                .rollback_update(update_guard, false)
+                .await;
+            return Err(err);
+        }
+        bootstrap_rule_sources(state, name, &stmt);
+    }
+    Ok(())
 }
 
 pub async fn get_rule_schema(State(state): State<AppState>, Path(id): Path<String>) -> Response {

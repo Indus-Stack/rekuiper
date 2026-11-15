@@ -594,6 +594,29 @@ pub async fn prometheus_metrics_handler(State(state): State<AppState>) -> impl I
         reload_failures
     ));
 
+    let lookup_stats = crate::engine::lookup_runtime::all_lookup_runtime_stats();
+    if !lookup_stats.is_empty() {
+        out.push_str("# HELP rekuiper_lookup_requests_total total external lookup requests by backend and outcome\n# TYPE rekuiper_lookup_requests_total counter\n");
+        for (backend, stats) in lookup_stats {
+            let escaped_backend = backend
+                .replace('\\', "\\\\")
+                .replace('"', "\\\"")
+                .replace('\n', "\\n");
+            for (outcome, value) in [
+                ("completed", stats.completed),
+                ("rejected", stats.rejected),
+                ("timed_out", stats.timed_out),
+                ("cancelled", stats.cancelled),
+                ("failed", stats.failed),
+            ] {
+                out.push_str(&format!(
+                    "rekuiper_lookup_requests_total{{backend=\"{}\",outcome=\"{}\"}} {}\n",
+                    escaped_backend, outcome, value
+                ));
+            }
+        }
+    }
+
     (
         StatusCode::OK,
         [(

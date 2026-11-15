@@ -962,7 +962,7 @@ fn resolve_action_cache_targets(
                 .map(|p| p.display().to_string())
                 .collect();
             anyhow::bail!(
-                "legacy positional sink cache directory found ({}); migrate or drain legacy positional caches before starting with identity-based cache ownership",
+                "legacy positional sink cache directory found ({}); drain or move legacy positional caches to `index.<pos>` / `named.<name>` before starting with identity-based cache ownership",
                 paths.join(", ")
             );
         }

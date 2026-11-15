@@ -56,6 +56,29 @@ pub fn describe_table(def: &TableDefinition) -> Value {
     })
 }
 
+fn validate_rabbitmq_stream_options(options: &HashMap<String, String>) -> Result<(), String> {
+    if !options
+        .iter()
+        .any(|(k, v)| k.eq_ignore_ascii_case("type") && v.eq_ignore_ascii_case("rabbitmq"))
+    {
+        return Ok(());
+    }
+    if let Some((_, mode_raw)) = options
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("ackMode") || k.eq_ignore_ascii_case("ack_mode"))
+    {
+        let ack_mode: rekuiper_connectors::RabbitMqAckMode =
+            serde_json::from_value(Value::String(mode_raw.clone()))
+                .map_err(|e| format!("invalid RabbitMQ ackMode '{}': {}", mode_raw, e))?;
+        let cfg = rekuiper_connectors::RabbitMqConfig {
+            ack_mode,
+            ..Default::default()
+        };
+        cfg.validate_source_ack_mode().map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 fn validate_video_options(
     options: &HashMap<String, String>,
     source_configs: &std::sync::Arc<parking_lot::RwLock<HashMap<String, Value>>>,
@@ -193,6 +216,16 @@ pub async fn create_stream(
                     }
                 }
                 if let Err(e) = validate_video_options(&stmt.options, &state.source_configs) {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        Json(json!({
+                            "error": 3000,
+                            "message": format!("Stream command error: {}", e)
+                        })),
+                    )
+                        .into_response();
+                }
+                if let Err(e) = validate_rabbitmq_stream_options(&stmt.options) {
                     return (
                         StatusCode::BAD_REQUEST,
                         Json(json!({
@@ -369,6 +402,16 @@ pub async fn update_stream(
         }
     }
     if let Err(e) = validate_video_options(&stmt.options, &state.source_configs) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "error": 3000,
+                "message": format!("Stream command error: {}", e)
+            })),
+        )
+            .into_response();
+    }
+    if let Err(e) = validate_rabbitmq_stream_options(&stmt.options) {
         return (
             StatusCode::BAD_REQUEST,
             Json(json!({

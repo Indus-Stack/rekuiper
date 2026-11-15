@@ -13,7 +13,7 @@ use std::time::Duration;
 use tokio::sync::Semaphore;
 
 /// Output ordering contract for batched async lookups.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum LookupOrderMode {
     /// Emit results in exact input sequence order (default).
     #[default]
@@ -23,14 +23,15 @@ pub enum LookupOrderMode {
 }
 
 /// Configuration for [`LookupRuntime`].
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct LookupQueueConfig {
     pub max_queued_requests: usize,
     pub max_queued_bytes: u64,
     pub max_concurrent_lookups: usize,
+    pub permit_wait_timeout: Duration,
     pub request_timeout: Duration,
     pub order_mode: LookupOrderMode,
-    /// When `true`, callers wait for queue capacity until `request_timeout` or
+    /// When `true`, callers wait for queue capacity until `permit_wait_timeout` or
     /// cancellation; when `false`, full queues fail immediately with `QueueFull`.
     pub backpressure_on_full: bool,
 }
@@ -41,10 +42,62 @@ impl Default for LookupQueueConfig {
             max_queued_requests: 256,
             max_queued_bytes: 4 * 1024 * 1024,
             max_concurrent_lookups: 16,
+            permit_wait_timeout: Duration::from_secs(2),
             request_timeout: Duration::from_secs(5),
             order_mode: LookupOrderMode::Ordered,
             backpressure_on_full: false,
         }
+    }
+}
+
+impl LookupQueueConfig {
+    /// Parses optional per-table lookup tuning keys (`LOOKUP_MAX_CONCURRENT`,
+    /// `LOOKUP_MAX_QUEUED_REQUESTS`, `LOOKUP_MAX_QUEUED_BYTES`,
+    /// `LOOKUP_PERMIT_WAIT_MS`, `LOOKUP_TIMEOUT_MS`, `LOOKUP_BACKPRESSURE`).
+    pub fn from_table_options(opts: &std::collections::HashMap<String, String>) -> Self {
+        let mut cfg = Self::default();
+        if let Some(v) = opts
+            .get("LOOKUP_MAX_CONCURRENT")
+            .and_then(|s| s.parse::<usize>().ok())
+            .filter(|&n| n > 0)
+        {
+            cfg.max_concurrent_lookups = v;
+        }
+        if let Some(v) = opts
+            .get("LOOKUP_MAX_QUEUED_REQUESTS")
+            .and_then(|s| s.parse::<usize>().ok())
+            .filter(|&n| n > 0)
+        {
+            cfg.max_queued_requests = v;
+        }
+        if let Some(v) = opts
+            .get("LOOKUP_MAX_QUEUED_BYTES")
+            .and_then(|s| s.parse::<u64>().ok())
+            .filter(|&n| n > 0)
+        {
+            cfg.max_queued_bytes = v;
+        }
+        if let Some(v) = opts
+            .get("LOOKUP_PERMIT_WAIT_MS")
+            .and_then(|s| s.parse::<u64>().ok())
+            .filter(|&n| n > 0)
+        {
+            cfg.permit_wait_timeout = Duration::from_millis(v);
+        }
+        if let Some(v) = opts
+            .get("LOOKUP_TIMEOUT_MS")
+            .and_then(|s| s.parse::<u64>().ok())
+            .filter(|&n| n > 0)
+        {
+            cfg.request_timeout = Duration::from_millis(v);
+        }
+        if let Some(v) = opts
+            .get("LOOKUP_BACKPRESSURE")
+            .and_then(|s| s.parse::<bool>().ok())
+        {
+            cfg.backpressure_on_full = v;
+        }
+        cfg
     }
 }
 
@@ -179,10 +232,10 @@ impl LookupRuntime {
         F: FnOnce() -> Fut,
         Fut: Future<Output = Result<T, String>>,
     {
-        let deadline = clock
+        let permit_deadline = clock
             .now()
             .elapsed
-            .saturating_add(self.config.request_timeout);
+            .saturating_add(self.config.permit_wait_timeout);
         let charge = BudgetCharge::new(1, request_bytes.max(1), 0);
 
         let _reservation = if self.config.backpressure_on_full {
@@ -192,7 +245,7 @@ impl LookupRuntime {
                     self.stats.cancelled.fetch_add(1, Ordering::Relaxed);
                     return Err(LookupError::Cancelled);
                 }
-                sleep_res = clock.wait_until(deadline, cancellation) => {
+                sleep_res = clock.wait_until(permit_deadline, cancellation) => {
                     return match sleep_res {
                         Err(DeadlineCancelled) => {
                             self.stats.cancelled.fetch_add(1, Ordering::Relaxed);
@@ -200,7 +253,7 @@ impl LookupRuntime {
                         }
                         Ok(()) => {
                             self.stats.timed_out.fetch_add(1, Ordering::Relaxed);
-                            Err(LookupError::Timeout { timeout: self.config.request_timeout })
+                            Err(LookupError::Timeout { timeout: self.config.permit_wait_timeout })
                         }
                     };
                 }
@@ -232,7 +285,7 @@ impl LookupRuntime {
                 self.stats.cancelled.fetch_add(1, Ordering::Relaxed);
                 return Err(LookupError::Cancelled);
             }
-            sleep_res = clock.wait_until(deadline, cancellation) => {
+            sleep_res = clock.wait_until(permit_deadline, cancellation) => {
                 return match sleep_res {
                     Err(DeadlineCancelled) => {
                         self.stats.cancelled.fetch_add(1, Ordering::Relaxed);
@@ -240,7 +293,7 @@ impl LookupRuntime {
                     }
                     Ok(()) => {
                         self.stats.timed_out.fetch_add(1, Ordering::Relaxed);
-                        Err(LookupError::Timeout { timeout: self.config.request_timeout })
+                        Err(LookupError::Timeout { timeout: self.config.permit_wait_timeout })
                     }
                 };
             }
@@ -253,6 +306,10 @@ impl LookupRuntime {
             }
         };
 
+        let exec_deadline = clock
+            .now()
+            .elapsed
+            .saturating_add(self.config.request_timeout);
         let fut = op();
         tokio::select! {
             biased;
@@ -260,7 +317,7 @@ impl LookupRuntime {
                 self.stats.cancelled.fetch_add(1, Ordering::Relaxed);
                 Err(LookupError::Cancelled)
             }
-            sleep_res = clock.wait_until(deadline, cancellation) => match sleep_res {
+            sleep_res = clock.wait_until(exec_deadline, cancellation) => match sleep_res {
                 Err(DeadlineCancelled) => {
                     self.stats.cancelled.fetch_add(1, Ordering::Relaxed);
                     Err(LookupError::Cancelled)
@@ -338,4 +395,41 @@ impl LookupRuntime {
             Err(DeadlineCancelled)
         )
     }
+}
+
+type LookupRegistry =
+    parking_lot::RwLock<std::collections::HashMap<(String, LookupQueueConfig), Arc<LookupRuntime>>>;
+
+fn backend_registry() -> &'static LookupRegistry {
+    static REGISTRY: std::sync::OnceLock<LookupRegistry> = std::sync::OnceLock::new();
+    REGISTRY.get_or_init(|| parking_lot::RwLock::new(std::collections::HashMap::new()))
+}
+
+/// Returns an isolated [`LookupRuntime`] for `backend` and `config`.
+pub fn lookup_runtime_for_backend(backend: &str, config: LookupQueueConfig) -> Arc<LookupRuntime> {
+    let key = (backend.to_ascii_lowercase(), config.clone());
+    if let Some(rt) = backend_registry().read().get(&key) {
+        return Arc::clone(rt);
+    }
+    let mut map = backend_registry().write();
+    Arc::clone(
+        map.entry(key)
+            .or_insert_with(|| Arc::new(LookupRuntime::new(config))),
+    )
+}
+
+/// Aggregates lookup runtime counters per backend for observability/metrics export.
+pub fn all_lookup_runtime_stats() -> Vec<(String, LookupStatsSnapshot)> {
+    let mut by_backend: std::collections::BTreeMap<String, LookupStatsSnapshot> =
+        std::collections::BTreeMap::new();
+    for ((backend, _), rt) in backend_registry().read().iter() {
+        let snap = rt.stats();
+        let entry = by_backend.entry(backend.clone()).or_default();
+        entry.completed += snap.completed;
+        entry.rejected += snap.rejected;
+        entry.timed_out += snap.timed_out;
+        entry.cancelled += snap.cancelled;
+        entry.failed += snap.failed;
+    }
+    by_backend.into_iter().collect()
 }

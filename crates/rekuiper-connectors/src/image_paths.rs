@@ -104,7 +104,7 @@ pub fn validate_relative_components(rendered_subpath: &str) -> Result<Vec<String
         if seg == ".." {
             return Err(ImagePathError::TraversalDetected(trimmed.to_owned()));
         }
-        if seg.contains(':') {
+        if cfg!(windows) && seg.contains(':') {
             return Err(ImagePathError::DriveOrUncEscape(seg.to_owned()));
         }
         out.push(seg.to_owned());
@@ -161,7 +161,8 @@ pub fn resolve_image_path(
 
     let record_val = Value::Object(record.iter().map(|(k, v)| (k.clone(), v.clone())).collect());
     let rendered_suffix = apply_data_template_value(suffix_tmpl, &record_val);
-    let relative_dirs = validate_relative_components(&rendered_suffix)?;
+    let trimmed_suffix = rendered_suffix.trim_end_matches(['/', '\\']);
+    let relative_dirs = validate_relative_components(trimmed_suffix)?;
 
     Ok(ValidatedImagePath {
         trusted_root,

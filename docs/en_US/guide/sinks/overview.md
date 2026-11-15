@@ -227,6 +227,13 @@ Transform --> Encode --> Compress --> Encrypt --> Cache --> Connect
 - **Cache**: Manages memory and disk caching during network outages.
 - **Connect**: Connects to the external system and delivers payloads.
 
+### Sink Cache Ownership and Lifecycle
+
+- **Identity-based directories**: Enabled sink caches are stored under `<cache_root>/<rule_id>/named.<name>` (when an action has a `name`) or `<cache_root>/<rule_id>/index.<pos>`. Each cache directory stores an `ownership_manifest.json` manifest binding it to the rule, action identity, sink type, and a credential-stripped destination fingerprint (excluding secrets and URL userinfo while keeping destination keys such as Redis `key` and routing headers).
+- **Legacy migration**: Non-empty positional directories (`<cache_root>/<rule_id>/<pos>`) without an `ownership_manifest.json` are rejected at startup to prevent adopting an unowned or mismatched backlog. Before starting with identity-based ownership, drain the legacy backlog or remove the empty legacy directory.
+- **Stop and update behavior**: Stopping or updating a rule waits up to 5 seconds for the active sink worker to flush and close before aborting the task. If an update's replacement worker fails to start, the rule rolls back to its previous definition and restores processing.
+- **Core reliability modules**: The transactional outbox and fencing primitives in `rekuiper-core::reliability` (`SqliteOutbox`, `SegmentedOutbox`, `GenerationFence`) are library-level components for custom integrations and are not yet wired into live rule runtime pipelines.
+
 ### Batch Pipeline
 
 When you configure `batchSize` or `lingerInterval`, the planner instantiates a batch pipeline:

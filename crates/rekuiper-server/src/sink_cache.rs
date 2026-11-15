@@ -601,34 +601,22 @@ impl std::fmt::Display for CacheOwnershipError {
 
 impl std::error::Error for CacheOwnershipError {}
 
-fn is_credential_prop(key: &str) -> bool {
+fn is_credential_prop_for_sink(sink_type: &str, key: &str) -> bool {
     let lower = key.to_ascii_lowercase();
-    matches!(
-        lower.as_str(),
-        "password"
-            | "pass"
-            | "secret"
-            | "token"
-            | "apikey"
-            | "api_key"
-            | "auth"
-            | "authorization"
-            | "username"
-            | "user"
-            | "saslpassword"
-            | "sasl_password"
-            | "saslusername"
-            | "sasl_username"
-            | "cert"
-            | "key"
-            | "privatekey"
-            | "private_key"
-    )
+    // Redis uses `key` as the destination key, not as a credential.
+    if lower == "key" && sink_type.eq_ignore_ascii_case("redis") {
+        return false;
+    }
+    rekuiper_sql::planning::adapter::is_secret_key(&lower)
+        || matches!(
+            lower.as_str(),
+            "pass" | "auth" | "username" | "user" | "cert" | "key"
+        )
 }
 
 fn is_credential_header(name: &str) -> bool {
     let lower = name.to_ascii_lowercase();
-    is_credential_prop(&lower)
+    is_credential_prop_for_sink("", &lower)
         || matches!(
             lower.as_str(),
             "proxy-authorization"
@@ -642,12 +630,66 @@ fn is_credential_header(name: &str) -> bool {
         )
 }
 
+/// Strips `userinfo@` and secret query parameters from URL-like strings before
+/// fingerprinting so credential rotations in DSNs/URLs do not invalidate caches.
+fn scrub_url_credentials(sink_type: &str, raw: &str) -> String {
+    let Some(scheme_end) = raw.find("://") else {
+        return raw.to_owned();
+    };
+    let (scheme_prefix, after_scheme) = raw.split_at(scheme_end + 3);
+    let (without_frag, frag) = match after_scheme.find('#') {
+        Some(idx) => (&after_scheme[..idx], Some(&after_scheme[idx..])),
+        None => (after_scheme, None),
+    };
+    let (authority_and_path, query) = match without_frag.find('?') {
+        Some(idx) => (&without_frag[..idx], Some(&without_frag[idx + 1..])),
+        None => (without_frag, None),
+    };
+    let (authority, path) = match authority_and_path.find('/') {
+        Some(idx) => (&authority_and_path[..idx], &authority_and_path[idx..]),
+        None => (authority_and_path, ""),
+    };
+    let clean_authority = match authority.rfind('@') {
+        Some(at_idx) => &authority[at_idx + 1..],
+        None => authority,
+    };
+    let mut out = String::with_capacity(raw.len());
+    out.push_str(scheme_prefix);
+    out.push_str(clean_authority);
+    out.push_str(path);
+    if let Some(q) = query {
+        let kept: Vec<&str> = q
+            .split('&')
+            .filter(|pair| !pair.is_empty())
+            .filter(|pair| {
+                let k = pair.split('=').next().unwrap_or("");
+                !is_credential_prop_for_sink(sink_type, k) && !is_credential_header(k)
+            })
+            .collect();
+        if !kept.is_empty() {
+            out.push('?');
+            out.push_str(&kept.join("&"));
+        }
+    }
+    if let Some(f) = frag {
+        out.push_str(f);
+    }
+    out
+}
+
+fn scrub_value_for_fingerprint(sink_type: &str, val: &Value) -> Value {
+    match val {
+        Value::String(s) if s.contains("://") => Value::String(scrub_url_credentials(sink_type, s)),
+        other => other.clone(),
+    }
+}
+
 /// Computes a deterministic destination ownership fingerprint excluding credentials
-/// while retaining routing headers (e.g. `X-Tenant-Id`).
+/// while retaining routing headers (e.g. `X-Tenant-Id`) and destination keys.
 pub fn compute_destination_fingerprint(sink_type: &str, props: &HashMap<String, Value>) -> String {
     let mut non_cred: std::collections::BTreeMap<String, Value> = std::collections::BTreeMap::new();
     for (k, v) in props {
-        if k == "name" || is_credential_prop(k) {
+        if k == "name" || is_credential_prop_for_sink(sink_type, k) {
             continue;
         }
         if k == "headers" {
@@ -671,7 +713,7 @@ pub fn compute_destination_fingerprint(sink_type: &str, props: &HashMap<String, 
             }
             continue;
         }
-        non_cred.insert(k.clone(), v.clone());
+        non_cred.insert(k.clone(), scrub_value_for_fingerprint(sink_type, v));
     }
     let payload = serde_json::to_vec(&(sink_type, non_cred)).unwrap_or_default();
     rekuiper_core::contracts::ContentChecksum::sha256_bytes(&payload)
@@ -784,6 +826,19 @@ impl SinkCache {
             Err(e) => return Err(CacheOwnershipError::Storage(e.to_string())),
         }
         Ok(false)
+    }
+
+    /// Writes an ownership manifest directly into an existing directory (used during
+    /// one-shot migration from legacy positional directories).
+    pub fn write_ownership_manifest(
+        dir: &std::path::Path,
+        manifest: &CacheOwnershipManifest,
+    ) -> Result<(), CacheOwnershipError> {
+        let manifest_path = dir.join("ownership_manifest.json");
+        let json = serde_json::to_vec_pretty(manifest)
+            .map_err(|e| CacheOwnershipError::Storage(e.to_string()))?;
+        std::fs::write(&manifest_path, json)
+            .map_err(|e| CacheOwnershipError::Storage(e.to_string()))
     }
 
     /// Opens a sink cache only if ownership manifest matches (or directory is fresh).

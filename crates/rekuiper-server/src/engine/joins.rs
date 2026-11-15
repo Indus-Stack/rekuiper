@@ -1,4 +1,4 @@
-use crate::engine::lookup_runtime::LookupRuntime;
+use crate::engine::lookup_runtime::{lookup_runtime_for_backend, LookupQueueConfig, LookupRuntime};
 use crate::engine::{resolve_modbus_table_config, resolve_opcua_table_config, resolve_redis_addr};
 use indexmap::IndexMap;
 use parking_lot::RwLock;
@@ -9,11 +9,21 @@ use rekuiper_sql::eval::RowLookup;
 use rekuiper_sql::{Evaluator, Expr, JoinClause, JoinType, RuleState, SelectStmt};
 use serde_json::Value;
 use std::collections::HashMap;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
-fn default_lookup_runtime() -> &'static LookupRuntime {
-    static RUNTIME: OnceLock<LookupRuntime> = OnceLock::new();
-    RUNTIME.get_or_init(|| LookupRuntime::new(Default::default()))
+fn runtime_for_table(table_manager: &TableManager, target: &str) -> Arc<LookupRuntime> {
+    if let Some(def) = table_manager.get_table(target) {
+        let backend = def
+            .options
+            .get("TYPE")
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_ascii_lowercase())
+            .unwrap_or_else(|| "memory".to_string());
+        let cfg = LookupQueueConfig::from_table_options(&def.options);
+        lookup_runtime_for_backend(&backend, cfg)
+    } else {
+        lookup_runtime_for_backend("memory", LookupQueueConfig::default())
+    }
 }
 
 /// Resolve lookup JOINs for one stream record against table rows.
@@ -190,6 +200,7 @@ pub(crate) async fn lookup_candidates<R: RowLookup + ?Sized>(
     join: &JoinClause,
     combined: &R,
 ) -> Vec<HashMap<String, Value>> {
+    let runtime = runtime_for_table(table_manager, &join.target);
     lookup_candidates_with_runtime(
         table_manager,
         source_configs,
@@ -197,7 +208,7 @@ pub(crate) async fn lookup_candidates<R: RowLookup + ?Sized>(
         from_alias,
         join,
         combined,
-        default_lookup_runtime(),
+        &runtime,
         &RealClock::default(),
         &DeadlineCancellation::default(),
     )
@@ -345,12 +356,12 @@ pub(crate) async fn apply_lookup_joins(
     select_stmt: &SelectStmt,
     record: &IndexMap<String, Value>,
 ) -> Option<IndexMap<String, Value>> {
-    apply_lookup_joins_with_runtime(
+    apply_lookup_joins_internal(
         table_manager,
         source_configs,
         select_stmt,
         record,
-        default_lookup_runtime(),
+        None,
         &RealClock::default(),
         &DeadlineCancellation::default(),
     )
@@ -363,6 +374,27 @@ pub async fn apply_lookup_joins_with_runtime(
     select_stmt: &SelectStmt,
     record: &IndexMap<String, Value>,
     lookup_runtime: &LookupRuntime,
+    clock: &dyn Clock,
+    cancellation: &DeadlineCancellation,
+) -> Option<IndexMap<String, Value>> {
+    apply_lookup_joins_internal(
+        table_manager,
+        source_configs,
+        select_stmt,
+        record,
+        Some(lookup_runtime),
+        clock,
+        cancellation,
+    )
+    .await
+}
+
+async fn apply_lookup_joins_internal(
+    table_manager: &TableManager,
+    source_configs: &Arc<RwLock<HashMap<String, Value>>>,
+    select_stmt: &SelectStmt,
+    record: &IndexMap<String, Value>,
+    override_runtime: Option<&LookupRuntime>,
     clock: &dyn Clock,
     cancellation: &DeadlineCancellation,
 ) -> Option<IndexMap<String, Value>> {
@@ -382,6 +414,14 @@ pub async fn apply_lookup_joins_with_runtime(
         if matches!(join.join_type, JoinType::Asof | JoinType::LeftAsof) {
             continue;
         }
+        let table_runtime;
+        let runtime = match override_runtime {
+            Some(rt) => rt,
+            None => {
+                table_runtime = runtime_for_table(table_manager, &join.target);
+                &table_runtime
+            }
+        };
         let mut matched: Option<HashMap<String, Value>> = None;
         for row in lookup_candidates_with_runtime(
             table_manager,
@@ -390,7 +430,7 @@ pub async fn apply_lookup_joins_with_runtime(
             select_stmt.from_alias.as_deref(),
             join,
             &combined,
-            lookup_runtime,
+            runtime,
             clock,
             cancellation,
         )
