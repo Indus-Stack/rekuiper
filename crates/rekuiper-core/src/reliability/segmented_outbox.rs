@@ -103,7 +103,40 @@ struct OutboxManifest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct AckJournalRecord {
     effect_id: EffectId,
+    #[serde(default)]
+    claim_token: String,
     outcome: EffectOutcome,
+}
+
+/// Exclusive OS-backed directory lock guard released automatically on drop or process exit.
+#[derive(Debug)]
+struct WriterLockGuard {
+    _file: File,
+}
+
+impl WriterLockGuard {
+    fn acquire(root_dir: &Path) -> Result<Self, OutboxError> {
+        let path = root_dir.join("writer.lock");
+        let file = OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .truncate(false)
+            .open(&path)
+            .map_err(|e| {
+                OutboxError::Storage(format!(
+                    "failed to open exclusive writer lock at {}: {e}",
+                    path.display()
+                ))
+            })?;
+        file.try_lock().map_err(|e| {
+            OutboxError::Storage(format!(
+                "failed to acquire exclusive writer lock at {}: {e}",
+                path.display()
+            ))
+        })?;
+        Ok(Self { _file: file })
+    }
 }
 
 /// Checksummed segmented outbox implementing the same logical operations as
@@ -112,6 +145,7 @@ struct AckJournalRecord {
 pub struct SegmentedOutbox {
     config: SegmentedOutboxConfig,
     manifest: OutboxManifest,
+    _lock: WriterLockGuard,
 }
 
 impl SegmentedOutbox {
@@ -121,6 +155,7 @@ impl SegmentedOutbox {
     pub fn open(config: SegmentedOutboxConfig) -> Result<Self, OutboxError> {
         fs::create_dir_all(config.root_dir.join("segments"))
             .map_err(|e| OutboxError::Storage(e.to_string()))?;
+        let lock = WriterLockGuard::acquire(&config.root_dir)?;
 
         let manifest_path = config.root_dir.join("manifest.json");
         let mut manifest = if manifest_path.exists() {
@@ -164,12 +199,17 @@ impl SegmentedOutbox {
         if journal_path.exists() {
             let acks = replay_ack_journal(&journal_path, config.sync_on_write)?;
             for ack in acks {
-                if let Some(m) = manifest
-                    .entries
-                    .iter_mut()
-                    .find(|e| e.effect_id == ack.effect_id && e.terminal_outcome.is_none())
-                {
-                    m.terminal_outcome = Some(ack.outcome);
+                if ack.claim_token.is_empty() {
+                    continue;
+                }
+                if let Some(m) = manifest.entries.iter_mut().find(|e| {
+                    e.effect_id == ack.effect_id
+                        && e.terminal_outcome.is_none()
+                        && e.claim_token.as_deref() == Some(ack.claim_token.as_str())
+                }) {
+                    if ack.outcome.is_terminal() {
+                        m.terminal_outcome = Some(ack.outcome);
+                    }
                     m.claimed_by = None;
                     m.claim_token = None;
                     m.claimed_until_ms = None;
@@ -181,7 +221,11 @@ impl SegmentedOutbox {
             persist_manifest(&config.root_dir, &manifest, config.sync_on_write)?;
         }
 
-        Ok(Self { config, manifest })
+        Ok(Self {
+            config,
+            manifest,
+            _lock: lock,
+        })
     }
 
     pub fn config(&self) -> &SegmentedOutboxConfig {
@@ -492,6 +536,7 @@ impl SegmentedOutbox {
         let journal_path = self.config.root_dir.join("ack_journal.log");
         let rec = AckJournalRecord {
             effect_id: effect_id.clone(),
+            claim_token: claim_token.to_owned(),
             outcome: outcome.clone(),
         };
         let encoded = serde_json::to_vec(&rec).map_err(|e| OutboxError::Storage(e.to_string()))?;
@@ -509,7 +554,9 @@ impl SegmentedOutbox {
             .iter_mut()
             .find(|e| e.effect_id == *effect_id)
         {
-            m.terminal_outcome = Some(outcome);
+            if outcome.is_terminal() {
+                m.terminal_outcome = Some(outcome);
+            }
             m.claimed_by = None;
             m.claim_token = None;
             m.claimed_until_ms = None;

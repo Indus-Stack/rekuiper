@@ -143,6 +143,24 @@ impl RabbitMqConfig {
         }
         Ok(())
     }
+
+    /// Validates whether the live `RabbitMqSource` consumer supports `self.ack_mode`.
+    ///
+    /// Until the live AMQP consumer wires `RabbitMqReliableAckCoordinator` to
+    /// durable outbox acceptance or downstream delivery confirmation, only
+    /// `LegacyAdmission` is permitted.
+    pub fn validate_source_ack_mode(&self) -> Result<()> {
+        match self.ack_mode {
+            RabbitMqAckMode::LegacyAdmission => Ok(()),
+            RabbitMqAckMode::DurableOutbox | RabbitMqAckMode::ConfirmedDelivery => {
+                anyhow::bail!(
+                    "RabbitMQ source ackMode {:?} is not supported by the live consumer yet; \
+                     refusing to acknowledge on local stream bus admission",
+                    self.ack_mode
+                )
+            }
+        }
+    }
 }
 
 /// RabbitMQ AMQP 0-9-1 Streaming Source.
@@ -156,12 +174,23 @@ impl RabbitMqSource {
         Self { config, tx }
     }
 
+    /// Constructs a [`RabbitMqSource`] after validating that `config.ack_mode`
+    /// is supported by the live consumer.
+    pub fn try_new(config: RabbitMqConfig, tx: StreamSender) -> Result<Self> {
+        config.validate_source_ack_mode()?;
+        Ok(Self { config, tx })
+    }
+
     /// Spawns background consumer task receiving AMQP deliveries and pushing to the stream pipeline.
     pub fn spawn(
         self,
         mut cancel_rx: tokio::sync::watch::Receiver<bool>,
     ) -> tokio::task::JoinHandle<()> {
         tokio::spawn(async move {
+            if let Err(err) = self.config.validate_source_ack_mode() {
+                tracing::error!("RabbitMQ source rejected: {err}");
+                return;
+            }
             let mut cfg = self.config.clone();
             let _ = cfg.resolve_secrets(&SecretResolver::from_env()).await;
 

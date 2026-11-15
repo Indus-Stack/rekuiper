@@ -36,13 +36,13 @@ async fn p06_t01_production_operators_timers_isolation_and_network_block() {
     assert!(runner1
         .flush_window_if_due("SELECT count(*) AS c FROM s")
         .unwrap()
-        .is_none());
+        .is_empty());
     runner1.advance_clock(Duration::from_secs(10));
-    let win = runner1
+    let wins = runner1
         .flush_window_if_due("SELECT count(*) AS c FROM s")
-        .unwrap()
-        .expect("window must fire when TestClock reaches deadline");
-    assert_eq!(win.get("c"), Some(&json!(2)));
+        .unwrap();
+    assert_eq!(wins.len(), 1);
+    assert_eq!(wins[0].get("c"), Some(&json!(2)));
 
     // 2. Production DAG validation + SwitchNode operator.
     let mut nodes = HashMap::new();
@@ -114,4 +114,49 @@ async fn p06_t01_production_operators_timers_isolation_and_network_block() {
     let mut runner2 = ProductionFixtureRunner::new(FixtureMode::IsolatedDeterministic);
     assert!(runner2.captured_dispatches().is_empty());
     assert!(runner2.poll_ready_timers().is_empty());
+}
+
+#[test]
+fn p06_t01_fixture_window_applies_production_where_filtering() {
+    let mut runner = ProductionFixtureRunner::new(FixtureMode::IsolatedDeterministic);
+    let win = Duration::from_secs(10);
+    runner.push_window_event(win, HashMap::from([("v".to_owned(), serde_json::json!(1))]));
+    runner.push_window_event(win, HashMap::from([("v".to_owned(), serde_json::json!(2))]));
+
+    runner.advance_clock(win);
+    let outs = runner
+        .flush_window_if_due(
+            "SELECT count(*) AS c FROM s WHERE v > 1 GROUP BY TumblingWindow(ss, 10)",
+        )
+        .unwrap();
+    assert_eq!(outs.len(), 1);
+    assert_eq!(outs[0].get("c").and_then(|v| v.as_i64()), Some(1));
+}
+
+#[test]
+fn p06_t01_fixture_window_returns_all_grouped_and_projected_rows() {
+    let mut runner = ProductionFixtureRunner::new(FixtureMode::IsolatedDeterministic);
+    let win = Duration::from_secs(10);
+    runner.push_window_event(
+        win,
+        HashMap::from([("k".to_owned(), json!("a")), ("v".to_owned(), json!(1))]),
+    );
+    runner.push_window_event(
+        win,
+        HashMap::from([("k".to_owned(), json!("a")), ("v".to_owned(), json!(2))]),
+    );
+    runner.push_window_event(
+        win,
+        HashMap::from([("k".to_owned(), json!("b")), ("v".to_owned(), json!(3))]),
+    );
+
+    runner.advance_clock(win);
+    let grouped = runner
+        .flush_window_if_due("SELECT k, count(*) AS c FROM s GROUP BY k, TumblingWindow(ss, 10)")
+        .unwrap();
+    assert_eq!(grouped.len(), 2, "grouped window must return all groups");
+    assert_eq!(grouped[0].get("k"), Some(&json!("a")));
+    assert_eq!(grouped[0].get("c").and_then(|v| v.as_i64()), Some(2));
+    assert_eq!(grouped[1].get("k"), Some(&json!("b")));
+    assert_eq!(grouped[1].get("c").and_then(|v| v.as_i64()), Some(1));
 }

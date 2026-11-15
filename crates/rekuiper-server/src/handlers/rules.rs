@@ -207,6 +207,16 @@ pub async fn create_rule(
     if let Some(resp) = reject_invalid_rule(&state, &select_stmt, rule.options.as_ref(), false) {
         return resp;
     }
+    if let Err(err) = crate::engine::validate_rule_actions(&rule.actions) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "error": 1000,
+                "message": err.to_string()
+            })),
+        )
+            .into_response();
+    }
     if let Some(resp) = reject_invalid_typed_plan(&state, &rule, &select_stmt) {
         return resp;
     }
@@ -231,7 +241,7 @@ pub async fn create_rule(
 
     // Spawn window-aware rule execution task and register its handle so
     // stop/delete can abort it cleanly.
-    spawn_rule_task(
+    if let Err(err) = spawn_rule_task(
         &state.rule_manager,
         &state.stream_bus,
         &state.stream_manager,
@@ -244,7 +254,17 @@ pub async fn create_rule(
         select_stmt.clone(),
         rule.actions.clone(),
         rule.options.clone(),
-    );
+    ) {
+        let _ = state.rule_manager.delete_rule(&rule_id).await;
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "error": 1000,
+                "message": err.to_string()
+            })),
+        )
+            .into_response();
+    }
 
     bootstrap_rule_sources(&state, &rule_id, &select_stmt);
 
@@ -1675,7 +1695,7 @@ pub fn expr_to_string(expr: &Expr) -> String {
     }
 }
 
-pub fn activate_rule(state: &AppState, rule_id: &str) {
+pub fn activate_rule(state: &AppState, rule_id: &str) -> Result<(), String> {
     if let Some(rule) = state.rule_manager.get_rule(rule_id) {
         if rule.sql.trim().is_empty() {
             if let Some(ref graph) = rule.graph {
@@ -1686,14 +1706,13 @@ pub fn activate_rule(state: &AppState, rule_id: &str) {
                             error = %e,
                             "Refusing to activate invalid native DAG rule"
                         );
-                        return;
+                        return Err(e);
                     }
                     if rekuiper_sql::planning::is_durable_options(rule.options.as_ref()) {
-                        tracing::warn!(
-                            rule_id = %rule_id,
-                            "Refusing to activate native DAG rule with unsupported durable/checkpointEnabled options"
-                        );
-                        return;
+                        let msg =
+                            "Refusing to activate native DAG rule with unsupported durable/checkpointEnabled options";
+                        tracing::warn!(rule_id = %rule_id, "{msg}");
+                        return Err(msg.to_owned());
                     }
                     let buffer_len = rule
                         .options
@@ -1711,13 +1730,13 @@ pub fn activate_rule(state: &AppState, rule_id: &str) {
                         buffer_len,
                     );
                     bootstrap_graph_sources(state, rule_id, graph);
-                    return;
+                    return Ok(());
                 }
             }
         }
         let mut parser = Parser::new(&rule.sql);
         if let Ok(select_stmt) = parser.parse_select() {
-            spawn_rule_task(
+            if let Err(err) = spawn_rule_task(
                 &state.rule_manager,
                 &state.stream_bus,
                 &state.stream_manager,
@@ -1730,10 +1749,14 @@ pub fn activate_rule(state: &AppState, rule_id: &str) {
                 select_stmt.clone(),
                 rule.actions.clone(),
                 rule.options.clone(),
-            );
+            ) {
+                tracing::error!(rule_id = %rule_id, "Failed to start rule sinks: {err}");
+                return Err(err.to_string());
+            }
             bootstrap_rule_sources(state, rule_id, &select_stmt);
         }
     }
+    Ok(())
 }
 
 pub async fn start_rule(State(state): State<AppState>, Path(name): Path<String>) -> Response {
@@ -1754,16 +1777,34 @@ pub async fn start_rule(State(state): State<AppState>, Path(name): Path<String>)
         return resp;
     }
     if let Some(status) = state.rule_manager.get_rule_status(&name) {
-        if status.status == "running" {
+        if status.status == "running" && state.rule_manager.has_active_worker(&name) {
             return (StatusCode::OK, format!("Rule {} was started", name)).into_response();
         }
     }
     match state.rule_manager.start_rule(&name).await {
         Ok(_) => {
-            activate_rule(&state, &name);
+            if let Err(err) = activate_rule(&state, &name) {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({
+                        "error": 1000,
+                        "message": err
+                    })),
+                )
+                    .into_response();
+            }
             (StatusCode::OK, format!("Rule {} was started", name)).into_response()
         }
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+fn source_cleanup_cb(state: &AppState, name: &str) -> impl FnOnce() + Send + 'static {
+    let state = state.clone();
+    let name = name.to_owned();
+    move || {
+        cancel_rule_source(&state, &name);
+        state.trace_manager.stop_trace(&name);
     }
 }
 
@@ -1783,15 +1824,17 @@ pub async fn stop_rule(State(state): State<AppState>, Path(name): Path<String>) 
     }
     if let Some(status) = state.rule_manager.get_rule_status(&name) {
         if status.status == "stopped" {
+            cancel_rule_source(&state, &name);
+            state.trace_manager.stop_trace(&name);
             return (StatusCode::OK, format!("Rule {} was stopped.", name)).into_response();
         }
     }
-    match state.rule_manager.stop_rule(&name).await {
-        Ok(_) => {
-            cancel_rule_source(&state, &name);
-            state.trace_manager.stop_trace(&name);
-            (StatusCode::OK, format!("Rule {} was stopped.", name)).into_response()
-        }
+    match state
+        .rule_manager
+        .stop_rule_with_cleanup(&name, source_cleanup_cb(&state, &name))
+        .await
+    {
+        Ok(_) => (StatusCode::OK, format!("Rule {} was stopped.", name)).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
 }
@@ -1813,11 +1856,22 @@ pub async fn restart_rule(State(state): State<AppState>, Path(name): Path<String
     if let Some(resp) = validate_stored_rule_before_start(&rule) {
         return resp;
     }
-    match state.rule_manager.restart_rule(&name).await {
+    match state
+        .rule_manager
+        .restart_rule_with_cleanup(&name, source_cleanup_cb(&state, &name))
+        .await
+    {
         Ok(_) => {
-            cancel_rule_source(&state, &name);
-            state.trace_manager.stop_trace(&name);
-            activate_rule(&state, &name);
+            if let Err(err) = activate_rule(&state, &name) {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({
+                        "error": 1000,
+                        "message": err
+                    })),
+                )
+                    .into_response();
+            }
             (StatusCode::OK, format!("Rule {} was restarted", name)).into_response()
         }
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
@@ -1838,12 +1892,12 @@ pub async fn delete_rule(State(state): State<AppState>, Path(name): Path<String>
         )
             .into_response();
     }
-    match state.rule_manager.delete_rule(&name).await {
-        Ok(_) => {
-            cancel_rule_source(&state, &name);
-            state.trace_manager.stop_trace(&name);
-            (StatusCode::OK, format!("Rule {} is dropped.", name)).into_response()
-        }
+    match state
+        .rule_manager
+        .delete_rule_with_cleanup(&name, source_cleanup_cb(&state, &name))
+        .await
+    {
+        Ok(_) => (StatusCode::OK, format!("Rule {} is dropped.", name)).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
 }
@@ -1917,7 +1971,26 @@ pub async fn update_rule(
                 if let Some(resp) = reject_unsupported_native_dag_options(rule.options.as_ref()) {
                     return resp;
                 }
-                let was_running = match state.rule_manager.update_rule(rule.clone()).await {
+                if let Err(err) = crate::engine::preflight_rule_sinks(
+                    &name,
+                    &rule.actions,
+                    &state.source_configs,
+                    rule.options.as_ref(),
+                ) {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        Json(json!({
+                            "error": 1000,
+                            "message": err.to_string()
+                        })),
+                    )
+                        .into_response();
+                }
+                let was_running = match state
+                    .rule_manager
+                    .update_rule_with_cleanup(rule.clone(), source_cleanup_cb(&state, &name))
+                    .await
+                {
                     Ok(running) => running,
                     Err(e) => {
                         return (
@@ -1930,9 +2003,17 @@ pub async fn update_rule(
                             .into_response();
                     }
                 };
-                cancel_rule_source(&state, &name);
-                state.trace_manager.stop_trace(&name);
                 if was_running {
+                    if let Err(e) = state.rule_manager.start_rule(&name).await {
+                        return (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            Json(json!({
+                                "error": 1000,
+                                "message": e.to_string()
+                            })),
+                        )
+                            .into_response();
+                    }
                     let buffer_len = rule
                         .options
                         .as_ref()
@@ -2004,6 +2085,16 @@ pub async fn update_rule(
     if let Some(resp) = reject_invalid_rule(&state, &select_stmt, rule.options.as_ref(), false) {
         return resp;
     }
+    if let Err(err) = crate::engine::validate_rule_actions(&rule.actions) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "error": 1000,
+                "message": err.to_string()
+            })),
+        )
+            .into_response();
+    }
     if let Some(resp) = reject_invalid_typed_plan(&state, &rule, &select_stmt) {
         return resp;
     }
@@ -2017,7 +2108,26 @@ pub async fn update_rule(
         )
             .into_response();
     }
-    let was_running = match state.rule_manager.update_rule(rule.clone()).await {
+    if let Err(err) = crate::engine::preflight_rule_sinks(
+        &name,
+        &rule.actions,
+        &state.source_configs,
+        rule.options.as_ref(),
+    ) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "error": 1000,
+                "message": err.to_string()
+            })),
+        )
+            .into_response();
+    }
+    let was_running = match state
+        .rule_manager
+        .update_rule_with_cleanup(rule.clone(), source_cleanup_cb(&state, &name))
+        .await
+    {
         Ok(running) => running,
         Err(e) => {
             return (
@@ -2030,10 +2140,18 @@ pub async fn update_rule(
                 .into_response();
         }
     };
-    cancel_rule_source(&state, &name);
-    state.trace_manager.stop_trace(&name);
     if was_running {
-        spawn_rule_task(
+        if let Err(e) = state.rule_manager.start_rule(&name).await {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({
+                    "error": 1000,
+                    "message": e.to_string()
+                })),
+            )
+                .into_response();
+        }
+        if let Err(err) = spawn_rule_task(
             &state.rule_manager,
             &state.stream_bus,
             &state.stream_manager,
@@ -2046,7 +2164,16 @@ pub async fn update_rule(
             select_stmt.clone(),
             rule.actions.clone(),
             rule.options.clone(),
-        );
+        ) {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "error": 1000,
+                    "message": err.to_string()
+                })),
+            )
+                .into_response();
+        }
         bootstrap_rule_sources(&state, &name, &select_stmt);
     }
     (

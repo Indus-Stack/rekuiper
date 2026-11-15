@@ -155,18 +155,24 @@ impl ProductionFixtureRunner {
     pub fn flush_window_if_due(
         &mut self,
         sql: &str,
-    ) -> Result<Option<IndexMap<String, Value>>, String> {
+    ) -> Result<Vec<IndexMap<String, Value>>, String> {
         let Some(deadline) = self.window_deadline else {
-            return Ok(None);
+            return Ok(Vec::new());
         };
         if self.clock.now().elapsed < deadline {
-            return Ok(None);
+            return Ok(Vec::new());
         }
         let mut parser = Parser::new(sql);
         let stmt = parser.parse_select().map_err(|e| e.to_string())?;
         let batch = std::mem::take(&mut self.window_buffer);
         self.window_deadline = None;
-        Ok(Evaluator::eval_aggregate(&stmt, &batch))
+        let rows: Vec<IndexMap<String, Value>> =
+            batch.into_iter().map(|r| r.into_iter().collect()).collect();
+        Ok(Evaluator::eval_window_stateful(
+            &stmt,
+            rows,
+            Some(&self.rule_state),
+        ))
     }
 
     /// Validates a production `GraphDefinition` and steps a `SwitchNode` operator if present.

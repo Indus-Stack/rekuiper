@@ -122,6 +122,7 @@ impl CatalogStore {
             ));
         }
 
+        let generation_i64 = generation_to_sqlite(candidate.generation)?;
         let json =
             serde_json::to_string(&candidate).map_err(|e| CatalogError::Storage(e.to_string()))?;
 
@@ -129,7 +130,7 @@ impl CatalogStore {
             "INSERT INTO catalog_generations (generation, created_wall_millis, snapshot_json)
              VALUES (?1, ?2, ?3)",
         )
-        .bind(candidate.generation.0 as i64)
+        .bind(generation_i64)
         .bind(candidate.created_wall_millis)
         .bind(json)
         .execute(&mut *tx)
@@ -150,9 +151,10 @@ impl CatalogStore {
         &self,
         generation: Generation,
     ) -> Result<Arc<CatalogGeneration>, CatalogError> {
+        let generation_i64 = generation_to_sqlite(generation)?;
         let row =
             sqlx::query("SELECT snapshot_json FROM catalog_generations WHERE generation = ?1")
-                .bind(generation.0 as i64)
+                .bind(generation_i64)
                 .fetch_optional(&self.pool)
                 .await
                 .map_err(|e| CatalogError::Storage(e.to_string()))?;
@@ -184,4 +186,14 @@ impl CatalogStore {
         };
         self.commit_candidate(current, candidate).await
     }
+}
+
+fn generation_to_sqlite(generation: Generation) -> Result<i64, CatalogError> {
+    i64::try_from(generation.0).map_err(|_| {
+        CatalogError::InvalidObject(format!(
+            "catalog generation {} exceeds SQLite integer range (max {})",
+            generation.0,
+            i64::MAX
+        ))
+    })
 }

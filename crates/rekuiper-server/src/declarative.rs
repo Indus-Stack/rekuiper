@@ -38,6 +38,10 @@ pub struct ReconcileReport {
     pub rules_restarted: usize,
     pub rules_unchanged: usize,
     pub rules_stopped: usize,
+    #[serde(default)]
+    pub rules_failed: usize,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub rule_errors: HashMap<String, String>,
 }
 
 impl Default for ReconcileReport {
@@ -54,6 +58,8 @@ impl Default for ReconcileReport {
             rules_restarted: 0,
             rules_unchanged: 0,
             rules_stopped: 0,
+            rules_failed: 0,
+            rule_errors: HashMap::new(),
         }
     }
 }
@@ -167,11 +173,20 @@ pub async fn reconcile_manifest_with_watchdog(
     let has_existing = !state.rule_manager.list_rules().is_empty()
         || !state.stream_manager.list_streams().is_empty();
 
+    let existing_known_good = load_known_good_snapshot(state).await.ok().flatten();
+    let is_live_healthy = check_rule_panics(state).is_none();
+
     let prev_manifest = if has_existing {
-        let current = capture_current_manifest(state);
-        let _ = store_known_good_snapshot(state, &current).await;
-        current
-    } else if let Ok(Some(existing)) = load_known_good_snapshot(state).await {
+        if is_live_healthy {
+            let current = capture_current_manifest(state);
+            if existing_known_good.is_none() {
+                let _ = store_known_good_snapshot(state, &current).await;
+            }
+            current
+        } else {
+            existing_known_good.unwrap_or_else(|| capture_current_manifest(state))
+        }
+    } else if let Some(existing) = existing_known_good {
         existing
     } else {
         manifest.clone()
@@ -179,6 +194,7 @@ pub async fn reconcile_manifest_with_watchdog(
 
     // 2. Perform reconciliation
     let report = reconcile_manifest_internal(state, manifest).await?;
+    let reconcile_ok = report.rules_failed == 0 && report.status != "partial_error";
 
     // 3. Spawn Transactional Snapshot Watchdog only if there was prior topology to protect
     if has_existing {
@@ -187,8 +203,9 @@ pub async fn reconcile_manifest_with_watchdog(
             prev_manifest,
             watchdog_window,
             spike_threshold,
+            reconcile_ok,
         );
-    } else {
+    } else if reconcile_ok {
         let _ = store_known_good_snapshot(state, manifest).await;
     }
 
@@ -361,13 +378,11 @@ pub async fn reconcile_manifest_internal(
         }
 
         // Rule is new or modified: stop old version if present
-        if existing_rule_ids.contains(rule_id) {
+        let is_restart = existing_rule_ids.contains(rule_id);
+        if is_restart {
             cancel_rule_source(state, rule_id);
             let _ = state.rule_manager.stop_rule(rule_id).await;
             let _ = state.rule_manager.delete_rule(rule_id).await;
-            report.rules_restarted += 1;
-        } else {
-            report.rules_started += 1;
         }
 
         // Handle native visual DAG rules or parse SQL
@@ -421,6 +436,11 @@ pub async fn reconcile_manifest_internal(
                         buffer_len,
                     );
                     bootstrap_graph_sources(state, rule_id, graph);
+                    if is_restart {
+                        report.rules_restarted += 1;
+                    } else {
+                        report.rules_started += 1;
+                    }
 
                     state
                         .active_rule_hashes
@@ -442,7 +462,7 @@ pub async fn reconcile_manifest_internal(
             .create_rule(resolved_rule_def.clone())
             .await;
 
-        spawn_rule_task(
+        if let Err(err) = spawn_rule_task(
             &state.rule_manager,
             &state.stream_bus,
             &state.stream_manager,
@@ -455,12 +475,22 @@ pub async fn reconcile_manifest_internal(
             select_stmt,
             resolved_rule_def.actions.clone(),
             resolved_rule_def.options.clone(),
-        );
-
-        state
-            .active_rule_hashes
-            .write()
-            .insert(rule_id.clone(), effective_hash);
+        ) {
+            tracing::error!(rule_id = %rule_id, "Failed to start declarative rule {rule_id}: {err}");
+            report.rules_failed += 1;
+            report.rule_errors.insert(rule_id.clone(), err.to_string());
+            report.status = "partial_error".to_string();
+        } else {
+            if is_restart {
+                report.rules_restarted += 1;
+            } else {
+                report.rules_started += 1;
+            }
+            state
+                .active_rule_hashes
+                .write()
+                .insert(rule_id.clone(), effective_hash);
+        }
     }
 
     // Stop and delete rules no longer present in manifest
@@ -683,6 +713,12 @@ pub fn get_total_dlq_errors(state: &AppState) -> u64 {
 pub fn check_rule_panics(state: &AppState) -> Option<String> {
     for r in state.rule_manager.list_rules() {
         if let Some(status) = state.rule_manager.get_rule_status(&r.id) {
+            if status.status == "error" {
+                return Some(format!(
+                    "Rule '{}' is in error state: {}",
+                    r.id, status.message
+                ));
+            }
             if status.status == "stopped" {
                 if !status.last_exception.is_empty() {
                     return Some(format!(
@@ -714,6 +750,7 @@ pub fn spawn_snapshot_watchdog(
     prev_manifest: DeclarativeManifest,
     window: std::time::Duration,
     spike_threshold: u64,
+    promote_on_clean: bool,
 ) {
     tokio::spawn(async move {
         let start = std::time::Instant::now();
@@ -774,11 +811,14 @@ pub fn spawn_snapshot_watchdog(
             }
         }
 
-        // Window passed cleanly: confirm snapshot as healthy
-        tracing::info!(
-            "Transactional Snapshot Watchdog window elapsed successfully; snapshot confirmed healthy."
-        );
-        let healthy_manifest = capture_current_manifest(&state);
-        let _ = store_known_good_snapshot(&state, &healthy_manifest).await;
+        // Window passed cleanly: confirm snapshot as healthy only if reconciliation succeeded
+        // and no rule is in an error state.
+        if promote_on_clean && check_rule_panics(&state).is_none() {
+            tracing::info!(
+                "Transactional Snapshot Watchdog window elapsed successfully; snapshot confirmed healthy."
+            );
+            let healthy_manifest = capture_current_manifest(&state);
+            let _ = store_known_good_snapshot(&state, &healthy_manifest).await;
+        }
     });
 }

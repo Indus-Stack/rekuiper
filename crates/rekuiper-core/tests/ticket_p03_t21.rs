@@ -210,3 +210,208 @@ fn p03_t21_missing_payload_segment_fails_visibly_and_capacity_enforced() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn p03_t21_retryable_and_ambiguous_effects_remain_claimable_across_reopen() {
+    let dir = temp_dir("retryable_stays_claimable");
+    let cfg = SegmentedOutboxConfig::new(&dir);
+    let rule = RuleId::try_from("r_retry").unwrap();
+    let act = ActionId::try_from("act_1").unwrap();
+    let eff = EffectId::try_from("eff_retry").unwrap();
+
+    {
+        let mut outbox = SegmentedOutbox::open(cfg.clone()).unwrap();
+        outbox
+            .commit_state_and_enqueue(
+                envelope("r_retry", 1),
+                vec![entry("r_retry", "eff_retry", b"p")],
+            )
+            .unwrap();
+
+        let claim1 = outbox
+            .claim_pending(&rule, &act, "worker-a", 10)
+            .unwrap()
+            .into_iter()
+            .next()
+            .expect("first claim");
+        let ack = outbox
+            .ack(
+                &eff,
+                &claim1.claim_token,
+                EffectOutcome::Retryable {
+                    delay_hint_millis: Some(100),
+                },
+            )
+            .unwrap();
+        assert_eq!(ack, Some(CompletionStatus::Applied));
+    }
+
+    // Reopen: Retryable effect must still be pending and claimable.
+    {
+        let mut outbox = SegmentedOutbox::open(cfg.clone()).unwrap();
+        let claim2 = outbox
+            .claim_pending(&rule, &act, "worker-b", 10)
+            .unwrap()
+            .into_iter()
+            .next()
+            .expect("retryable effect must remain claimable after reopen");
+        assert_eq!(claim2.effect.effect_id, eff);
+
+        // Simulate crash after writing Ambiguous to ack journal before manifest commit.
+        let crash_err = outbox
+            .ack_with_crash(
+                &eff,
+                &claim2.claim_token,
+                EffectOutcome::Ambiguous {
+                    error: StructuredError {
+                        code: ErrorCode::InvalidData,
+                        stage: ErrorStage::Action,
+                        object: ErrorObject::Action(act.clone()),
+                        retriable: true,
+                        position: None,
+                    },
+                },
+                Some(SegmentedCrashStep::AfterAckJournalBeforeManifest),
+            )
+            .expect_err("injected crash");
+        assert!(matches!(crash_err, OutboxError::Storage(_)));
+    }
+
+    // Reopen again: journal replay of Ambiguous must also leave it pending and claimable.
+    {
+        let mut outbox = SegmentedOutbox::open(cfg).unwrap();
+        let claim3 = outbox
+            .claim_pending(&rule, &act, "worker-c", 10)
+            .unwrap()
+            .into_iter()
+            .next()
+            .expect("ambiguous effect must remain claimable after journal replay");
+        assert_eq!(claim3.effect.effect_id, eff);
+    }
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn p03_t21_second_writer_open_on_same_dir_fails_visibly() {
+    let dir = temp_dir("exclusive_writer");
+    let cfg = SegmentedOutboxConfig::new(&dir);
+
+    {
+        let mut outbox1 = SegmentedOutbox::open(cfg.clone()).unwrap();
+        outbox1
+            .commit_state_and_enqueue(envelope("r_1", 1), vec![])
+            .unwrap();
+
+        let err = SegmentedOutbox::open(cfg.clone())
+            .expect_err("second concurrent writer on same directory must fail visibly");
+        assert!(matches!(err, OutboxError::Storage(_)));
+    }
+
+    // Once outbox1 is dropped, reopening succeeds and preserves checkpoint.
+    let outbox2 = SegmentedOutbox::open(cfg).unwrap();
+    assert_eq!(
+        outbox2
+            .latest_checkpoint(&RuleId::try_from("r_1").unwrap())
+            .map(|c| c.metadata.identity.generation.0),
+        Some(1)
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn p03_t21_reopen_succeeds_when_stale_lock_file_left_on_disk() {
+    let dir = temp_dir("abrupt_exit_lock");
+    let cfg = SegmentedOutboxConfig::new(&dir);
+
+    {
+        let mut outbox = SegmentedOutbox::open(cfg.clone()).unwrap();
+        outbox
+            .commit_state_and_enqueue(envelope("r_abrupt", 1), vec![])
+            .unwrap();
+    }
+
+    // Simulate an unlinked/abruptly exited writer that left writer.lock behind with no OS lock held.
+    std::fs::write(dir.join("writer.lock"), b"").unwrap();
+    let reopened = SegmentedOutbox::open(cfg.clone())
+        .expect("OS-backed lock must allow reopen when no live process holds the lock");
+    assert_eq!(
+        reopened
+            .latest_checkpoint(&RuleId::try_from("r_abrupt").unwrap())
+            .map(|c| c.metadata.identity.generation.0),
+        Some(1)
+    );
+
+    // While reopened is live, a second concurrent open still fails.
+    let err =
+        SegmentedOutbox::open(cfg).expect_err("second open while OS lock is held must still fail");
+    assert!(matches!(err, OutboxError::Storage(_)));
+
+    drop(reopened);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn p03_t21_stale_ack_journal_does_not_clear_newer_claim_on_reopen() {
+    let dir = temp_dir("stale_journal_claim");
+    let cfg = SegmentedOutboxConfig::new(&dir);
+    let rule = RuleId::try_from("r_claim").unwrap();
+    let act = ActionId::try_from("act_1").unwrap();
+    let eff = EffectId::try_from("eff_claim").unwrap();
+
+    let claim_b_token = {
+        let mut outbox = SegmentedOutbox::open(cfg.clone()).unwrap();
+        outbox
+            .commit_state_and_enqueue(
+                envelope("r_claim", 1),
+                vec![entry("r_claim", "eff_claim", b"p")],
+            )
+            .unwrap();
+
+        // Worker A claims and records a Retryable ack.
+        let claim_a = outbox
+            .claim_pending(&rule, &act, "worker-a", 10_000)
+            .unwrap()
+            .into_iter()
+            .next()
+            .unwrap();
+        outbox
+            .ack(
+                &eff,
+                &claim_a.claim_token,
+                EffectOutcome::Retryable {
+                    delay_hint_millis: None,
+                },
+            )
+            .unwrap();
+
+        // Worker B reclaims the effect with a long lease.
+        let claim_b = outbox
+            .claim_pending(&rule, &act, "worker-b", 60_000)
+            .unwrap()
+            .into_iter()
+            .next()
+            .unwrap();
+        claim_b.claim_token
+    };
+
+    // Reopen: replaying worker A's older ack journal entry must NOT clear worker B's active claim.
+    let mut reopened = SegmentedOutbox::open(cfg).unwrap();
+    assert!(
+        reopened
+            .claim_pending(&rule, &act, "worker-c", 10_000)
+            .unwrap()
+            .is_empty(),
+        "worker C must not steal worker B's active lease after reopen"
+    );
+    assert_eq!(
+        reopened
+            .ack(&eff, &claim_b_token, EffectOutcome::Delivered)
+            .unwrap(),
+        Some(CompletionStatus::Applied)
+    );
+
+    drop(reopened);
+    let _ = std::fs::remove_dir_all(&dir);
+}

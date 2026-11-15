@@ -492,6 +492,45 @@ pub fn cache_dir(root: &Path, rule_id: &str, action_index: usize) -> PathBuf {
     root.join(safe).join(action_index.to_string())
 }
 
+/// Returns any non-empty legacy positional cache directories (e.g. `<root>/<rule>/0`)
+/// left behind before identity-based cache ownership was enabled.
+pub fn find_nonempty_legacy_cache_dirs(root: &Path, rule_id: &str) -> Vec<PathBuf> {
+    let safe: String = rule_id
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let rule_dir = root.join(safe);
+    let Ok(entries) = std::fs::read_dir(&rule_dir) else {
+        return Vec::new();
+    };
+    let mut legacy = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        if !name.is_empty() && name.bytes().all(|b| b.is_ascii_digit()) {
+            let has_files = std::fs::read_dir(&path)
+                .map(|mut it| it.next().is_some())
+                .unwrap_or(false);
+            if has_files {
+                legacy.push(path);
+            }
+        }
+    }
+    legacy.sort();
+    legacy
+}
+
 /// Cache directory keyed by stable [`rekuiper_core::contracts::ActionId`].
 pub fn cache_dir_for_identity(
     root: &Path,
@@ -574,7 +613,6 @@ fn is_credential_prop(key: &str) -> bool {
             | "api_key"
             | "auth"
             | "authorization"
-            | "headers"
             | "username"
             | "user"
             | "saslpassword"
@@ -588,13 +626,52 @@ fn is_credential_prop(key: &str) -> bool {
     )
 }
 
-/// Computes a deterministic destination ownership fingerprint excluding credentials.
+fn is_credential_header(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    is_credential_prop(&lower)
+        || matches!(
+            lower.as_str(),
+            "proxy-authorization"
+                | "cookie"
+                | "set-cookie"
+                | "x-api-key"
+                | "api-key"
+                | "x-auth-token"
+                | "x-access-token"
+                | "x-secret-key"
+        )
+}
+
+/// Computes a deterministic destination ownership fingerprint excluding credentials
+/// while retaining routing headers (e.g. `X-Tenant-Id`).
 pub fn compute_destination_fingerprint(sink_type: &str, props: &HashMap<String, Value>) -> String {
-    let mut non_cred = std::collections::BTreeMap::new();
+    let mut non_cred: std::collections::BTreeMap<String, Value> = std::collections::BTreeMap::new();
     for (k, v) in props {
-        if k != "name" && !is_credential_prop(k) {
-            non_cred.insert(k.as_str(), v);
+        if k == "name" || is_credential_prop(k) {
+            continue;
         }
+        if k == "headers" {
+            if let Some(obj) = v.as_object() {
+                let mut filtered: Vec<(&str, &Value)> = obj
+                    .iter()
+                    .filter(|(hk, _)| !is_credential_header(hk))
+                    .map(|(hk, hv)| (hk.as_str(), hv))
+                    .collect();
+                filtered.sort_by(|(a, _), (b, _)| {
+                    a.to_ascii_lowercase()
+                        .cmp(&b.to_ascii_lowercase())
+                        .then_with(|| a.cmp(b))
+                });
+                if !filtered.is_empty() {
+                    non_cred.insert(
+                        "headers".to_owned(),
+                        serde_json::to_value(filtered).unwrap_or(Value::Null),
+                    );
+                }
+            }
+            continue;
+        }
+        non_cred.insert(k.clone(), v.clone());
     }
     let payload = serde_json::to_vec(&(sink_type, non_cred)).unwrap_or_default();
     rekuiper_core::contracts::ContentChecksum::sha256_bytes(&payload)
@@ -622,45 +699,57 @@ impl CacheOwnershipManifest {
 }
 
 impl SinkCache {
-    /// Opens a sink cache only if ownership manifest matches (or directory is fresh).
-    /// Refuses to silently adopt an unowned legacy cache or a different destination.
-    pub fn open_with_ownership(
-        cfg: CacheConfig,
-        dir: PathBuf,
+    /// Read-only ownership check against an existing cache directory without
+    /// creating directories or writing `ownership_manifest.json`.
+    pub fn verify_ownership(
+        dir: &std::path::Path,
         manifest: &CacheOwnershipManifest,
-    ) -> Result<Self, CacheOwnershipError> {
+    ) -> Result<bool, CacheOwnershipError> {
         let manifest_path = dir.join("ownership_manifest.json");
-        if manifest_path.exists() {
-            let raw = std::fs::read_to_string(&manifest_path)
-                .map_err(|e| CacheOwnershipError::Storage(e.to_string()))?;
-            let existing: CacheOwnershipManifest = serde_json::from_str(&raw)
-                .map_err(|e| CacheOwnershipError::Storage(e.to_string()))?;
-            if existing.version != manifest.version
-                || existing.rule_id != manifest.rule_id
-                || existing.action_id != manifest.action_id
-                || existing.sink_type != manifest.sink_type
-                || existing.destination_fingerprint != manifest.destination_fingerprint
-            {
-                return Err(CacheOwnershipError::OwnershipMismatch {
-                    expected: format!(
-                        "{}:{}:{}:{}",
-                        manifest.rule_id,
-                        manifest.action_id,
-                        manifest.sink_type,
-                        manifest.destination_fingerprint
-                    ),
-                    actual: format!(
-                        "{}:{}:{}:{}",
-                        existing.rule_id,
-                        existing.action_id,
-                        existing.sink_type,
-                        existing.destination_fingerprint
-                    ),
-                });
+        match std::fs::symlink_metadata(&manifest_path) {
+            Ok(_) => {
+                let raw = std::fs::read_to_string(&manifest_path)
+                    .map_err(|e| CacheOwnershipError::Storage(e.to_string()))?;
+                let existing: CacheOwnershipManifest = serde_json::from_str(&raw)
+                    .map_err(|e| CacheOwnershipError::Storage(e.to_string()))?;
+                if existing.version != manifest.version
+                    || existing.rule_id != manifest.rule_id
+                    || existing.action_id != manifest.action_id
+                    || existing.sink_type != manifest.sink_type
+                    || existing.destination_fingerprint != manifest.destination_fingerprint
+                {
+                    return Err(CacheOwnershipError::OwnershipMismatch {
+                        expected: format!(
+                            "{}:{}:{}:{}",
+                            manifest.rule_id,
+                            manifest.action_id,
+                            manifest.sink_type,
+                            manifest.destination_fingerprint
+                        ),
+                        actual: format!(
+                            "{}:{}:{}:{}",
+                            existing.rule_id,
+                            existing.action_id,
+                            existing.sink_type,
+                            existing.destination_fingerprint
+                        ),
+                    });
+                }
+                return Ok(true);
             }
-        } else {
-            if dir.exists() {
-                let has_entries = std::fs::read_dir(&dir)
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(CacheOwnershipError::Storage(e.to_string())),
+        }
+
+        match std::fs::metadata(dir) {
+            Ok(meta) => {
+                if !meta.is_dir() {
+                    return Err(CacheOwnershipError::Storage(format!(
+                        "cache path {} is not a directory",
+                        dir.display()
+                    )));
+                }
+                let has_entries = std::fs::read_dir(dir)
                     .map_err(|e| CacheOwnershipError::Storage(e.to_string()))?
                     .next()
                     .is_some();
@@ -668,6 +757,45 @@ impl SinkCache {
                     return Err(CacheOwnershipError::UnownedLegacyCache);
                 }
             }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                // Ensure no existing ancestor component is a non-directory (e.g. regular file).
+                let mut ancestor = dir.parent();
+                while let Some(p) = ancestor {
+                    if p.as_os_str().is_empty() {
+                        break;
+                    }
+                    match std::fs::metadata(p) {
+                        Ok(meta) => {
+                            if !meta.is_dir() {
+                                return Err(CacheOwnershipError::Storage(format!(
+                                    "cache ancestor path {} is not a directory",
+                                    p.display()
+                                )));
+                            }
+                            break;
+                        }
+                        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                            ancestor = p.parent();
+                        }
+                        Err(err) => return Err(CacheOwnershipError::Storage(err.to_string())),
+                    }
+                }
+            }
+            Err(e) => return Err(CacheOwnershipError::Storage(e.to_string())),
+        }
+        Ok(false)
+    }
+
+    /// Opens a sink cache only if ownership manifest matches (or directory is fresh).
+    /// Refuses to silently adopt an unowned legacy cache or a different destination.
+    pub fn open_with_ownership(
+        cfg: CacheConfig,
+        dir: PathBuf,
+        manifest: &CacheOwnershipManifest,
+    ) -> Result<Self, CacheOwnershipError> {
+        let manifest_exists = Self::verify_ownership(&dir, manifest)?;
+        if !manifest_exists {
+            let manifest_path = dir.join("ownership_manifest.json");
             std::fs::create_dir_all(&dir)
                 .map_err(|e| CacheOwnershipError::Storage(e.to_string()))?;
             let encoded = serde_json::to_vec_pretty(manifest)

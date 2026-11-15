@@ -147,3 +147,51 @@ async fn p11_t02_atomic_generations_validation_rename_and_rollback() {
         .by_display_name(CatalogObjectKind::Rule, "high_temp")
         .is_some());
 }
+
+#[tokio::test]
+async fn p11_t02_rejects_generations_above_sqlite_i64_max() {
+    let dir = std::env::temp_dir().join(format!(
+        "rekuiper_p11_t02_{}_{}",
+        std::process::id(),
+        chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let db_path = dir.join("catalog.db");
+    let db_str = db_path.to_str().unwrap();
+    let store = CatalogStore::open(db_str).await.unwrap();
+
+    let gen1 = CatalogGeneration {
+        generation: Generation(1),
+        created_wall_millis: 1000,
+        entries: BTreeMap::new(),
+        edges: vec![],
+    };
+    store.commit_candidate(None, gen1).await.unwrap();
+
+    let overflow_gen = CatalogGeneration {
+        generation: Generation(u64::MAX),
+        created_wall_millis: 2000,
+        entries: BTreeMap::new(),
+        edges: vec![],
+    };
+    let err = store
+        .commit_candidate(Some(Generation(1)), overflow_gen)
+        .await
+        .expect_err("u64::MAX generation must be rejected before SQLite cast");
+    assert!(matches!(err, CatalogError::InvalidObject(_)));
+
+    let load_err = store
+        .load_generation(Generation(u64::MAX))
+        .await
+        .expect_err("loading out-of-range generation must fail");
+    assert!(matches!(load_err, CatalogError::InvalidObject(_)));
+
+    drop(store);
+    let reopened = CatalogStore::open(db_str).await.unwrap();
+    assert_eq!(
+        reopened.current_generation().map(|g| g.generation),
+        Some(Generation(1))
+    );
+    drop(reopened);
+    let _ = std::fs::remove_dir_all(&dir);
+}

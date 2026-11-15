@@ -134,3 +134,36 @@ async fn p03_t16_poison_message_never_acks_when_dlq_fails_and_preserves_legacy_d
     assert_eq!(legacy_cfg.ack_mode, RabbitMqAckMode::LegacyAdmission);
     assert_eq!(legacy_cfg.poison_policy, RabbitMqPoisonPolicy::RejectDrop);
 }
+
+#[tokio::test]
+async fn p03_t16_live_source_rejects_unwired_reliable_ack_modes() {
+    use rekuiper_connectors::rabbitmq::RabbitMqSource;
+    use rekuiper_core::StreamBus;
+
+    let bus = StreamBus::new();
+    let tx = bus.get_or_create("q1");
+
+    for mode in [
+        RabbitMqAckMode::DurableOutbox,
+        RabbitMqAckMode::ConfirmedDelivery,
+    ] {
+        let cfg = RabbitMqConfig {
+            ack_mode: mode,
+            queue: "q1".to_owned(),
+            ..Default::default()
+        };
+        assert!(
+            cfg.validate_source_ack_mode().is_err(),
+            "mode {mode:?} must be rejected until live consumer honors it"
+        );
+        assert!(RabbitMqSource::try_new(cfg.clone(), tx.clone()).is_err());
+
+        // Even if constructed with `new` and spawned, it exits immediately without connecting.
+        let (_cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
+        let handle = RabbitMqSource::new(cfg, tx.clone()).spawn(cancel_rx);
+        handle.await.unwrap();
+    }
+
+    let legacy_cfg = RabbitMqConfig::default();
+    assert!(RabbitMqSource::try_new(legacy_cfg, tx).is_ok());
+}

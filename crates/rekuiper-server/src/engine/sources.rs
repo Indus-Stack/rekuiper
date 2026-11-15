@@ -987,6 +987,14 @@ pub(crate) fn bootstrap_stream_sources(
     if let Some(config) =
         resolve_rabbitmq_source(&state.stream_manager, &state.source_configs, stream_name)
     {
+        if let Err(err) = config.validate_source_ack_mode() {
+            tracing::error!(
+                stream = %stream_name,
+                rule_id = %rule_id,
+                "Refusing to start RabbitMQ source: {err}"
+            );
+            return;
+        }
         let stream_tx = state.stream_bus.get_or_create(stream_name);
         let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
         register_rule_stream_source(state, stream_name, rule_id, cancel_tx);
@@ -1306,7 +1314,7 @@ pub async fn restore_running_rules(state: &AppState) {
                 continue;
             }
         };
-        spawn_rule_task(
+        if let Err(err) = spawn_rule_task(
             &state.rule_manager,
             &state.stream_bus,
             &state.stream_manager,
@@ -1319,9 +1327,12 @@ pub async fn restore_running_rules(state: &AppState) {
             select_stmt.clone(),
             rule.actions.clone(),
             rule.options.clone(),
-        );
-        bootstrap_rule_sources(state, &rule.id, &select_stmt);
-        tracing::info!("Restored running rule {}", rule.id);
+        ) {
+            tracing::error!(rule_id = %rule.id, "Failed to restore rule {}: {err}", rule.id);
+        } else {
+            bootstrap_rule_sources(state, &rule.id, &select_stmt);
+            tracing::info!("Restored running rule {}", rule.id);
+        }
     }
 }
 

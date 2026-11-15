@@ -539,7 +539,7 @@ pub async fn process_import_payload(state: &AppState, payload: &Value) -> (Impor
                 continue;
             }
             counts.rules += 1;
-            spawn_rule_task(
+            if let Err(err) = spawn_rule_task(
                 &state.rule_manager,
                 &state.stream_bus,
                 &state.stream_manager,
@@ -552,8 +552,11 @@ pub async fn process_import_payload(state: &AppState, payload: &Value) -> (Impor
                 select_stmt.clone(),
                 def.actions.clone(),
                 def.options.clone(),
-            );
-            bootstrap_rule_sources(state, &def.id, &select_stmt);
+            ) {
+                status["rules"][&def.id] = json!(err.to_string());
+            } else {
+                bootstrap_rule_sources(state, &def.id, &select_stmt);
+            }
         }
     }
 
