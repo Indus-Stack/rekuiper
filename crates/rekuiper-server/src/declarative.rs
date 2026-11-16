@@ -178,11 +178,7 @@ pub async fn reconcile_manifest_with_watchdog(
 
     let prev_manifest = if has_existing {
         if is_live_healthy {
-            let current = capture_current_manifest(state);
-            if existing_known_good.is_none() {
-                let _ = store_known_good_snapshot(state, &current).await;
-            }
-            current
+            capture_current_manifest(state)
         } else {
             existing_known_good.unwrap_or_else(|| capture_current_manifest(state))
         }
