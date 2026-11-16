@@ -684,8 +684,27 @@ fn scrub_value_for_fingerprint(sink_type: &str, val: &Value) -> Value {
     }
 }
 
+fn is_url_or_dsn_prop(key: &str) -> bool {
+    let lower = key.to_ascii_lowercase();
+    matches!(
+        lower.as_str(),
+        "url"
+            | "uri"
+            | "dsn"
+            | "endpoint"
+            | "server"
+            | "servers"
+            | "broker"
+            | "brokers"
+            | "addr"
+            | "address"
+            | "connection_string"
+            | "connectionstring"
+    )
+}
+
 /// Computes a deterministic destination ownership fingerprint excluding credentials
-/// while retaining routing headers (e.g. `X-Tenant-Id`) and destination keys.
+/// while retaining routing headers (e.g. `X-Tenant-Id`) and exact destination keys.
 pub fn compute_destination_fingerprint(sink_type: &str, props: &HashMap<String, Value>) -> String {
     let mut non_cred: std::collections::BTreeMap<String, Value> = std::collections::BTreeMap::new();
     for (k, v) in props {
@@ -713,7 +732,12 @@ pub fn compute_destination_fingerprint(sink_type: &str, props: &HashMap<String, 
             }
             continue;
         }
-        non_cred.insert(k.clone(), scrub_value_for_fingerprint(sink_type, v));
+        let val = if is_url_or_dsn_prop(k) {
+            scrub_value_for_fingerprint(sink_type, v)
+        } else {
+            v.clone()
+        };
+        non_cred.insert(k.clone(), val);
     }
     let payload = serde_json::to_vec(&(sink_type, non_cred)).unwrap_or_default();
     rekuiper_core::contracts::ContentChecksum::sha256_bytes(&payload)

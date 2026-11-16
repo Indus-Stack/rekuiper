@@ -187,11 +187,11 @@ Configure limits per table using `WITH` options:
 
 | Option | Default | Description |
 |---|---|---|
-| `LOOKUP_MAX_CONCURRENT` | `64` | Maximum concurrent in-flight lookup requests per backend runtime. |
-| `LOOKUP_MAX_QUEUED_REQUESTS` | `1024` | Maximum queued lookup requests before backpressure rejects or drops. |
-| `LOOKUP_MAX_QUEUED_BYTES` | `16777216` | Maximum queued request bytes. |
+| `LOOKUP_MAX_CONCURRENT` | `16` | Maximum concurrent in-flight lookup requests per backend runtime (`1..=Semaphore::MAX_PERMITS`). |
+| `LOOKUP_MAX_QUEUED_REQUESTS` | `256` | Maximum queued lookup requests before backpressure rejects or drops. |
+| `LOOKUP_MAX_QUEUED_BYTES` | `4194304` | Maximum queued request bytes (4 MiB). |
 | `LOOKUP_PERMIT_WAIT_MS` | `2000` | Maximum time in milliseconds to wait for an execution permit. |
 | `LOOKUP_TIMEOUT_MS` | `5000` | Maximum execution time in milliseconds once a lookup starts. |
-| `LOOKUP_BACKPRESSURE` | `drop_new` | Queue overflow policy (`drop_new` or `fail_fast`). |
+| `LOOKUP_BACKPRESSURE` | `false` (`drop_new`) | Queue overflow policy (`false`/`drop_new`/`fail_fast` or `true`/`block`/`wait`). |
 
 Prometheus `/metrics` exports per-backend counters via `rekuiper_lookup_requests_total{backend="...",outcome="completed|rejected|timed_out|cancelled|failed"}`.

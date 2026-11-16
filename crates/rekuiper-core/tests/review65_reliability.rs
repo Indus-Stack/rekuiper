@@ -164,3 +164,153 @@ async fn catalog_store_open_normalizes_backslashes() {
     let _store = CatalogStore::open(with_backslashes).await.unwrap();
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[tokio::test]
+async fn sqlite_outbox_deduplicates_settled_effect_after_retention_pruning() {
+    use rekuiper_core::reliability::{OutboxCapacity, SqliteOutbox};
+
+    let store = ReliableSqliteStore::open(":memory:", SqliteDurabilityMode::Full)
+        .await
+        .unwrap()
+        .with_retention(5, 1);
+    let outbox = SqliteOutbox::new(&store, OutboxCapacity::default());
+    let rule_id = RuleId::try_from("r_ret").unwrap();
+    let action_id = ActionId::try_from("index.0").unwrap();
+
+    // Commit and settle effect 1, then effect 2 so effect 1 is pruned from reliable_outbox_effects.
+    let eff1 = sample_effect("r_ret", 1, 1);
+    let eid1 = eff1.effect_id.clone();
+    outbox
+        .commit_state_and_enqueue(
+            sample_cp("r_ret", 1, 1),
+            vec![OutboxEntry::new(eff1, vec![1])],
+        )
+        .await
+        .unwrap();
+    let claimed1 = outbox
+        .claim_pending(&rule_id, &action_id, "w1", 10)
+        .await
+        .unwrap();
+    outbox
+        .ack(&eid1, &claimed1[0].claim_token, EffectOutcome::Delivered)
+        .await
+        .unwrap();
+
+    let eff2 = sample_effect("r_ret", 1, 2);
+    let eid2 = eff2.effect_id.clone();
+    outbox
+        .commit_state_and_enqueue(
+            sample_cp("r_ret", 1, 2),
+            vec![OutboxEntry::new(eff2, vec![2])],
+        )
+        .await
+        .unwrap();
+    let claimed2 = outbox
+        .claim_pending(&rule_id, &action_id, "w1", 10)
+        .await
+        .unwrap();
+    outbox
+        .ack(&eid2, &claimed2[0].claim_token, EffectOutcome::Delivered)
+        .await
+        .unwrap();
+
+    // Commit a 3rd checkpoint so retention pruning runs with eff2 settled and eff1 already pruned.
+    let eff3 = sample_effect("r_ret", 1, 3);
+    outbox
+        .commit_state_and_enqueue(
+            sample_cp("r_ret", 1, 3),
+            vec![OutboxEntry::new(eff3, vec![3])],
+        )
+        .await
+        .unwrap();
+
+    // Replaying eff1 (even across a new generation) must still deduplicate.
+    let eff1_replay = sample_effect("r_ret", 1, 1);
+    let report = outbox
+        .commit_state_and_enqueue(
+            sample_cp("r_ret", 1, 4),
+            vec![OutboxEntry::new(eff1_replay, vec![1])],
+        )
+        .await
+        .unwrap();
+    assert_eq!(report.inserted, 0);
+    assert_eq!(report.deduplicated, 1);
+}
+
+#[tokio::test]
+async fn sqlite_pruned_settled_duplicate_does_not_hit_capacity_limit() {
+    use rekuiper_core::reliability::{OutboxCapacity, SqliteOutbox};
+
+    let store = ReliableSqliteStore::open(":memory:", SqliteDurabilityMode::Full)
+        .await
+        .unwrap()
+        .with_retention(5, 1);
+    let outbox = SqliteOutbox::new(
+        &store,
+        OutboxCapacity {
+            max_items: 1,
+            max_bytes: 1024,
+        },
+    );
+    let rule_id = RuleId::try_from("r_cap").unwrap();
+    let action_id = ActionId::try_from("index.0").unwrap();
+
+    // Settle eff1 and eff2 so eff1 is pruned into reliable_settled_dedupe.
+    let eff1 = sample_effect("r_cap", 1, 1);
+    let eid1 = eff1.effect_id.clone();
+    outbox
+        .commit_state_and_enqueue(
+            sample_cp("r_cap", 1, 1),
+            vec![OutboxEntry::new(eff1, vec![1])],
+        )
+        .await
+        .unwrap();
+    let claimed1 = outbox
+        .claim_pending(&rule_id, &action_id, "w1", 10)
+        .await
+        .unwrap();
+    outbox
+        .ack(&eid1, &claimed1[0].claim_token, EffectOutcome::Delivered)
+        .await
+        .unwrap();
+
+    let eff2 = sample_effect("r_cap", 1, 2);
+    let eid2 = eff2.effect_id.clone();
+    outbox
+        .commit_state_and_enqueue(
+            sample_cp("r_cap", 1, 2),
+            vec![OutboxEntry::new(eff2, vec![2])],
+        )
+        .await
+        .unwrap();
+    let claimed2 = outbox
+        .claim_pending(&rule_id, &action_id, "w1", 10)
+        .await
+        .unwrap();
+    outbox
+        .ack(&eid2, &claimed2[0].claim_token, EffectOutcome::Delivered)
+        .await
+        .unwrap();
+
+    // Enqueue eff3 so the 1-item pending capacity is now full.
+    let eff3 = sample_effect("r_cap", 1, 3);
+    outbox
+        .commit_state_and_enqueue(
+            sample_cp("r_cap", 1, 3),
+            vec![OutboxEntry::new(eff3, vec![3])],
+        )
+        .await
+        .unwrap();
+
+    // Replaying pruned settled eff1 must deduplicate without triggering CapacityExceeded.
+    let eff1_replay = sample_effect("r_cap", 1, 1);
+    let report = outbox
+        .commit_state_and_enqueue(
+            sample_cp("r_cap", 1, 4),
+            vec![OutboxEntry::new(eff1_replay, vec![1])],
+        )
+        .await
+        .unwrap();
+    assert_eq!(report.inserted, 0);
+    assert_eq!(report.deduplicated, 1);
+}

@@ -51,9 +51,90 @@ impl Default for LookupQueueConfig {
 }
 
 impl LookupQueueConfig {
+    /// Validates lookup runtime limits before constructing synchronization primitives.
+    pub fn validate(&self) -> Result<(), String> {
+        if self.max_concurrent_lookups == 0 || self.max_concurrent_lookups > Semaphore::MAX_PERMITS
+        {
+            return Err(format!(
+                "LOOKUP_MAX_CONCURRENT ({}) must be between 1 and {}",
+                self.max_concurrent_lookups,
+                Semaphore::MAX_PERMITS
+            ));
+        }
+        if self.max_queued_requests == 0 {
+            return Err("LOOKUP_MAX_QUEUED_REQUESTS must be >= 1".to_owned());
+        }
+        if self.max_queued_bytes == 0 {
+            return Err("LOOKUP_MAX_QUEUED_BYTES must be >= 1".to_owned());
+        }
+        Ok(())
+    }
+
+    /// Parses and validates per-table lookup tuning options, rejecting out-of-range
+    /// values (including `LOOKUP_MAX_CONCURRENT > Semaphore::MAX_PERMITS`).
+    pub fn parse_and_validate_table_options(
+        opts: &std::collections::HashMap<String, String>,
+    ) -> Result<Self, String> {
+        let mut cfg = Self::default();
+        if let Some(raw) = opts.get("LOOKUP_MAX_CONCURRENT") {
+            let v = raw
+                .parse::<usize>()
+                .map_err(|e| format!("invalid LOOKUP_MAX_CONCURRENT '{raw}': {e}"))?;
+            if v == 0 || v > Semaphore::MAX_PERMITS {
+                return Err(format!(
+                    "LOOKUP_MAX_CONCURRENT ({v}) must be between 1 and {}",
+                    Semaphore::MAX_PERMITS
+                ));
+            }
+            cfg.max_concurrent_lookups = v;
+        }
+        if let Some(raw) = opts.get("LOOKUP_MAX_QUEUED_REQUESTS") {
+            let v = raw
+                .parse::<usize>()
+                .map_err(|e| format!("invalid LOOKUP_MAX_QUEUED_REQUESTS '{raw}': {e}"))?;
+            if v == 0 {
+                return Err("LOOKUP_MAX_QUEUED_REQUESTS must be >= 1".to_owned());
+            }
+            cfg.max_queued_requests = v;
+        }
+        if let Some(raw) = opts.get("LOOKUP_MAX_QUEUED_BYTES") {
+            let v = raw
+                .parse::<u64>()
+                .map_err(|e| format!("invalid LOOKUP_MAX_QUEUED_BYTES '{raw}': {e}"))?;
+            if v == 0 {
+                return Err("LOOKUP_MAX_QUEUED_BYTES must be >= 1".to_owned());
+            }
+            cfg.max_queued_bytes = v;
+        }
+        if let Some(raw) = opts.get("LOOKUP_PERMIT_WAIT_MS") {
+            let v = raw
+                .parse::<u64>()
+                .map_err(|e| format!("invalid LOOKUP_PERMIT_WAIT_MS '{raw}': {e}"))?;
+            if v == 0 {
+                return Err("LOOKUP_PERMIT_WAIT_MS must be >= 1".to_owned());
+            }
+            cfg.permit_wait_timeout = Duration::from_millis(v);
+        }
+        if let Some(raw) = opts.get("LOOKUP_TIMEOUT_MS") {
+            let v = raw
+                .parse::<u64>()
+                .map_err(|e| format!("invalid LOOKUP_TIMEOUT_MS '{raw}': {e}"))?;
+            if v == 0 {
+                return Err("LOOKUP_TIMEOUT_MS must be >= 1".to_owned());
+            }
+            cfg.request_timeout = Duration::from_millis(v);
+        }
+        if let Some(raw) = opts.get("LOOKUP_BACKPRESSURE") {
+            cfg.backpressure_on_full = parse_backpressure_value(raw)?;
+        }
+        cfg.validate()?;
+        Ok(cfg)
+    }
+
     /// Parses optional per-table lookup tuning keys (`LOOKUP_MAX_CONCURRENT`,
     /// `LOOKUP_MAX_QUEUED_REQUESTS`, `LOOKUP_MAX_QUEUED_BYTES`,
-    /// `LOOKUP_PERMIT_WAIT_MS`, `LOOKUP_TIMEOUT_MS`, `LOOKUP_BACKPRESSURE`).
+    /// `LOOKUP_PERMIT_WAIT_MS`, `LOOKUP_TIMEOUT_MS`, `LOOKUP_BACKPRESSURE`),
+    /// clamping concurrency to `1..=Semaphore::MAX_PERMITS`.
     pub fn from_table_options(opts: &std::collections::HashMap<String, String>) -> Self {
         let mut cfg = Self::default();
         if let Some(v) = opts
@@ -61,7 +142,7 @@ impl LookupQueueConfig {
             .and_then(|s| s.parse::<usize>().ok())
             .filter(|&n| n > 0)
         {
-            cfg.max_concurrent_lookups = v;
+            cfg.max_concurrent_lookups = v.min(Semaphore::MAX_PERMITS);
         }
         if let Some(v) = opts
             .get("LOOKUP_MAX_QUEUED_REQUESTS")
@@ -91,13 +172,22 @@ impl LookupQueueConfig {
         {
             cfg.request_timeout = Duration::from_millis(v);
         }
-        if let Some(v) = opts
-            .get("LOOKUP_BACKPRESSURE")
-            .and_then(|s| s.parse::<bool>().ok())
-        {
-            cfg.backpressure_on_full = v;
+        if let Some(raw) = opts.get("LOOKUP_BACKPRESSURE") {
+            if let Ok(b) = parse_backpressure_value(raw) {
+                cfg.backpressure_on_full = b;
+            }
         }
         cfg
+    }
+}
+
+fn parse_backpressure_value(raw: &str) -> Result<bool, String> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "true" | "block" | "wait" => Ok(true),
+        "false" | "drop_new" | "fail_fast" => Ok(false),
+        other => Err(format!(
+            "invalid LOOKUP_BACKPRESSURE '{other}' (expected true/false, block/wait, or drop_new/fail_fast)"
+        )),
     }
 }
 
@@ -179,7 +269,9 @@ pub struct LookupRuntime {
 impl LookupRuntime {
     /// Creates a new [`LookupRuntime`] enforcing `config`.
     pub fn new(config: LookupQueueConfig) -> Self {
-        let max_permits = config.max_concurrent_lookups.max(1);
+        let max_permits = config
+            .max_concurrent_lookups
+            .clamp(1, Semaphore::MAX_PERMITS);
         let budget = ResourceBudget::new(BudgetLimits {
             max_items: Some(u64::try_from(config.max_queued_requests.max(1)).unwrap_or(u64::MAX)),
             max_logical_bytes: Some(config.max_queued_bytes.max(1)),

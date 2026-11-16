@@ -1188,6 +1188,7 @@ pub(crate) struct ActionRuntime {
     pub(crate) reported_dropped: u64,
     pub(crate) batch_buffer: Vec<Value>,
     pub(crate) last_batch_time: tokio::time::Instant,
+    pub(crate) inflight_record: Option<StreamRecord>,
 }
 
 impl ActionRuntime {
@@ -1207,6 +1208,7 @@ impl ActionRuntime {
             reported_dropped: 0,
             batch_buffer: Vec::new(),
             last_batch_time: tokio::time::Instant::now(),
+            inflight_record: None,
         }
     }
 }
@@ -2595,7 +2597,7 @@ pub(crate) fn report_send_error(
 }
 
 /// Publish records the cache had to drop into the rule's `dropped` counter.
-fn sync_cache_drops(rt: &mut ActionRuntime, ctx: &SinkContext<'_>) {
+pub(crate) fn sync_cache_drops(rt: &mut ActionRuntime, ctx: &SinkContext<'_>) {
     if let Some(cache) = &rt.cache {
         let new = cache.dropped.saturating_sub(rt.reported_dropped);
         if new > 0 {
@@ -2644,12 +2646,14 @@ pub(crate) async fn deliver_record(
             rt.batch_buffer.extend(rows);
             if opts.batch_size > 0 && rt.batch_buffer.len() >= opts.batch_size {
                 while rt.batch_buffer.len() >= opts.batch_size {
-                    let batch: Vec<Value> = rt.batch_buffer.drain(..opts.batch_size).collect();
+                    let batch: Vec<Value> = rt.batch_buffer[..opts.batch_size].to_vec();
                     rt.last_batch_time = tokio::time::Instant::now();
                     let mut batch_data = HashMap::new();
                     batch_data.insert(BATCH_ROWS_KEY.to_string(), Value::Array(batch));
                     let batch_record = StreamRecord::new(batch_data);
-                    if let Err(err) = send_action(rt, &batch_record, None, ctx, files).await {
+                    let send_res = send_action(rt, &batch_record, None, ctx, files).await;
+                    rt.batch_buffer.drain(..opts.batch_size);
+                    if let Err(err) = send_res {
                         let cacheable = matches!(err, SendError::Retry(_)) && rt.cache.is_some();
                         if let (true, Some(cache)) = (cacheable, rt.cache.as_mut()) {
                             cache.push(batch_record.clone());
@@ -2690,10 +2694,15 @@ pub(crate) async fn deliver_record(
             continue;
         }
 
-        if let Err(err) = send_action(rt, output, None, ctx, files).await {
+        if rt.cache.is_some() {
+            rt.inflight_record = Some(output.clone());
+        }
+        let send_res = send_action(rt, output, None, ctx, files).await;
+        let inflight = rt.inflight_record.take();
+        if let Err(err) = send_res {
             let cacheable = matches!(err, SendError::Retry(_)) && rt.cache.is_some();
             if let (true, Some(cache)) = (cacheable, rt.cache.as_mut()) {
-                cache.push(output.clone());
+                cache.push(inflight.unwrap_or_else(|| output.clone()));
             }
             report_send_error(rt, ctx, &err, cacheable);
             if cacheable {

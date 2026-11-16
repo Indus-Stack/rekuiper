@@ -253,6 +253,11 @@ impl ReliableSqliteStore {
                 attempt INTEGER NOT NULL,
                 terminal_outcome_json TEXT
             )",
+            "CREATE TABLE IF NOT EXISTS reliable_settled_dedupe (
+                rule_id TEXT NOT NULL,
+                effect_id TEXT NOT NULL,
+                PRIMARY KEY (rule_id, effect_id)
+            )",
         ];
 
         for stmt in ddl {
@@ -422,6 +427,17 @@ impl ReliableSqliteStore {
                 if exists.is_some() || entry.effect.terminal_outcome.is_some() {
                     continue;
                 }
+                let already_settled: Option<(i64,)> = sqlx::query_as(
+                    "SELECT 1 FROM reliable_settled_dedupe WHERE rule_id = ? AND effect_id = ?",
+                )
+                .bind(entry.effect.rule_id.as_str())
+                .bind(entry.effect.effect_id.as_str())
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(|e| OutboxError::Storage(e.to_string()))?;
+                if already_settled.is_some() {
+                    continue;
+                }
                 let slot = new_by_rule
                     .entry(entry.effect.rule_id.as_str())
                     .or_insert((0, 0));
@@ -539,6 +555,19 @@ impl ReliableSqliteStore {
                 ))
             })?;
 
+            let already_settled: Option<(i64,)> = sqlx::query_as(
+                "SELECT 1 FROM reliable_settled_dedupe WHERE rule_id = ? AND effect_id = ?",
+            )
+            .bind(entry.effect.rule_id.as_str())
+            .bind(entry.effect.effect_id.as_str())
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(|e| OutboxError::Storage(e.to_string()))?;
+            if already_settled.is_some() {
+                deduplicated += 1;
+                continue;
+            }
+
             let res = sqlx::query(
                 "INSERT INTO reliable_outbox_effects
                  (effect_id, rule_id, generation, action_id, connection_id, order_key, payload, claimed_by, claimed_until_ms, attempt, terminal_outcome_json)
@@ -584,6 +613,25 @@ impl ReliableSqliteStore {
         .map_err(|e| OutboxError::Storage(e.to_string()))?;
 
         let outbox_keep = i64::try_from(self.outbox_retention).unwrap_or(i64::MAX);
+        sqlx::query(
+            "INSERT OR IGNORE INTO reliable_settled_dedupe (rule_id, effect_id)
+             SELECT rule_id, effect_id FROM reliable_outbox_effects
+             WHERE rule_id = ?
+               AND terminal_outcome_json IS NOT NULL
+               AND rowid NOT IN (
+                   SELECT rowid FROM reliable_outbox_effects
+                   WHERE rule_id = ? AND terminal_outcome_json IS NOT NULL
+                   ORDER BY rowid DESC
+                   LIMIT ?
+               )",
+        )
+        .bind(&rule_id)
+        .bind(&rule_id)
+        .bind(outbox_keep)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| OutboxError::Storage(e.to_string()))?;
+
         sqlx::query(
             "DELETE FROM reliable_outbox_effects
              WHERE rule_id = ?

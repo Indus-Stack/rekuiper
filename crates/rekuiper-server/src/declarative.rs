@@ -465,15 +465,44 @@ pub async fn reconcile_manifest_internal(
             }
         }
 
-        // Parse SQL before stopping/deleting any existing rule
+        // Parse SQL and preflight sinks before stopping/deleting any existing rule.
         let mut parser = Parser::new(&resolved_rule_def.sql);
         let select_stmt = parser
             .parse_select()
             .map_err(|e| format!("Failed to parse SQL for rule '{}': {}", rule_id, e))?;
 
-        if is_restart {
-            stop_and_delete_existing(state, rule_id).await;
+        if let Err(err) =
+            crate::engine::validate_rule_actions(&resolved_rule_def.actions).and_then(|()| {
+                crate::engine::preflight_rule_sinks(
+                    rule_id,
+                    &resolved_rule_def.actions,
+                    &state.source_configs,
+                    resolved_rule_def.options.as_ref(),
+                )
+            })
+        {
+            tracing::warn!(
+                rule_id = %rule_id,
+                error = %err,
+                "Skipping declarative SQL rule replacement that failed sink preflight"
+            );
+            report.rules_failed += 1;
+            report.rule_errors.insert(rule_id.clone(), err.to_string());
+            report.status = "partial_error".to_string();
+            continue;
         }
+
+        let prev_rule = if is_restart {
+            let prev_def = state.rule_manager.get_rule(rule_id);
+            let prev_running = state
+                .rule_manager
+                .get_rule_status(rule_id)
+                .is_some_and(|s| s.status == "running");
+            stop_and_delete_existing(state, rule_id).await;
+            prev_def.map(|d| (d, prev_running))
+        } else {
+            None
+        };
 
         // Start new rule actor
 
@@ -500,6 +529,16 @@ pub async fn reconcile_manifest_internal(
             report.rules_failed += 1;
             report.rule_errors.insert(rule_id.clone(), err.to_string());
             report.status = "partial_error".to_string();
+            if let Some((prev_def, prev_was_running)) = prev_rule {
+                let _ = state.rule_manager.delete_rule(rule_id).await;
+                let _ = state.rule_manager.create_rule(prev_def.clone()).await;
+                if prev_was_running {
+                    let _ = state.rule_manager.start_rule(rule_id).await;
+                    let _ = crate::handlers::rules::activate_rule(state, rule_id);
+                } else {
+                    let _ = state.rule_manager.stop_rule(rule_id).await;
+                }
+            }
         } else {
             if is_restart {
                 report.rules_restarted += 1;

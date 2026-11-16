@@ -725,6 +725,20 @@ pub async fn create_table(
     let mut parser = Parser::new(&sql);
     match parser.parse_create_table() {
         Ok(stmt) => {
+            if let Err(msg) =
+                crate::engine::lookup_runtime::LookupQueueConfig::parse_and_validate_table_options(
+                    &stmt.options,
+                )
+            {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({
+                        "error": 3000,
+                        "message": format!("Table command error: {}", msg)
+                    })),
+                )
+                    .into_response();
+            }
             let table_def = TableDefinition {
                 name: stmt.name.clone(),
                 sql: sql.clone(),
@@ -835,6 +849,20 @@ pub async fn update_table(
         Ok(s) => s,
         Err(e) => return (StatusCode::BAD_REQUEST, format!("Invalid SQL: {}", e)).into_response(),
     };
+    if let Err(msg) =
+        crate::engine::lookup_runtime::LookupQueueConfig::parse_and_validate_table_options(
+            &stmt.options,
+        )
+    {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "error": 3000,
+                "message": format!("Table command error: {}", msg)
+            })),
+        )
+            .into_response();
+    }
     let table_def = TableDefinition {
         name: name.clone(),
         sql: sql.clone(),

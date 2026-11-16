@@ -45,6 +45,21 @@ fn fingerprint_retains_redis_key_and_strips_url_credentials() {
         "Redis `key` must affect destination fingerprint"
     );
 
+    let mut redis_url_key_a = HashMap::new();
+    redis_url_key_a.insert("addr".to_owned(), json!("127.0.0.1:6379"));
+    redis_url_key_a.insert(
+        "key".to_owned(),
+        json!("https://alice@cache.example/orders"),
+    );
+    let mut redis_url_key_b = HashMap::new();
+    redis_url_key_b.insert("addr".to_owned(), json!("127.0.0.1:6379"));
+    redis_url_key_b.insert("key".to_owned(), json!("https://bob@cache.example/orders"));
+    assert_ne!(
+        compute_destination_fingerprint("redis", &redis_url_key_a),
+        compute_destination_fingerprint("redis", &redis_url_key_b),
+        "Redis `key` containing `://` must not be URL-scrubbed"
+    );
+
     let mut rest_a = HashMap::new();
     rest_a.insert(
         "url".to_owned(),
@@ -273,4 +288,466 @@ async fn declarative_invalid_native_dag_preserves_existing_rule() {
         "running",
         "existing running rule must stay running when replacement native DAG is invalid"
     );
+}
+
+#[test]
+fn lookup_config_rejects_excessive_concurrency_without_panicking() {
+    let mut opts = HashMap::new();
+    opts.insert("LOOKUP_MAX_CONCURRENT".to_owned(), usize::MAX.to_string());
+    let err = LookupQueueConfig::parse_and_validate_table_options(&opts).unwrap_err();
+    assert!(err.contains("LOOKUP_MAX_CONCURRENT"));
+
+    // Infallible parser + runtime constructor must clamp instead of panicking.
+    let clamped = LookupQueueConfig::from_table_options(&opts);
+    assert!(clamped.max_concurrent_lookups <= tokio::sync::Semaphore::MAX_PERMITS);
+    let _rt = rekuiper_server::engine::lookup_runtime::LookupRuntime::new(clamped);
+}
+
+#[tokio::test]
+async fn declarative_sql_preflight_failure_preserves_existing_rule() {
+    let state = test_state();
+    state
+        .stream_manager
+        .create_stream(StreamDefinition {
+            name: "s_decl".to_owned(),
+            sql: "CREATE STREAM s_decl (a bigint) WITH (TYPE=\"memory\", DATASOURCE=\"in_decl\")"
+                .to_owned(),
+            stream_fields: Vec::new(),
+            options: HashMap::new(),
+        })
+        .await
+        .unwrap();
+
+    let mut action = HashMap::new();
+    action.insert("log".to_owned(), json!({}));
+    state
+        .rule_manager
+        .create_rule(RuleDefinition {
+            id: "r_sql_keep".to_owned(),
+            name: Some("r_sql_keep".to_owned()),
+            sql: "SELECT * FROM s_decl".to_owned(),
+            actions: vec![action],
+            options: None,
+            graph: None,
+            tags: Vec::new(),
+            version: None,
+        })
+        .await
+        .unwrap();
+    state.rule_manager.start_rule("r_sql_keep").await.unwrap();
+
+    // Duplicate action names fail action validation/preflight before touching the live rule.
+    let manifest = json!({
+        "streams": {
+            "s_decl": "CREATE STREAM s_decl (a bigint) WITH (TYPE=\"memory\", DATASOURCE=\"in_decl\")"
+        },
+        "tables": {},
+        "rules": {
+            "r_sql_keep": {
+                "id": "r_sql_keep",
+                "sql": "SELECT a FROM s_decl",
+                "actions": [
+                    { "rest": { "name": "dup", "url": "http://127.0.0.1:9/a", "enableCache": true } },
+                    { "rest": { "name": "dup", "url": "http://127.0.0.1:9/b", "enableCache": true } }
+                ]
+            }
+        }
+    });
+    let manifest: rekuiper_core::model::DeclarativeManifest =
+        serde_json::from_value(manifest).unwrap();
+    let report = rekuiper_server::declarative::reconcile_manifest(&state, &manifest)
+        .await
+        .unwrap();
+    assert_eq!(report.rules_failed, 1);
+    assert_eq!(report.status, "partial_error");
+    assert_eq!(
+        state
+            .rule_manager
+            .get_rule_status("r_sql_keep")
+            .unwrap()
+            .status,
+        "running"
+    );
+}
+
+#[tokio::test]
+async fn shutdown_batch_flush_timeout_persists_batch_to_cache() {
+    use tokio::io::AsyncReadExt;
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server_task = tokio::spawn(async move {
+        if let Ok((mut socket, _)) = listener.accept().await {
+            let mut buf = [0u8; 1024];
+            let _ = socket.read(&mut buf).await;
+            // Hold the connection open past the 2-second shutdown batch-flush timeout.
+            tokio::time::sleep(Duration::from_secs(4)).await;
+        }
+    });
+
+    let mut cfg = KuiperConfig::default();
+    cfg.basic.enable_private_net = true;
+    let bus = StreamBus::new();
+    let state = AppState::new(
+        "test".to_owned(),
+        cfg,
+        StreamManager::new(),
+        TableManager::new(),
+        RuleManager::new(bus.clone()),
+        bus,
+    );
+
+    let rule_id = format!(
+        "r_batch_timeout_{}_{}",
+        std::process::id(),
+        chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
+    );
+    let cache_dir = std::path::Path::new("data/cache/sink").join(&rule_id);
+    let _ = std::fs::remove_dir_all(&cache_dir);
+
+    let app = create_router(state.clone());
+
+    let stream_req = Request::builder()
+        .method("POST")
+        .uri("/streams")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "sql": "CREATE STREAM s_batch_timeout (a bigint) WITH (TYPE=\"memory\", DATASOURCE=\"in_batch_timeout\")"
+            })
+            .to_string(),
+        ))
+        .unwrap();
+    let stream_resp = app.clone().oneshot(stream_req).await.unwrap();
+    assert_eq!(stream_resp.status(), StatusCode::CREATED);
+
+    let rule_req = Request::builder()
+        .method("POST")
+        .uri("/rules")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "id": rule_id,
+                "sql": "SELECT a FROM s_batch_timeout",
+                "actions": [{
+                    "rest": {
+                        "name": "slow_batch",
+                        "url": format!("http://{addr}/ingest"),
+                        "method": "POST",
+                        "batchSize": 10,
+                        "lingerInterval": 60000,
+                        "enableCache": true,
+                        "cleanCacheAtStop": false
+                    }
+                }]
+            })
+            .to_string(),
+        ))
+        .unwrap();
+    let rule_resp = app.clone().oneshot(rule_req).await.unwrap();
+    assert_eq!(rule_resp.status(), StatusCode::CREATED);
+
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let mut row = HashMap::new();
+    row.insert("a".to_owned(), json!(42));
+    let _ = state.stream_bus.publish(
+        "in_batch_timeout",
+        rekuiper_core::model::StreamRecord::from_hashmap(row),
+    );
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let stop_req = Request::builder()
+        .method("POST")
+        .uri(format!("/rules/{rule_id}/stop"))
+        .body(Body::empty())
+        .unwrap();
+    let stop_resp = app.oneshot(stop_req).await.unwrap();
+    assert_eq!(stop_resp.status(), StatusCode::OK);
+
+    // Check that the timed-out batch was persisted to the rule's sink cache on disk.
+    let mut has_cache_files = false;
+    if let Ok(entries) = std::fs::read_dir(&cache_dir) {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.is_dir() {
+                if let Ok(sub) = std::fs::read_dir(&p) {
+                    if sub
+                        .flatten()
+                        .any(|e| e.file_name().to_string_lossy().ends_with(".jsonl"))
+                    {
+                        has_cache_files = true;
+                        break;
+                    }
+                }
+            } else if entry.file_name().to_string_lossy().ends_with(".jsonl") {
+                has_cache_files = true;
+                break;
+            }
+        }
+    }
+    assert!(
+        has_cache_files,
+        "timed-out shutdown batch must be persisted to sink cache at {}",
+        cache_dir.display()
+    );
+
+    server_task.abort();
+    let _ = std::fs::remove_dir_all(&cache_dir);
+}
+
+#[tokio::test]
+async fn inflight_batch_send_aborted_by_stop_persists_to_cache() {
+    use tokio::io::AsyncReadExt;
+
+    let (accepted_tx, accepted_rx) = tokio::sync::oneshot::channel::<()>();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server_task = tokio::spawn(async move {
+        if let Ok((mut socket, _)) = listener.accept().await {
+            let mut buf = [0u8; 1024];
+            let _ = socket.read(&mut buf).await;
+            let _ = accepted_tx.send(());
+            // Hold the in-flight REST batch request open past the 5s sink drain abort timeout.
+            tokio::time::sleep(Duration::from_secs(8)).await;
+        }
+    });
+
+    let mut cfg = KuiperConfig::default();
+    cfg.basic.enable_private_net = true;
+    let bus = StreamBus::new();
+    let state = AppState::new(
+        "test".to_owned(),
+        cfg,
+        StreamManager::new(),
+        TableManager::new(),
+        RuleManager::new(bus.clone()),
+        bus,
+    );
+
+    let rule_id = format!(
+        "r_batch_abort_{}_{}",
+        std::process::id(),
+        chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
+    );
+    let cache_dir = std::path::Path::new("data/cache/sink").join(&rule_id);
+    let _ = std::fs::remove_dir_all(&cache_dir);
+
+    let app = create_router(state.clone());
+
+    let stream_req = Request::builder()
+        .method("POST")
+        .uri("/streams")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "sql": "CREATE STREAM s_batch_abort (a bigint) WITH (TYPE=\"memory\", DATASOURCE=\"in_batch_abort\")"
+            })
+            .to_string(),
+        ))
+        .unwrap();
+    let stream_resp = app.clone().oneshot(stream_req).await.unwrap();
+    assert_eq!(stream_resp.status(), StatusCode::CREATED);
+
+    let rule_req = Request::builder()
+        .method("POST")
+        .uri("/rules")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "id": rule_id,
+                "sql": "SELECT a FROM s_batch_abort",
+                "actions": [{
+                    "rest": {
+                        "name": "slow_inflight",
+                        "url": format!("http://{addr}/ingest"),
+                        "method": "POST",
+                        "batchSize": 1,
+                        "enableCache": true,
+                        "cleanCacheAtStop": false
+                    }
+                }]
+            })
+            .to_string(),
+        ))
+        .unwrap();
+    let rule_resp = app.clone().oneshot(rule_req).await.unwrap();
+    assert_eq!(rule_resp.status(), StatusCode::CREATED);
+
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let mut row = HashMap::new();
+    row.insert("a".to_owned(), json!(99));
+    let _ = state.stream_bus.publish(
+        "in_batch_abort",
+        rekuiper_core::model::StreamRecord::from_hashmap(row),
+    );
+
+    tokio::time::timeout(Duration::from_secs(2), accepted_rx)
+        .await
+        .expect("REST sink request should be in-flight")
+        .unwrap();
+
+    let stop_req = Request::builder()
+        .method("POST")
+        .uri(format!("/rules/{rule_id}/stop"))
+        .body(Body::empty())
+        .unwrap();
+    let stop_resp = app.oneshot(stop_req).await.unwrap();
+    assert_eq!(stop_resp.status(), StatusCode::OK);
+
+    let mut has_cache_files = false;
+    if let Ok(entries) = std::fs::read_dir(&cache_dir) {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.is_dir() {
+                if let Ok(sub) = std::fs::read_dir(&p) {
+                    if sub
+                        .flatten()
+                        .any(|e| e.file_name().to_string_lossy().ends_with(".jsonl"))
+                    {
+                        has_cache_files = true;
+                        break;
+                    }
+                }
+            } else if entry.file_name().to_string_lossy().ends_with(".jsonl") {
+                has_cache_files = true;
+                break;
+            }
+        }
+    }
+    assert!(
+        has_cache_files,
+        "aborted in-flight batch must be persisted to sink cache at {}",
+        cache_dir.display()
+    );
+
+    server_task.abort();
+    let _ = std::fs::remove_dir_all(&cache_dir);
+}
+
+#[tokio::test]
+async fn inflight_single_record_aborted_by_stop_persists_to_cache() {
+    use tokio::io::AsyncReadExt;
+
+    let (accepted_tx, accepted_rx) = tokio::sync::oneshot::channel::<()>();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server_task = tokio::spawn(async move {
+        if let Ok((mut socket, _)) = listener.accept().await {
+            let mut buf = [0u8; 1024];
+            let _ = socket.read(&mut buf).await;
+            let _ = accepted_tx.send(());
+            // Hold the in-flight single-record REST request open past the 5s sink drain abort timeout.
+            tokio::time::sleep(Duration::from_secs(8)).await;
+        }
+    });
+
+    let mut cfg = KuiperConfig::default();
+    cfg.basic.enable_private_net = true;
+    let bus = StreamBus::new();
+    let state = AppState::new(
+        "test".to_owned(),
+        cfg,
+        StreamManager::new(),
+        TableManager::new(),
+        RuleManager::new(bus.clone()),
+        bus,
+    );
+
+    let rule_id = format!(
+        "r_single_abort_{}_{}",
+        std::process::id(),
+        chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
+    );
+    let cache_dir = std::path::Path::new("data/cache/sink").join(&rule_id);
+    let _ = std::fs::remove_dir_all(&cache_dir);
+
+    let app = create_router(state.clone());
+
+    let stream_req = Request::builder()
+        .method("POST")
+        .uri("/streams")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "sql": "CREATE STREAM s_single_abort (a bigint) WITH (TYPE=\"memory\", DATASOURCE=\"in_single_abort\")"
+            })
+            .to_string(),
+        ))
+        .unwrap();
+    let stream_resp = app.clone().oneshot(stream_req).await.unwrap();
+    assert_eq!(stream_resp.status(), StatusCode::CREATED);
+
+    let rule_req = Request::builder()
+        .method("POST")
+        .uri("/rules")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "id": rule_id,
+                "sql": "SELECT a FROM s_single_abort",
+                "actions": [{
+                    "rest": {
+                        "name": "slow_single",
+                        "url": format!("http://{addr}/ingest"),
+                        "method": "POST",
+                        "enableCache": true,
+                        "cleanCacheAtStop": false
+                    }
+                }]
+            })
+            .to_string(),
+        ))
+        .unwrap();
+    let rule_resp = app.clone().oneshot(rule_req).await.unwrap();
+    assert_eq!(rule_resp.status(), StatusCode::CREATED);
+
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let mut row = HashMap::new();
+    row.insert("a".to_owned(), json!(77));
+    let _ = state.stream_bus.publish(
+        "in_single_abort",
+        rekuiper_core::model::StreamRecord::from_hashmap(row),
+    );
+
+    tokio::time::timeout(Duration::from_secs(2), accepted_rx)
+        .await
+        .expect("single-record REST sink request should be in-flight")
+        .unwrap();
+
+    let stop_req = Request::builder()
+        .method("POST")
+        .uri(format!("/rules/{rule_id}/stop"))
+        .body(Body::empty())
+        .unwrap();
+    let stop_resp = app.oneshot(stop_req).await.unwrap();
+    assert_eq!(stop_resp.status(), StatusCode::OK);
+
+    let mut has_cache_files = false;
+    if let Ok(entries) = std::fs::read_dir(&cache_dir) {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.is_dir() {
+                if let Ok(sub) = std::fs::read_dir(&p) {
+                    if sub
+                        .flatten()
+                        .any(|e| e.file_name().to_string_lossy().ends_with(".jsonl"))
+                    {
+                        has_cache_files = true;
+                        break;
+                    }
+                }
+            } else if entry.file_name().to_string_lossy().ends_with(".jsonl") {
+                has_cache_files = true;
+                break;
+            }
+        }
+    }
+    assert!(
+        has_cache_files,
+        "aborted in-flight single record must be persisted to sink cache at {}",
+        cache_dir.display()
+    );
+
+    server_task.abort();
+    let _ = std::fs::remove_dir_all(&cache_dir);
 }

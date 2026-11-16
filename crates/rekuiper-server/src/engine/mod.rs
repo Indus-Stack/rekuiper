@@ -449,7 +449,7 @@ pub(crate) fn spawn_rule_task(
         .zip(&cache_configs)
         .all(|(action, cache_cfg)| matches!(action, PreparedAction::Nop) && cache_cfg.is_none());
     let cache_root = std::path::Path::new(SINK_CACHE_ROOT);
-    let mut runtimes =
+    let runtimes =
         match open_action_runtimes(cache_root, &sink_rule_id, &actions, prepared, cache_configs) {
             Ok(rt) => rt,
             Err(err) => {
@@ -467,11 +467,47 @@ pub(crate) fn spawn_rule_task(
     let sink_handle = tokio::spawn(async move {
         use std::collections::HashMap as Map;
         use std::sync::atomic::Ordering::Relaxed;
+        struct SinkRuntimeShutdownGuard {
+            rule_id: String,
+            runtimes: Vec<ActionRuntime>,
+        }
+        impl Drop for SinkRuntimeShutdownGuard {
+            fn drop(&mut self) {
+                for mut rt in std::mem::take(&mut self.runtimes) {
+                    if let Some(mut cache) = rt.cache.take() {
+                        if let Some(record) = rt.inflight_record.take() {
+                            cache.push(record);
+                        }
+                        if !rt.batch_buffer.is_empty() {
+                            let mut batch_data = HashMap::new();
+                            batch_data.insert(
+                                BATCH_ROWS_KEY.to_string(),
+                                Value::Array(std::mem::take(&mut rt.batch_buffer)),
+                            );
+                            cache.push(StreamRecord::new(batch_data));
+                        }
+                        if !cache.is_empty() && !cache.config().clean_at_stop {
+                            tracing::info!(
+                                "[RULE {}] persisting {} cached sink records on shutdown",
+                                self.rule_id,
+                                cache.len()
+                            );
+                        }
+                        cache.close();
+                    }
+                }
+            }
+        }
+        let mut rt_guard = SinkRuntimeShutdownGuard {
+            rule_id: sink_rule_id.clone(),
+            runtimes,
+        };
         let mut files: Map<std::path::PathBuf, FileBatchWriter> = Map::new();
         let mut ticker = tokio::time::interval(SINK_TICK);
         // First tick fires immediately; consume it so time-flushes align.
         ticker.tick().await;
-        let file_actions = runtimes
+        let file_actions = rt_guard
+            .runtimes
             .iter()
             .any(|rt| matches!(&rt.action, PreparedAction::File { .. }));
         let mut pending_file_records: u64 = 0;
@@ -481,11 +517,13 @@ pub(crate) fn spawn_rule_task(
                 rec = sink_rx.recv() => {
                     let Some(output_record) = rec else {
                         // Flush remaining batch_buffer for sinks with batching
-                        for rt in runtimes.iter_mut() {
+                        for rt in rt_guard.runtimes.iter_mut() {
                             if !rt.batch_buffer.is_empty() {
-                                let batch = std::mem::take(&mut rt.batch_buffer);
                                 let mut batch_data = HashMap::new();
-                                batch_data.insert(BATCH_ROWS_KEY.to_string(), Value::Array(batch));
+                                batch_data.insert(
+                                    BATCH_ROWS_KEY.to_string(),
+                                    Value::Array(rt.batch_buffer.clone()),
+                                );
                                 let batch_record = StreamRecord::new(batch_data);
                                 let enable_private_net = sink_config.read().basic.enable_private_net;
                                 let ctx = SinkContext {
@@ -496,7 +534,44 @@ pub(crate) fn spawn_rule_task(
                                     enable_private_net,
                                     dlq_router: Some(&sink_dlq_router),
                                 };
-                                let _ = send_action(rt, &batch_record, None, &ctx, &mut files).await;
+                                match tokio::time::timeout(
+                                    std::time::Duration::from_secs(2),
+                                    send_action(rt, &batch_record, None, &ctx, &mut files),
+                                )
+                                .await
+                                {
+                                    Ok(Ok(())) => {
+                                        rt.batch_buffer.clear();
+                                    }
+                                    Ok(Err(err)) => {
+                                        let cacheable = matches!(err, SendError::Retry(_))
+                                            && rt.cache.is_some();
+                                        if let (true, Some(cache)) =
+                                            (cacheable, rt.cache.as_mut())
+                                        {
+                                            cache.push(batch_record);
+                                        }
+                                        rt.batch_buffer.clear();
+                                        report_send_error(rt, &ctx, &err, cacheable);
+                                        if cacheable {
+                                            sync_cache_drops(rt, &ctx);
+                                        }
+                                    }
+                                    Err(_) => {
+                                        let err = SendError::Retry(
+                                            "shutdown batch flush timed out".to_owned(),
+                                        );
+                                        let cacheable = rt.cache.is_some();
+                                        if let Some(cache) = rt.cache.as_mut() {
+                                            cache.push(batch_record);
+                                        }
+                                        rt.batch_buffer.clear();
+                                        report_send_error(rt, &ctx, &err, cacheable);
+                                        if cacheable {
+                                            sync_cache_drops(rt, &ctx);
+                                        }
+                                    }
+                                }
                             }
                         }
                         // Rule end/cancel/update/delete/shutdown: drain, flush
@@ -518,18 +593,7 @@ pub(crate) fn spawn_rule_task(
                         } else {
                             sink_rule_mgr.inc_sink_failed(&sink_rule_id, pending_file_records);
                         }
-                        for rt in std::mem::take(&mut runtimes) {
-                            if let Some(cache) = rt.cache {
-                                if !cache.is_empty() && !cache.config().clean_at_stop {
-                                    tracing::info!(
-                                        "[RULE {}] persisting {} cached sink records for resend",
-                                        sink_rule_id,
-                                        cache.len()
-                                    );
-                                }
-                                cache.close();
-                            }
-                        }
+                        drop(rt_guard);
                         break;
                     };
                     let tracing_active = sink_trace_mgr.is_tracing(&sink_rule_id);
@@ -579,7 +643,7 @@ pub(crate) fn spawn_rule_task(
                             } else {
                                 1
                             };
-                            match deliver_record(&mut runtimes, &cur_output, &ctx, &mut files).await {
+                            match deliver_record(&mut rt_guard.runtimes, &cur_output, &ctx, &mut files).await {
                                 Delivery::Delivered => {
                                     if file_actions {
                                         pending_file_records += num_records;
@@ -663,24 +727,37 @@ pub(crate) fn spawn_rule_task(
                         dlq_router: Some(&sink_dlq_router),
                     };
                     let now = tokio::time::Instant::now();
-                    for rt in runtimes.iter_mut() {
+                    for rt in rt_guard.runtimes.iter_mut() {
                         let linger_interval = rt.action.common_opts().map(|o| o.linger_interval).unwrap_or(0);
                         if linger_interval > 0 && !rt.batch_buffer.is_empty() {
                             let elapsed = now.duration_since(rt.last_batch_time).as_millis() as u64;
                             if elapsed >= linger_interval {
-                                let batch = std::mem::take(&mut rt.batch_buffer);
-                                rt.last_batch_time = now;
                                 let mut batch_data = HashMap::new();
-                                batch_data.insert(BATCH_ROWS_KEY.to_string(), Value::Array(batch));
+                                batch_data.insert(
+                                    BATCH_ROWS_KEY.to_string(),
+                                    Value::Array(rt.batch_buffer.clone()),
+                                );
                                 let batch_record = StreamRecord::new(batch_data);
-                                if let Err(err) = send_action(rt, &batch_record, None, &ctx, &mut files).await {
-                                    report_send_error(rt, &ctx, &err, false);
+                                rt.last_batch_time = now;
+                                let send_res =
+                                    send_action(rt, &batch_record, None, &ctx, &mut files).await;
+                                rt.batch_buffer.clear();
+                                if let Err(err) = send_res {
+                                    let cacheable =
+                                        matches!(err, SendError::Retry(_)) && rt.cache.is_some();
+                                    if let (true, Some(cache)) = (cacheable, rt.cache.as_mut()) {
+                                        cache.push(batch_record);
+                                    }
+                                    report_send_error(rt, &ctx, &err, cacheable);
+                                    if cacheable {
+                                        sync_cache_drops(rt, &ctx);
+                                    }
                                 }
                             }
                         }
                     }
                     let live_recent = last_live.elapsed() < SINK_TICK * 2;
-                    for rt in runtimes.iter_mut() {
+                    for rt in rt_guard.runtimes.iter_mut() {
                         let resent = resend_cached(rt, live_recent, &ctx, &mut files).await;
                         if resent > 0 {
                             if file_actions {
