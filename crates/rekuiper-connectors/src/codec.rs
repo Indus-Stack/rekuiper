@@ -1433,3 +1433,226 @@ pub fn extract_required_fields_from_expr_names(
     }
     Some(JsonFieldMask::new(set))
 }
+
+// ---------------------------------------------------------------------------
+// Strict JSONL & streaming codec (P15-T02)
+// ---------------------------------------------------------------------------
+
+/// Framing mode for bounded JSONL / stream decoding.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum JsonlFramingMode {
+    /// Each non-empty `\n` / `\r\n` line must contain exactly one JSON value.
+    #[default]
+    StrictNewline,
+    /// Explicit compatibility mode allowing concatenated `{...}{...}` values.
+    ConcatenatedCompatibility,
+}
+
+/// Configuration for [`JsonlCodec`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JsonlCodecConfig {
+    pub mode: JsonlFramingMode,
+    pub max_message_bytes: usize,
+    pub max_record_bytes: usize,
+    pub allow_empty_lines: bool,
+    pub require_objects: bool,
+}
+
+impl Default for JsonlCodecConfig {
+    fn default() -> Self {
+        Self {
+            mode: JsonlFramingMode::StrictNewline,
+            max_message_bytes: 4 * 1024 * 1024,
+            max_record_bytes: 1024 * 1024,
+            allow_empty_lines: true,
+            require_objects: true,
+        }
+    }
+}
+
+/// Detailed decode/encode failure identifying the failing record and byte offset.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JsonlCodecError {
+    pub record_index: usize,
+    pub byte_offset: usize,
+    pub reason: String,
+}
+
+impl std::fmt::Display for JsonlCodecError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "JSONL error at record {} (byte {}): {}",
+            self.record_index, self.byte_offset, self.reason
+        )
+    }
+}
+
+impl std::error::Error for JsonlCodecError {}
+
+/// Bounded strict JSONL and stream-framing codec.
+pub struct JsonlCodec;
+
+impl JsonlCodec {
+    /// Decodes an entire bounded payload before emitting any records.
+    /// If any record is malformed or exceeds bounds, returns `Err` with no prefix emitted.
+    pub fn decode_bounded(
+        bytes: &[u8],
+        cfg: &JsonlCodecConfig,
+    ) -> std::result::Result<Vec<Value>, JsonlCodecError> {
+        if bytes.len() > cfg.max_message_bytes {
+            return Err(JsonlCodecError {
+                record_index: 0,
+                byte_offset: cfg.max_message_bytes,
+                reason: format!(
+                    "message size {} exceeds max_message_bytes {}",
+                    bytes.len(),
+                    cfg.max_message_bytes
+                ),
+            });
+        }
+
+        match cfg.mode {
+            JsonlFramingMode::StrictNewline => Self::decode_strict_lines(bytes, cfg),
+            JsonlFramingMode::ConcatenatedCompatibility => Self::decode_concatenated(bytes, cfg),
+        }
+    }
+
+    fn decode_strict_lines(
+        bytes: &[u8],
+        cfg: &JsonlCodecConfig,
+    ) -> std::result::Result<Vec<Value>, JsonlCodecError> {
+        let text = std::str::from_utf8(bytes).map_err(|e| JsonlCodecError {
+            record_index: 0,
+            byte_offset: e.valid_up_to(),
+            reason: format!("invalid UTF-8: {e}"),
+        })?;
+
+        let mut records = Vec::new();
+        let mut offset = 0usize;
+
+        for raw_line in text.split('\n') {
+            let line_len_with_sep = raw_line.len() + 1;
+            let line = raw_line.strip_suffix('\r').unwrap_or(raw_line);
+            let trimmed = line.trim();
+
+            if trimmed.is_empty() {
+                if !cfg.allow_empty_lines && !text.is_empty() {
+                    return Err(JsonlCodecError {
+                        record_index: records.len(),
+                        byte_offset: offset,
+                        reason: "empty line is not permitted".to_owned(),
+                    });
+                }
+                offset = offset.saturating_add(line_len_with_sep);
+                continue;
+            }
+
+            if line.len() > cfg.max_record_bytes {
+                return Err(JsonlCodecError {
+                    record_index: records.len(),
+                    byte_offset: offset,
+                    reason: format!(
+                        "record size {} exceeds max_record_bytes {}",
+                        line.len(),
+                        cfg.max_record_bytes
+                    ),
+                });
+            }
+
+            let val: Value = serde_json::from_str(trimmed).map_err(|e| JsonlCodecError {
+                record_index: records.len(),
+                byte_offset: offset.saturating_add(e.column().saturating_sub(1)),
+                reason: format!("invalid JSON line: {e}"),
+            })?;
+
+            if cfg.require_objects && !val.is_object() {
+                return Err(JsonlCodecError {
+                    record_index: records.len(),
+                    byte_offset: offset,
+                    reason: "JSONL record must be a JSON object".to_owned(),
+                });
+            }
+
+            records.push(val);
+            offset = offset.saturating_add(line_len_with_sep);
+        }
+
+        Ok(records)
+    }
+
+    fn decode_concatenated(
+        bytes: &[u8],
+        cfg: &JsonlCodecConfig,
+    ) -> std::result::Result<Vec<Value>, JsonlCodecError> {
+        let mut stream = serde_json::Deserializer::from_slice(bytes).into_iter::<Value>();
+        let mut records = Vec::new();
+        let mut last_offset = 0usize;
+
+        while let Some(item) = stream.next() {
+            let end_offset = stream.byte_offset();
+            let rec_len = end_offset.saturating_sub(last_offset);
+            let val = item.map_err(|e| JsonlCodecError {
+                record_index: records.len(),
+                byte_offset: last_offset,
+                reason: format!("invalid concatenated JSON: {e}"),
+            })?;
+            if rec_len > cfg.max_record_bytes {
+                return Err(JsonlCodecError {
+                    record_index: records.len(),
+                    byte_offset: last_offset,
+                    reason: format!(
+                        "record size {rec_len} exceeds max_record_bytes {}",
+                        cfg.max_record_bytes
+                    ),
+                });
+            }
+            if cfg.require_objects && !val.is_object() {
+                return Err(JsonlCodecError {
+                    record_index: records.len(),
+                    byte_offset: last_offset,
+                    reason: "stream record must be a JSON object".to_owned(),
+                });
+            }
+            records.push(val);
+            last_offset = end_offset;
+        }
+
+        Ok(records)
+    }
+
+    /// Encodes a slice of JSON values as newline-delimited JSON (`\n` after each record).
+    pub fn encode_records(
+        records: &[Value],
+        require_objects: bool,
+    ) -> std::result::Result<Vec<u8>, JsonlCodecError> {
+        let mut out = Vec::new();
+        for (idx, val) in records.iter().enumerate() {
+            if require_objects && !val.is_object() {
+                return Err(JsonlCodecError {
+                    record_index: idx,
+                    byte_offset: out.len(),
+                    reason: "cannot encode non-object value in object-only JSONL mode".to_owned(),
+                });
+            }
+            serde_json::to_writer(&mut out, val).map_err(|e| JsonlCodecError {
+                record_index: idx,
+                byte_offset: out.len(),
+                reason: e.to_string(),
+            })?;
+            out.push(b'\n');
+        }
+        Ok(out)
+    }
+
+    /// Encodes either a single JSON object or an array of JSON objects into framed JSONL.
+    pub fn encode_value(
+        value: &Value,
+        require_objects: bool,
+    ) -> std::result::Result<Vec<u8>, JsonlCodecError> {
+        match value {
+            Value::Array(items) => Self::encode_records(items, require_objects),
+            other => Self::encode_records(std::slice::from_ref(other), require_objects),
+        }
+    }
+}

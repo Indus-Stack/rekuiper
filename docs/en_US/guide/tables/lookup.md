@@ -178,3 +178,20 @@ The query matches `demoStream2.deviceId` with `deviceTable.id`. The rule appends
 ## Summary
 
 This tutorial demonstrated stream-batch hybrid processing using Redis and MySQL lookup tables. Lookup tables combine real-time event streams with external reference data to enable dynamic alerting and data enrichment.
+
+## Lookup Runtime Limits and Isolation
+
+External lookup joins run through isolated per-backend runtimes (`redis`, `sql`, `modbus`, `opcua`, `memory`) so slow queries on one backend do not exhaust permits or queues on another backend.
+
+Configure limits per table using `WITH` options:
+
+| Option | Default | Description |
+|---|---|---|
+| `LOOKUP_MAX_CONCURRENT` | `16` | Maximum concurrent in-flight lookup requests per backend runtime (`1..=Semaphore::MAX_PERMITS`). |
+| `LOOKUP_MAX_QUEUED_REQUESTS` | `256` | Maximum queued lookup requests before backpressure rejects or drops. |
+| `LOOKUP_MAX_QUEUED_BYTES` | `4194304` | Maximum queued request bytes (4 MiB). |
+| `LOOKUP_PERMIT_WAIT_MS` | `2000` | Maximum time in milliseconds to wait for an execution permit. |
+| `LOOKUP_TIMEOUT_MS` | `5000` | Maximum execution time in milliseconds once a lookup starts. |
+| `LOOKUP_BACKPRESSURE` | `false` (`drop_new`) | Queue overflow policy (`false`/`drop_new`/`fail_fast` or `true`/`block`/`wait`). |
+
+Prometheus `/metrics` exports per-backend counters via `rekuiper_lookup_requests_total{backend="...",outcome="completed|rejected|timed_out|cancelled|failed"}`.

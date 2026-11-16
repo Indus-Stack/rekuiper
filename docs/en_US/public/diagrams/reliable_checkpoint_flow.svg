@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 860 300" width="860" height="300" font-family="system-ui, -apple-system, sans-serif">
+  <rect width="860" height="300" fill="#ffffff" rx="8"/>
+  <text x="24" y="34" font-size="16" font-weight="600" fill="#111827">Reliable Checkpoint, Outbox, and Delivery Flow</text>
+  <line x1="24" y1="48" x2="836" y2="48" stroke="#e5e7eb" stroke-width="1"/>
+
+  <!-- Step 1: Reliable Ingress -->
+  <rect x="24" y="76" width="160" height="84" rx="6" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+  <text x="104" y="102" font-size="13" font-weight="600" text-anchor="middle" fill="#0f172a">Reliable Ingress</text>
+  <text x="104" y="122" font-size="11" text-anchor="middle" fill="#475569">Generation-fenced FIFO</text>
+  <text x="104" y="138" font-size="11" text-anchor="middle" fill="#475569">Data / Barrier / EOF</text>
+
+  <!-- Arrow 1->2 -->
+  <line x1="184" y1="118" x2="222" y2="118" stroke="#64748b" stroke-width="1.5"/>
+  <polygon points="222,113 232,118 222,123" fill="#64748b"/>
+
+  <!-- Step 2: Operators & Snapshot -->
+  <rect x="232" y="76" width="170" height="84" rx="6" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+  <text x="317" y="102" font-size="13" font-weight="600" text-anchor="middle" fill="#0f172a">State Participants</text>
+  <text x="317" y="122" font-size="11" text-anchor="middle" fill="#475569">Capture between records</text>
+  <text x="317" y="138" font-size="11" text-anchor="middle" fill="#475569">Versioned + checksummed</text>
+
+  <!-- Arrow 2->3 -->
+  <line x1="402" y1="118" x2="440" y2="118" stroke="#64748b" stroke-width="1.5"/>
+  <polygon points="440,113 450,118 440,123" fill="#64748b"/>
+
+  <!-- Step 3: Checkpoint Coordinator -->
+  <rect x="450" y="76" width="175" height="84" rx="6" fill="#eff6ff" stroke="#3b82f6" stroke-width="1.5"/>
+  <text x="537" y="102" font-size="13" font-weight="600" text-anchor="middle" fill="#1e3a8a">Coordinator</text>
+  <text x="537" y="122" font-size="11" text-anchor="middle" fill="#1d4ed8">Idle -> Capture -> Wait</text>
+  <text x="537" y="138" font-size="11" text-anchor="middle" fill="#1d4ed8">Commit / Abort on timeout</text>
+
+  <!-- Arrow 3->4 -->
+  <line x1="625" y1="118" x2="663" y2="118" stroke="#64748b" stroke-width="1.5"/>
+  <polygon points="663,113 673,118 663,123" fill="#64748b"/>
+
+  <!-- Step 4: Atomic SQLite Store -->
+  <rect x="673" y="76" width="163" height="84" rx="6" fill="#f0fdf4" stroke="#22c55e" stroke-width="1.5"/>
+  <text x="754" y="102" font-size="13" font-weight="600" text-anchor="middle" fill="#14532d">SQLite Store (WAL)</text>
+  <text x="754" y="122" font-size="11" text-anchor="middle" fill="#166534">synchronous = FULL</text>
+  <text x="754" y="138" font-size="11" text-anchor="middle" fill="#166534">State + Pos + Outbox tx</text>
+
+  <!-- Bottom Row: Delivery Accounting & Effect Sink -->
+  <rect x="232" y="196" width="393" height="72" rx="6" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+  <text x="428" y="220" font-size="13" font-weight="600" text-anchor="middle" fill="#0f172a">Partition Delivery Tracker</text>
+  <text x="428" y="239" font-size="11" text-anchor="middle" fill="#475569">Deduplicates branch callbacks. Advances contiguous offset only when all branches finish.</text>
+  <text x="428" y="255" font-size="11" text-anchor="middle" fill="#475569">Malformed or failed branches block progress until terminal disposition.</text>
+
+  <rect x="673" y="196" width="163" height="72" rx="6" fill="#fffbeb" stroke="#f59e0b" stroke-width="1.5"/>
+  <text x="754" y="220" font-size="13" font-weight="600" text-anchor="middle" fill="#78350f">Effect Sink</text>
+  <text x="754" y="239" font-size="11" text-anchor="middle" fill="#92400e">Delivered / Retryable</text>
+  <text x="754" y="255" font-size="11" text-anchor="middle" fill="#92400e">Permanent / Ambiguous</text>
+
+  <!-- Arrows between top and bottom -->
+  <line x1="754" y1="160" x2="754" y2="186" stroke="#64748b" stroke-width="1.5"/>
+  <polygon points="749,186 754,196 759,186" fill="#64748b"/>
+
+  <line x1="673" y1="232" x2="635" y2="232" stroke="#64748b" stroke-width="1.5"/>
+  <polygon points="635,227 625,232 635,237" fill="#64748b"/>
+
+  <line x1="232" y1="232" x2="104" y2="232" stroke="#64748b" stroke-width="1.5"/>
+  <line x1="104" y1="232" x2="104" y2="170" stroke="#64748b" stroke-width="1.5"/>
+  <polygon points="99,170 104,160 109,170" fill="#64748b"/>
+</svg>
+

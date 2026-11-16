@@ -10,6 +10,7 @@ pub mod routes;
 pub mod secrets;
 pub mod sink_cache;
 pub mod state;
+pub mod testing;
 
 use anyhow::Result;
 use parking_lot::RwLock;

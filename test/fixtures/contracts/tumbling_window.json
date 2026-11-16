@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "name": "tumbling_window_with_restore",
+  "description": "10s tumbling event-time window with checkpoint/restore and watermark close",
+  "initial_wall_millis": 1700000000000,
+  "catalog": {
+    "streams": [
+      {
+        "id": "readings",
+        "ddl": "CREATE STREAM readings (device STRING, val BIGINT) WITH (TIMESTAMP=\"ts\")"
+      }
+    ],
+    "rules": [
+      {
+        "id": "avg_10s",
+        "sql": "SELECT device, count(*) AS cnt, sum(val) AS total FROM readings GROUP BY device, TUMBLINGWINDOW(ss, 10)",
+        "actions": ["capture_sink"]
+      }
+    ]
+  },
+  "steps": [
+    {
+      "kind": "input",
+      "source_id": "readings",
+      "partition_id": "p0",
+      "event_time": { "unit": "millis", "value": 1000 },
+      "payload": { "device": "d1", "val": 10, "ts": 1000 }
+    },
+    {
+      "kind": "checkpoint",
+      "checkpoint_id": 1
+    },
+    {
+      "kind": "restore",
+      "checkpoint_id": 1
+    },
+    {
+      "kind": "advance_clock",
+      "millis": 5000
+    },
+    {
+      "kind": "input",
+      "source_id": "readings",
+      "partition_id": "p0",
+      "event_time": { "unit": "millis", "value": 6000 },
+      "payload": { "device": "d1", "val": 15, "ts": 6000 }
+    },
+    {
+      "kind": "watermark",
+      "edge": 0,
+      "timestamp": { "unit": "millis", "value": 10000 }
+    },
+    {
+      "kind": "end_of_input",
+      "edge": 0
+    }
+  ],
+  "expected": {
+    "rows": [
+      {
+        "rule_id": "avg_10s",
+        "payload": { "device": "d1", "cnt": 2, "total": 25 }
+      }
+    ]
+  }
+}
+

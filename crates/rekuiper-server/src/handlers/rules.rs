@@ -1,6 +1,6 @@
 use crate::engine::{
     bootstrap_graph_sources, bootstrap_rule_sources, cancel_rule_source, spawn_graph_rule_task,
-    spawn_rule_task,
+    spawn_rule_task, validate_graph_nodes,
 };
 use crate::state::{check_valid_name, AppState, TracerConfig};
 use axum::{
@@ -94,6 +94,16 @@ pub async fn create_rule(
     // Graph rules carry no SQL: compile linear DAGs or spawn native DAG executor.
     if rule.sql.trim().is_empty() {
         if let Some(ref graph) = rule.graph {
+            if let Err(e) = validate_graph_nodes(graph) {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({
+                        "error": 1000,
+                        "message": e
+                    })),
+                )
+                    .into_response();
+            }
             let is_native_dag = graph
                 .nodes
                 .values()
@@ -105,6 +115,9 @@ pub async fn create_rule(
                     .any(|e| matches!(e, EdgeTargets::Multi(_)));
 
             if is_native_dag {
+                if let Some(resp) = reject_unsupported_native_dag_options(rule.options.as_ref()) {
+                    return resp;
+                }
                 let rule_id = rule.id.clone();
                 if let Err(e) = state.rule_manager.create_rule(rule.clone()).await {
                     let msg = if e.to_string().contains("already exists") {
@@ -194,6 +207,19 @@ pub async fn create_rule(
     if let Some(resp) = reject_invalid_rule(&state, &select_stmt, rule.options.as_ref(), false) {
         return resp;
     }
+    if let Err(err) = crate::engine::validate_rule_actions(&rule.actions) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "error": 1000,
+                "message": err.to_string()
+            })),
+        )
+            .into_response();
+    }
+    if let Some(resp) = reject_invalid_typed_plan(&state, &rule, &select_stmt) {
+        return resp;
+    }
 
     let rule_id = rule.id.clone();
 
@@ -215,7 +241,7 @@ pub async fn create_rule(
 
     // Spawn window-aware rule execution task and register its handle so
     // stop/delete can abort it cleanly.
-    spawn_rule_task(
+    if let Err(err) = spawn_rule_task(
         &state.rule_manager,
         &state.stream_bus,
         &state.stream_manager,
@@ -228,7 +254,17 @@ pub async fn create_rule(
         select_stmt.clone(),
         rule.actions.clone(),
         rule.options.clone(),
-    );
+    ) {
+        let _ = state.rule_manager.delete_rule(&rule_id).await;
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "error": 1000,
+                "message": err.to_string()
+            })),
+        )
+            .into_response();
+    }
 
     bootstrap_rule_sources(&state, &rule_id, &select_stmt);
 
@@ -882,34 +918,77 @@ pub fn reject_invalid_rule(
         }
     }
     // Check multi-stream BUFFER_FULL_POLICY consistency across joined streams
-    let mut stream_policies: Vec<(&str, String)> = Vec::new();
-    let get_policy = |stream: &rekuiper_core::model::StreamDefinition| -> Option<String> {
-        stream.options.iter().find_map(|(k, v)| {
+    // and reject lossy policies when the rule opts into reliable execution.
+    let mut stream_policies: Vec<(&str, rekuiper_core::BufferFullPolicy, String)> = Vec::new();
+    let get_policy = |stream: &rekuiper_core::model::StreamDefinition| -> Option<(rekuiper_core::BufferFullPolicy, String)> {
+        let raw = stream.options.iter().find_map(|(k, v)| {
             if k.eq_ignore_ascii_case("buffer_full_policy") {
                 Some(v.clone())
             } else {
                 None
             }
+        });
+        raw.map(|v| {
+            let parsed = rekuiper_core::resolve_buffer_full_policy(&stream.options)
+                .unwrap_or(rekuiper_core::BufferFullPolicy::Block);
+            (parsed, v)
         })
     };
 
     if let Some(s) = state.stream_manager.get_stream(&stmt.from) {
-        if let Some(pol) = get_policy(&s) {
-            stream_policies.push((&stmt.from, pol));
+        if let Some((pol, raw)) = get_policy(&s) {
+            stream_policies.push((&stmt.from, pol, raw));
         }
     }
     for j in &stmt.joins {
         if let Some(s) = state.stream_manager.get_stream(&j.target) {
-            if let Some(pol) = get_policy(&s) {
-                stream_policies.push((&j.target, pol));
+            if let Some((pol, raw)) = get_policy(&s) {
+                stream_policies.push((&j.target, pol, raw));
             }
         }
     }
 
+    let is_reliable_plan = options.is_some_and(|opts| {
+        opts.iter().any(|(k, v)| {
+            ((k.eq_ignore_ascii_case("deliveryGuarantee")
+                || k.eq_ignore_ascii_case("delivery_guarantee")
+                || k.eq_ignore_ascii_case("reliability"))
+                && matches!(
+                    v.as_str().map(|s| s.to_ascii_lowercase()).as_deref(),
+                    Some("at_least_once" | "durable" | "reliable")
+                ))
+                || ((k.eq_ignore_ascii_case("checkpointEnabled")
+                    || k.eq_ignore_ascii_case("checkpoint_enabled"))
+                    && (v.as_bool() == Some(true)
+                        || v.as_str().is_some_and(|s| s.eq_ignore_ascii_case("true"))))
+        })
+    });
+
+    if is_reliable_plan {
+        if let Some((stream_name, _, _)) = stream_policies
+            .iter()
+            .find(|(_, pol, _)| *pol == rekuiper_core::BufferFullPolicy::DropOldest)
+        {
+            return Some(
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({
+                        "error": 1000,
+                        "message": format!(
+                            "reliable plan cannot use lossy BUFFER_FULL_POLICY 'dropOldest' on stream '{}'",
+                            stream_name
+                        )
+                    })),
+                )
+                    .into_response(),
+            );
+        }
+    }
+
     if stream_policies.len() > 1 {
-        let (first_name, ref first_policy) = stream_policies[0];
-        for (stream_name, policy) in &stream_policies[1..] {
-            if !policy.eq_ignore_ascii_case(first_policy) {
+        let (first_name, first_policy, ref first_raw) = stream_policies[0];
+        for (stream_name, policy, raw) in &stream_policies[1..] {
+            if *policy != first_policy {
                 return Some(
                     (
                         StatusCode::BAD_REQUEST,
@@ -917,7 +996,7 @@ pub fn reject_invalid_rule(
                             "error": 1000,
                             "message": format!(
                                 "conflicting BUFFER_FULL_POLICY in joined streams: stream '{}' uses '{}', but stream '{}' uses '{}'",
-                                first_name, first_policy, stream_name, policy
+                                first_name, first_raw, stream_name, raw
                             )
                         })),
                     )
@@ -968,6 +1047,200 @@ pub fn reject_invalid_rule(
     None
 }
 
+fn stream_catalog_entry(
+    stream: &rekuiper_core::model::StreamDefinition,
+) -> rekuiper_sql::planning::StreamCatalogEntry {
+    use rekuiper_core::contracts::QualificationLevel;
+    use rekuiper_sql::planning::{ExprType, StreamCatalogEntry};
+
+    let source_type = stream
+        .options
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("type"))
+        .map(|(_, v)| v.clone());
+    let lossy_queue = rekuiper_core::resolve_buffer_full_policy(&stream.options)
+        .is_ok_and(|p| p == rekuiper_core::BufferFullPolicy::DropOldest);
+    let replayable = source_type
+        .as_deref()
+        .is_some_and(|t| t.eq_ignore_ascii_case("kafka"))
+        || stream
+            .options
+            .iter()
+            .any(|(k, v)| k.eq_ignore_ascii_case("replayable") && v.eq_ignore_ascii_case("true"));
+    let schema = stream
+        .stream_fields
+        .iter()
+        .map(|f| {
+            let ty = match f.field_type.to_ascii_lowercase().as_str() {
+                "bigint" | "int" | "integer" | "long" => ExprType::Integer,
+                "float" | "double" | "number" => ExprType::Float,
+                "string" | "varchar" | "text" => ExprType::String,
+                "boolean" | "bool" => ExprType::Boolean,
+                _ => ExprType::Any,
+            };
+            (f.name.clone(), ty)
+        })
+        .collect();
+
+    StreamCatalogEntry {
+        name: stream.name.clone(),
+        source_type,
+        lossy_queue,
+        replayable,
+        qualification: QualificationLevel::ComponentTested,
+        schema,
+    }
+}
+
+fn is_native_dag_rule(graph: &rekuiper_core::model::GraphDefinition) -> bool {
+    graph
+        .nodes
+        .values()
+        .any(|n| matches!(n.node_type.as_str(), "switch" | "rate_limit" | "watchdog"))
+        || graph
+            .topo
+            .edges
+            .values()
+            .any(|e| matches!(e, EdgeTargets::Multi(_)))
+}
+
+fn reject_unsupported_native_dag_options(
+    options: Option<&HashMap<String, Value>>,
+) -> Option<Response> {
+    if rekuiper_sql::planning::is_durable_options(options) {
+        return Some(
+            (
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "error": 1000,
+                    "message": "Invalid rule options: native DAG execution does not support checkpointEnabled or durable delivery guarantees"
+                })),
+            )
+                .into_response(),
+        );
+    }
+    None
+}
+
+fn validate_stored_rule_before_start(rule: &RuleDefinition) -> Option<Response> {
+    if rule.sql.trim().is_empty() {
+        if let Some(ref graph) = rule.graph {
+            if let Err(e) = validate_graph_nodes(graph) {
+                return Some(
+                    (
+                        StatusCode::BAD_REQUEST,
+                        Json(json!({
+                            "error": 1000,
+                            "message": format!("Invalid graph node configuration: {}", e)
+                        })),
+                    )
+                        .into_response(),
+                );
+            }
+            if is_native_dag_rule(graph) {
+                return reject_unsupported_native_dag_options(rule.options.as_ref());
+            }
+        }
+    }
+    None
+}
+
+fn graph_source_catalog_entry(
+    graph: &rekuiper_core::model::GraphDefinition,
+    source_name: &str,
+) -> Option<rekuiper_sql::planning::StreamCatalogEntry> {
+    use rekuiper_core::contracts::QualificationLevel;
+    use rekuiper_sql::planning::StreamCatalogEntry;
+    use std::collections::BTreeMap;
+
+    for (node_id, node) in &graph.nodes {
+        if node.node_category != "source" {
+            continue;
+        }
+        let prop_name = node
+            .props
+            .get("sourceName")
+            .or_else(|| node.props.get("datasource"))
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+        let matches = node_id == source_name || prop_name == Some(source_name);
+        if matches {
+            let source_type = node.node_type.to_ascii_lowercase();
+            let replayable = matches!(source_type.as_str(), "kafka" | "sql" | "file");
+            return Some(StreamCatalogEntry {
+                name: source_name.to_string(),
+                source_type: Some(source_type),
+                lossy_queue: false,
+                replayable,
+                qualification: QualificationLevel::ComponentTested,
+                schema: BTreeMap::new(),
+            });
+        }
+    }
+    None
+}
+
+fn build_rule_typed_plan(
+    state: &AppState,
+    rule: &RuleDefinition,
+    stmt: &rekuiper_sql::SelectStmt,
+) -> rekuiper_sql::planning::TypedPlanReport {
+    let mut streams = Vec::new();
+    if let Some(s) = state.stream_manager.get_stream(&stmt.from) {
+        streams.push(stream_catalog_entry(&s));
+    } else if let Some(ref graph) = rule.graph {
+        if let Some(entry) = graph_source_catalog_entry(graph, &stmt.from) {
+            streams.push(entry);
+        }
+    }
+    for j in &stmt.joins {
+        if let Some(s) = state.stream_manager.get_stream(&j.target) {
+            streams.push(stream_catalog_entry(&s));
+        } else if let Some(ref graph) = rule.graph {
+            if let Some(entry) = graph_source_catalog_entry(graph, &j.target) {
+                streams.push(entry);
+            }
+        }
+    }
+    rekuiper_sql::planning::build_typed_plan_report(&rekuiper_sql::planning::PlanCatalogInput {
+        rule_id: rule.id.clone(),
+        sql: rule.sql.clone(),
+        options: rule.options.clone(),
+        actions: rule.actions.clone(),
+        streams,
+    })
+}
+
+fn reject_invalid_typed_plan(
+    state: &AppState,
+    rule: &RuleDefinition,
+    stmt: &rekuiper_sql::SelectStmt,
+) -> Option<Response> {
+    let report = build_rule_typed_plan(state, rule, stmt);
+    if report.valid {
+        return None;
+    }
+    let first_msg = report
+        .diagnostics
+        .first()
+        .map(|d| d.message.clone())
+        .unwrap_or_else(|| "typed plan validation failed".to_string());
+    Some(
+        (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "error": 1000,
+                "message": first_msg,
+                "diagnostics": report.diagnostics,
+                "effective_guarantees": report.effective_guarantees,
+                "limiting_component": report.effective_guarantees.limiting_component,
+            })),
+        )
+            .into_response(),
+    )
+}
+
 pub async fn validate_rule(
     State(state): State<AppState>,
     Json(rule): Json<RuleDefinition>,
@@ -1004,23 +1277,66 @@ pub async fn validate_rule(
     }
     if rule.sql.trim().is_empty() {
         if let Some(ref graph) = rule.graph {
+            if let Err(e) = validate_graph_nodes(graph) {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({
+                        "error": 1000,
+                        "message": e
+                    })),
+                )
+                    .into_response();
+            }
+            let is_native_dag = graph
+                .nodes
+                .values()
+                .any(|n| matches!(n.node_type.as_str(), "switch" | "rate_limit" | "watchdog"))
+                || graph
+                    .topo
+                    .edges
+                    .values()
+                    .any(|e| matches!(e, EdgeTargets::Multi(_)));
+            if is_native_dag {
+                if let Some(resp) = reject_unsupported_native_dag_options(rule.options.as_ref()) {
+                    return resp;
+                }
+                return Json(json!({
+                    "sources": graph.topo.sources,
+                    "valid": true
+                }))
+                .into_response();
+            }
             return match compile_graph_to_sql_and_actions(graph) {
-                Ok((sql, _)) => {
+                Ok((sql, actions)) => {
                     let mut parser = Parser::new(&sql);
                     match parser.parse_select() {
                         Ok(stmt) => {
+                            let mut compiled_rule = rule.clone();
+                            compiled_rule.sql = sql;
+                            if compiled_rule.actions.is_empty() {
+                                compiled_rule.actions = actions;
+                            }
+                            if let Some(resp) = reject_invalid_rule(
+                                &state,
+                                &stmt,
+                                compiled_rule.options.as_ref(),
+                                true,
+                            ) {
+                                return resp;
+                            }
+                            if let Some(resp) = check_rule_functions(&state, &stmt) {
+                                return resp;
+                            }
                             if let Some(resp) =
-                                reject_invalid_rule(&state, &stmt, rule.options.as_ref(), true)
+                                reject_invalid_typed_plan(&state, &compiled_rule, &stmt)
                             {
                                 return resp;
                             }
-                            check_rule_functions(&state, &stmt).unwrap_or_else(|| {
-                                Json(json!({
-                                    "sources": graph.topo.sources,
-                                    "valid": true
-                                }))
-                                .into_response()
-                            })
+                            Json(json!({
+                                "sources": graph.topo.sources,
+                                "valid": true
+                            }))
+                            .into_response()
                         }
                         Err(e) => (
                             StatusCode::BAD_REQUEST,
@@ -1049,13 +1365,37 @@ pub async fn validate_rule(
             if let Some(resp) = reject_invalid_rule(&state, &stmt, rule.options.as_ref(), true) {
                 return resp;
             }
-            check_rule_functions(&state, &stmt).unwrap_or_else(|| {
-                Json(json!({
-                    "sources": [stmt.from],
-                    "valid": true
-                }))
-                .into_response()
-            })
+            if let Some(resp) = check_rule_functions(&state, &stmt) {
+                return resp;
+            }
+            let report = build_rule_typed_plan(&state, &rule, &stmt);
+            if !report.valid {
+                let first_msg = report
+                    .diagnostics
+                    .first()
+                    .map(|d| d.message.clone())
+                    .unwrap_or_else(|| "typed plan validation failed".to_string());
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({
+                        "error": 1000,
+                        "message": first_msg,
+                        "diagnostics": report.diagnostics,
+                        "effective_guarantees": report.effective_guarantees,
+                        "limiting_component": report.effective_guarantees.limiting_component,
+                    })),
+                )
+                    .into_response();
+            }
+            Json(json!({
+                "sources": [stmt.from],
+                "valid": true,
+                "plan": report,
+                "effective_guarantees": report.effective_guarantees,
+                "limiting_component": report.effective_guarantees.limiting_component,
+                "diagnostics": report.diagnostics,
+            }))
+            .into_response()
         }
         Err(e) => (
             StatusCode::BAD_REQUEST,
@@ -1125,6 +1465,7 @@ pub async fn get_rule_explain(State(state): State<AppState>, Path(name): Path<St
         .iter()
         .flat_map(|a| a.keys().cloned())
         .collect();
+    let report = build_rule_typed_plan(&state, &rule, &select_stmt);
     Json(json!({
         "rule": name,
         "source": select_stmt.from,
@@ -1134,6 +1475,10 @@ pub async fn get_rule_explain(State(state): State<AppState>, Path(name): Path<St
         "groupBy": select_stmt.group_by.iter().map(expr_to_string).collect::<Vec<_>>(),
         "having": select_stmt.having.as_ref().map(expr_to_string),
         "actions": action_kinds,
+        "plan": report,
+        "effective_guarantees": report.effective_guarantees,
+        "limiting_component": report.effective_guarantees.limiting_component,
+        "diagnostics": report.diagnostics,
     }))
     .into_response()
 }
@@ -1350,19 +1695,25 @@ pub fn expr_to_string(expr: &Expr) -> String {
     }
 }
 
-pub fn activate_rule(state: &AppState, rule_id: &str) {
+pub fn activate_rule(state: &AppState, rule_id: &str) -> Result<(), String> {
     if let Some(rule) = state.rule_manager.get_rule(rule_id) {
         if rule.sql.trim().is_empty() {
             if let Some(ref graph) = rule.graph {
-                let is_native_dag =
-                    graph.nodes.values().any(|n| {
-                        matches!(n.node_type.as_str(), "switch" | "rate_limit" | "watchdog")
-                    }) || graph
-                        .topo
-                        .edges
-                        .values()
-                        .any(|e| matches!(e, EdgeTargets::Multi(_)));
-                if is_native_dag {
+                if is_native_dag_rule(graph) {
+                    if let Err(e) = validate_graph_nodes(graph) {
+                        tracing::warn!(
+                            rule_id = %rule_id,
+                            error = %e,
+                            "Refusing to activate invalid native DAG rule"
+                        );
+                        return Err(e);
+                    }
+                    if rekuiper_sql::planning::is_durable_options(rule.options.as_ref()) {
+                        let msg =
+                            "Refusing to activate native DAG rule with unsupported durable/checkpointEnabled options";
+                        tracing::warn!(rule_id = %rule_id, "{msg}");
+                        return Err(msg.to_owned());
+                    }
                     let buffer_len = rule
                         .options
                         .as_ref()
@@ -1379,13 +1730,13 @@ pub fn activate_rule(state: &AppState, rule_id: &str) {
                         buffer_len,
                     );
                     bootstrap_graph_sources(state, rule_id, graph);
-                    return;
+                    return Ok(());
                 }
             }
         }
         let mut parser = Parser::new(&rule.sql);
         if let Ok(select_stmt) = parser.parse_select() {
-            spawn_rule_task(
+            if let Err(err) = spawn_rule_task(
                 &state.rule_manager,
                 &state.stream_bus,
                 &state.stream_manager,
@@ -1398,17 +1749,21 @@ pub fn activate_rule(state: &AppState, rule_id: &str) {
                 select_stmt.clone(),
                 rule.actions.clone(),
                 rule.options.clone(),
-            );
+            ) {
+                tracing::error!(rule_id = %rule_id, "Failed to start rule sinks: {err}");
+                return Err(err.to_string());
+            }
             bootstrap_rule_sources(state, rule_id, &select_stmt);
         }
     }
+    Ok(())
 }
 
 pub async fn start_rule(State(state): State<AppState>, Path(name): Path<String>) -> Response {
     if let Err(resp) = check_valid_name(&name) {
         return resp;
     }
-    if state.rule_manager.get_rule(&name).is_none() {
+    let Some(rule) = state.rule_manager.get_rule(&name) else {
         return (
             StatusCode::NOT_FOUND,
             Json(json!({
@@ -1417,18 +1772,39 @@ pub async fn start_rule(State(state): State<AppState>, Path(name): Path<String>)
             })),
         )
             .into_response();
+    };
+    if let Some(resp) = validate_stored_rule_before_start(&rule) {
+        return resp;
     }
     if let Some(status) = state.rule_manager.get_rule_status(&name) {
-        if status.status == "running" {
+        if status.status == "running" && state.rule_manager.has_active_worker(&name) {
             return (StatusCode::OK, format!("Rule {} was started", name)).into_response();
         }
     }
     match state.rule_manager.start_rule(&name).await {
         Ok(_) => {
-            activate_rule(&state, &name);
+            if let Err(err) = activate_rule(&state, &name) {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({
+                        "error": 1000,
+                        "message": err
+                    })),
+                )
+                    .into_response();
+            }
             (StatusCode::OK, format!("Rule {} was started", name)).into_response()
         }
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+fn source_cleanup_cb(state: &AppState, name: &str) -> impl FnOnce() + Send + 'static {
+    let state = state.clone();
+    let name = name.to_owned();
+    move || {
+        cancel_rule_source(&state, &name);
+        state.trace_manager.stop_trace(&name);
     }
 }
 
@@ -1448,15 +1824,17 @@ pub async fn stop_rule(State(state): State<AppState>, Path(name): Path<String>) 
     }
     if let Some(status) = state.rule_manager.get_rule_status(&name) {
         if status.status == "stopped" {
+            cancel_rule_source(&state, &name);
+            state.trace_manager.stop_trace(&name);
             return (StatusCode::OK, format!("Rule {} was stopped.", name)).into_response();
         }
     }
-    match state.rule_manager.stop_rule(&name).await {
-        Ok(_) => {
-            cancel_rule_source(&state, &name);
-            state.trace_manager.stop_trace(&name);
-            (StatusCode::OK, format!("Rule {} was stopped.", name)).into_response()
-        }
+    match state
+        .rule_manager
+        .stop_rule_with_cleanup(&name, source_cleanup_cb(&state, &name))
+        .await
+    {
+        Ok(_) => (StatusCode::OK, format!("Rule {} was stopped.", name)).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
 }
@@ -1465,7 +1843,7 @@ pub async fn restart_rule(State(state): State<AppState>, Path(name): Path<String
     if let Err(resp) = check_valid_name(&name) {
         return resp;
     }
-    if state.rule_manager.get_rule(&name).is_none() {
+    let Some(rule) = state.rule_manager.get_rule(&name) else {
         return (
             StatusCode::NOT_FOUND,
             Json(json!({
@@ -1474,12 +1852,26 @@ pub async fn restart_rule(State(state): State<AppState>, Path(name): Path<String
             })),
         )
             .into_response();
+    };
+    if let Some(resp) = validate_stored_rule_before_start(&rule) {
+        return resp;
     }
-    match state.rule_manager.restart_rule(&name).await {
+    match state
+        .rule_manager
+        .restart_rule_with_cleanup(&name, source_cleanup_cb(&state, &name))
+        .await
+    {
         Ok(_) => {
-            cancel_rule_source(&state, &name);
-            state.trace_manager.stop_trace(&name);
-            activate_rule(&state, &name);
+            if let Err(err) = activate_rule(&state, &name) {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({
+                        "error": 1000,
+                        "message": err
+                    })),
+                )
+                    .into_response();
+            }
             (StatusCode::OK, format!("Rule {} was restarted", name)).into_response()
         }
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
@@ -1500,12 +1892,12 @@ pub async fn delete_rule(State(state): State<AppState>, Path(name): Path<String>
         )
             .into_response();
     }
-    match state.rule_manager.delete_rule(&name).await {
-        Ok(_) => {
-            cancel_rule_source(&state, &name);
-            state.trace_manager.stop_trace(&name);
-            (StatusCode::OK, format!("Rule {} is dropped.", name)).into_response()
-        }
+    match state
+        .rule_manager
+        .delete_rule_with_cleanup(&name, source_cleanup_cb(&state, &name))
+        .await
+    {
+        Ok(_) => (StatusCode::OK, format!("Rule {} is dropped.", name)).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
 }
@@ -1555,6 +1947,16 @@ pub async fn update_rule(
     // Graph rules carry no SQL: compile the DAG first or handle native DAG.
     if rule.sql.trim().is_empty() {
         if let Some(ref graph) = rule.graph {
+            if let Err(e) = validate_graph_nodes(graph) {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({
+                        "error": 1000,
+                        "message": e
+                    })),
+                )
+                    .into_response();
+            }
             let is_native_dag = graph
                 .nodes
                 .values()
@@ -1566,8 +1968,30 @@ pub async fn update_rule(
                     .any(|e| matches!(e, EdgeTargets::Multi(_)));
 
             if is_native_dag {
-                let was_running = match state.rule_manager.update_rule(rule.clone()).await {
-                    Ok(running) => running,
+                if let Some(resp) = reject_unsupported_native_dag_options(rule.options.as_ref()) {
+                    return resp;
+                }
+                if let Err(err) = crate::engine::preflight_rule_sinks(
+                    &name,
+                    &rule.actions,
+                    &state.source_configs,
+                    rule.options.as_ref(),
+                ) {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        Json(json!({
+                            "error": 1000,
+                            "message": err.to_string()
+                        })),
+                    )
+                        .into_response();
+                }
+                let update_guard = match state
+                    .rule_manager
+                    .begin_update_with_cleanup(rule.clone(), source_cleanup_cb(&state, &name))
+                    .await
+                {
+                    Ok(guard) => guard,
                     Err(e) => {
                         return (
                             StatusCode::INTERNAL_SERVER_ERROR,
@@ -1579,9 +2003,18 @@ pub async fn update_rule(
                             .into_response();
                     }
                 };
-                cancel_rule_source(&state, &name);
-                state.trace_manager.stop_trace(&name);
-                if was_running {
+                if update_guard.was_running() {
+                    if let Err(e) = state.rule_manager.commit_update_start(&update_guard).await {
+                        let _ = rollback_and_respawn(&state, &name, &update_guard).await;
+                        return (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            Json(json!({
+                                "error": 1000,
+                                "message": e.to_string()
+                            })),
+                        )
+                            .into_response();
+                    }
                     let buffer_len = rule
                         .options
                         .as_ref()
@@ -1599,6 +2032,7 @@ pub async fn update_rule(
                     );
                     bootstrap_graph_sources(&state, &name, graph);
                 }
+                drop(update_guard);
                 return (
                     StatusCode::OK,
                     format!("Rule {} was updated successfully.", name),
@@ -1653,6 +2087,19 @@ pub async fn update_rule(
     if let Some(resp) = reject_invalid_rule(&state, &select_stmt, rule.options.as_ref(), false) {
         return resp;
     }
+    if let Err(err) = crate::engine::validate_rule_actions(&rule.actions) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "error": 1000,
+                "message": err.to_string()
+            })),
+        )
+            .into_response();
+    }
+    if let Some(resp) = reject_invalid_typed_plan(&state, &rule, &select_stmt) {
+        return resp;
+    }
     if let Err(e) = validate_sink_actions(&rule.actions) {
         return (
             StatusCode::BAD_REQUEST,
@@ -1663,8 +2110,27 @@ pub async fn update_rule(
         )
             .into_response();
     }
-    let was_running = match state.rule_manager.update_rule(rule.clone()).await {
-        Ok(running) => running,
+    if let Err(err) = crate::engine::preflight_rule_sinks(
+        &name,
+        &rule.actions,
+        &state.source_configs,
+        rule.options.as_ref(),
+    ) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "error": 1000,
+                "message": err.to_string()
+            })),
+        )
+            .into_response();
+    }
+    let update_guard = match state
+        .rule_manager
+        .begin_update_with_cleanup(rule.clone(), source_cleanup_cb(&state, &name))
+        .await
+    {
+        Ok(guard) => guard,
         Err(e) => {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -1676,10 +2142,19 @@ pub async fn update_rule(
                 .into_response();
         }
     };
-    cancel_rule_source(&state, &name);
-    state.trace_manager.stop_trace(&name);
-    if was_running {
-        spawn_rule_task(
+    if update_guard.was_running() {
+        if let Err(e) = state.rule_manager.commit_update_start(&update_guard).await {
+            let _ = rollback_and_respawn(&state, &name, &update_guard).await;
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({
+                    "error": 1000,
+                    "message": e.to_string()
+                })),
+            )
+                .into_response();
+        }
+        if let Err(err) = spawn_rule_task(
             &state.rule_manager,
             &state.stream_bus,
             &state.stream_manager,
@@ -1692,14 +2167,84 @@ pub async fn update_rule(
             select_stmt.clone(),
             rule.actions.clone(),
             rule.options.clone(),
-        );
+        ) {
+            let _ = rollback_and_respawn(&state, &name, &update_guard).await;
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "error": 1000,
+                    "message": err.to_string()
+                })),
+            )
+                .into_response();
+        }
         bootstrap_rule_sources(&state, &name, &select_stmt);
     }
+    drop(update_guard);
     (
         StatusCode::OK,
         format!("Rule {} was updated successfully.", name),
     )
         .into_response()
+}
+
+/// Restores the previous rule definition and restarts its worker if `spawn_rule_task`
+/// or `commit_update_start` fails after draining the old worker.
+async fn rollback_and_respawn(
+    state: &AppState,
+    name: &str,
+    update_guard: &rekuiper_core::manager::RuleUpdateGuard,
+) -> anyhow::Result<()> {
+    let prev = update_guard.prev_def();
+    state
+        .rule_manager
+        .rollback_update(update_guard, true)
+        .await?;
+    if let Some(graph) = &prev.graph {
+        if is_native_dag_rule(graph) {
+            let buffer_len = prev
+                .options
+                .as_ref()
+                .and_then(|o| o.get("bufferLength"))
+                .and_then(|v| v.as_u64())
+                .map(|n| n as usize)
+                .unwrap_or(1024);
+            spawn_graph_rule_task(
+                &state.rule_manager,
+                &state.stream_bus,
+                name.to_string(),
+                graph.clone(),
+                state.comms_hub.clone(),
+                buffer_len,
+            );
+            bootstrap_graph_sources(state, name, graph);
+            return Ok(());
+        }
+    }
+    if let Ok(stmt) = Parser::new(&prev.sql).parse_select() {
+        if let Err(err) = spawn_rule_task(
+            &state.rule_manager,
+            &state.stream_bus,
+            &state.stream_manager,
+            &state.table_manager,
+            &state.source_configs,
+            &state.http_client,
+            &state.trace_manager,
+            &state.config,
+            name.to_string(),
+            stmt.clone(),
+            prev.actions.clone(),
+            prev.options.clone(),
+        ) {
+            let _ = state
+                .rule_manager
+                .rollback_update(update_guard, false)
+                .await;
+            return Err(err);
+        }
+        bootstrap_rule_sources(state, name, &stmt);
+    }
+    Ok(())
 }
 
 pub async fn get_rule_schema(State(state): State<AppState>, Path(id): Path<String>) -> Response {
@@ -1741,6 +2286,14 @@ pub async fn bulk_start_rules(State(state): State<AppState>, body: Bytes) -> imp
     let mut results = Vec::new();
     for rule in state.rule_manager.list_rules() {
         if !target_tags.is_empty() && !target_tags.iter().any(|t| rule.tags.contains(t)) {
+            continue;
+        }
+        if validate_stored_rule_before_start(&rule).is_some() {
+            results.push(json!({
+                "ruleId": rule.id,
+                "success": false,
+                "error": "Invalid rule options or graph configuration for native DAG execution"
+            }));
             continue;
         }
         match state.rule_manager.start_rule(&rule.id).await {

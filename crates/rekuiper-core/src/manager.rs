@@ -9,6 +9,7 @@ use parking_lot::RwLock;
 use serde_json::Value;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::Mutex as AsyncMutex;
 use tokio::task::JoinHandle;
 
@@ -640,7 +641,7 @@ pub struct RuleManager {
     rules: Arc<RwLock<HashMap<String, Arc<RwLock<ActiveRule>>>>>,
     pub stream_bus: StreamBus,
     kv: Option<Arc<dyn KvStore>>,
-    op_lock: Arc<AsyncMutex<()>>,
+    rule_locks: Arc<RwLock<HashMap<String, Arc<AsyncMutex<()>>>>>,
 }
 
 /// Persisted rule envelope: the definition plus the last known lifecycle
@@ -672,7 +673,7 @@ impl RuleManager {
             rules: Arc::new(RwLock::new(HashMap::new())),
             stream_bus,
             kv: None,
-            op_lock: Arc::new(AsyncMutex::new(())),
+            rule_locks: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -681,8 +682,20 @@ impl RuleManager {
             rules: Arc::new(RwLock::new(HashMap::new())),
             stream_bus,
             kv: Some(kv),
-            op_lock: Arc::new(AsyncMutex::new(())),
+            rule_locks: Arc::new(RwLock::new(HashMap::new())),
         }
+    }
+
+    fn rule_lock(&self, id: &str) -> Arc<AsyncMutex<()>> {
+        if let Some(lock) = self.rule_locks.read().get(id) {
+            return Arc::clone(lock);
+        }
+        let mut locks = self.rule_locks.write();
+        Arc::clone(
+            locks
+                .entry(id.to_string())
+                .or_insert_with(|| Arc::new(AsyncMutex::new(()))),
+        )
     }
 
     async fn persist_rule(&self, id: &str, def: &RuleDefinition, status: &str) -> Result<()> {
@@ -723,7 +736,8 @@ impl RuleManager {
     }
 
     pub async fn create_rule(&self, def: RuleDefinition) -> Result<()> {
-        let _guard = self.op_lock.lock().await;
+        let rule_lock = self.rule_lock(&def.id);
+        let _guard = rule_lock.lock().await;
         {
             let map = self.rules.read();
             if map.contains_key(&def.id) {
@@ -760,37 +774,128 @@ impl RuleManager {
     }
 
     pub async fn update_rule(&self, def: RuleDefinition) -> Result<bool> {
-        let _guard = self.op_lock.lock().await;
+        self.update_rule_with_cleanup(def, || {}).await
+    }
+
+    pub async fn update_rule_with_cleanup<F>(
+        &self,
+        def: RuleDefinition,
+        on_commit: F,
+    ) -> Result<bool>
+    where
+        F: FnOnce() + Send + 'static,
+    {
+        self.begin_update_with_cleanup(def, on_commit)
+            .await
+            .map(|guard| guard.was_running())
+    }
+
+    /// Begins a per-rule serialized update, holding the per-rule lock across
+    /// drain so the caller can atomically restart or roll back without another
+    /// concurrent update observing the intermediate `stopped` window.
+    pub async fn begin_update_with_cleanup<F>(
+        &self,
+        def: RuleDefinition,
+        on_commit: F,
+    ) -> Result<RuleUpdateGuard>
+    where
+        F: FnOnce() + Send + 'static,
+    {
+        let rule_lock = self.rule_lock(&def.id);
+        let guard = rule_lock.lock_owned().await;
         let rule_arc = {
             let map = self.rules.read();
             map.get(&def.id)
                 .cloned()
                 .ok_or_else(|| anyhow::anyhow!("Rule {} not found", def.id))?
         };
-        let was_running = {
+        let (was_running, prev_def) = {
             let active = rule_arc.read();
             let is_running = active.status.read().status == "running";
-            is_running
+            (is_running, active.def.clone())
         };
-        let status_str = if was_running { "running" } else { "stopped" };
-        self.persist_rule(&def.id, &def, status_str).await?;
-        {
-            let mut active = rule_arc.write();
-            active.def = def;
-            if was_running {
-                if let Some(old) = active.handle.take() {
-                    old.abort();
-                }
-            }
+        if !was_running {
+            self.persist_rule(&def.id, &def, "stopped").await?;
+            rule_arc.write().def = def.clone();
+            on_commit();
+            return Ok(RuleUpdateGuard {
+                _guard: guard,
+                rule_id: def.id,
+                was_running: false,
+                prev_def,
+            });
         }
-        Ok(was_running)
+
+        // Keep the rule in `stopped` through the drain so any cancellation leaves
+        // a recoverable `stopped` state; callers re-start when registering the new worker.
+        self.persist_rule(&def.id, &def, "stopped").await?;
+        let (old_handle, old_sink_handle) = {
+            let mut active = rule_arc.write();
+            active.def = def.clone();
+            active.status.write().status = "stopped".to_string();
+            (active.handle.take(), active.sink_handle.take())
+        };
+        on_commit();
+
+        let guard = drain_handles_under_lock(guard, old_handle, old_sink_handle).await?;
+        Ok(RuleUpdateGuard {
+            _guard: guard,
+            rule_id: def.id,
+            was_running: true,
+            prev_def,
+        })
+    }
+
+    /// Marks the updated rule as `running` while still holding `RuleUpdateGuard`.
+    pub async fn commit_update_start(&self, update: &RuleUpdateGuard) -> Result<()> {
+        let rule_arc = {
+            let map = self.rules.read();
+            map.get(&update.rule_id)
+                .cloned()
+                .ok_or_else(|| anyhow::anyhow!("Rule {} not found", update.rule_id))?
+        };
+        let def = rule_arc.read().def.clone();
+        self.persist_rule(&update.rule_id, &def, "running").await?;
+        let active = rule_arc.read();
+        let mut status = active.status.write();
+        status.status = "running".to_string();
+        status.message.clear();
+        Ok(())
+    }
+
+    /// Restores the previous rule definition and lifecycle status while still holding `RuleUpdateGuard`.
+    pub async fn rollback_update(
+        &self,
+        update: &RuleUpdateGuard,
+        restore_running: bool,
+    ) -> Result<()> {
+        let target_status = if restore_running {
+            "running"
+        } else {
+            "stopped"
+        };
+        self.persist_rule(&update.rule_id, &update.prev_def, target_status)
+            .await?;
+        let rule_arc = {
+            let map = self.rules.read();
+            map.get(&update.rule_id)
+                .cloned()
+                .ok_or_else(|| anyhow::anyhow!("Rule {} not found", update.rule_id))?
+        };
+        let mut active = rule_arc.write();
+        active.def = update.prev_def.clone();
+        let mut status = active.status.write();
+        status.status = target_status.to_string();
+        status.message.clear();
+        Ok(())
     }
 
     pub async fn update_rule_tags<F>(&self, id: &str, update_fn: F) -> Result<Vec<String>>
     where
         F: FnOnce(&mut Vec<String>),
     {
-        let _guard = self.op_lock.lock().await;
+        let rule_lock = self.rule_lock(id);
+        let _guard = rule_lock.lock().await;
         let rule_arc = {
             let map = self.rules.read();
             map.get(id)
@@ -951,7 +1056,8 @@ impl RuleManager {
     }
 
     pub async fn halt_rule_with_error(&self, id: &str, error_msg: &str) -> Result<()> {
-        let _guard = self.op_lock.lock().await;
+        let rule_lock = self.rule_lock(id);
+        let _guard = rule_lock.lock().await;
         let rule_arc = {
             let map = self.rules.read();
             map.get(id)
@@ -1026,8 +1132,17 @@ impl RuleManager {
         sink_handles
     }
 
+    pub fn has_active_worker(&self, id: &str) -> bool {
+        self.rules
+            .read()
+            .get(id)
+            .map(|r| r.read().handle.is_some())
+            .unwrap_or(false)
+    }
+
     pub async fn start_rule(&self, id: &str) -> Result<()> {
-        let _guard = self.op_lock.lock().await;
+        let rule_lock = self.rule_lock(id);
+        let _guard = rule_lock.lock().await;
         let rule_arc = {
             let map = self.rules.read();
             map.get(id)
@@ -1049,7 +1164,15 @@ impl RuleManager {
     }
 
     pub async fn stop_rule(&self, id: &str) -> Result<()> {
-        let _guard = self.op_lock.lock().await;
+        self.stop_rule_with_cleanup(id, || {}).await
+    }
+
+    pub async fn stop_rule_with_cleanup<F>(&self, id: &str, on_commit: F) -> Result<()>
+    where
+        F: FnOnce() + Send + 'static,
+    {
+        let rule_lock = self.rule_lock(id);
+        let guard = rule_lock.lock_owned().await;
         let rule_arc = {
             let map = self.rules.read();
             map.get(id)
@@ -1058,25 +1181,43 @@ impl RuleManager {
         };
         let snapshot = rule_arc.read().def.clone();
         self.persist_rule(id, &snapshot, "stopped").await?;
-        {
+        let (old_handle, old_sink_handle) = {
             if let Some(rule_arc) = self.rules.read().get(id) {
                 let mut rule = rule_arc.write();
-                if let Some(handle) = rule.handle.take() {
-                    handle.abort();
-                }
+                let handles = (rule.handle.take(), rule.sink_handle.take());
                 let mut st = rule.status.write();
                 st.status = "stopped".to_string();
                 st.last_stop_timestamp = chrono::Utc::now().timestamp_millis();
                 st.message = "canceled manually".to_string();
+                handles
+            } else {
+                (None, None)
+            }
+        };
+        on_commit();
+        let guard = drain_handles_under_lock(guard, old_handle, old_sink_handle).await?;
+        drop(guard);
+        let mut locks = self.rule_locks.write();
+        if let Some(lock) = locks.get(id) {
+            if Arc::strong_count(lock) == 1 {
+                locks.remove(id);
             }
         }
         Ok(())
     }
 
-    /// Atomic restart lifecycle transition: sets and persists the rule as `running`,
-    /// aborting any previous task under the mutation lock.
+    /// Atomic restart lifecycle transition: drains any previous task in `stopped`
+    /// state under the per-rule lock, then marks the rule `running` once drain completes.
     pub async fn restart_rule(&self, id: &str) -> Result<()> {
-        let _guard = self.op_lock.lock().await;
+        self.restart_rule_with_cleanup(id, || {}).await
+    }
+
+    pub async fn restart_rule_with_cleanup<F>(&self, id: &str, on_commit: F) -> Result<()>
+    where
+        F: FnOnce() + Send + 'static,
+    {
+        let rule_lock = self.rule_lock(id);
+        let guard = rule_lock.lock_owned().await;
         let rule_arc = {
             let map = self.rules.read();
             map.get(id)
@@ -1084,12 +1225,21 @@ impl RuleManager {
                 .ok_or_else(|| anyhow::anyhow!("Rule {} not found", id))?
         };
         let snapshot = rule_arc.read().def.clone();
+        self.persist_rule(id, &snapshot, "stopped").await?;
+        let (old_handle, old_sink_handle) = {
+            let mut rule = rule_arc.write();
+            let handles = (rule.handle.take(), rule.sink_handle.take());
+            let mut st = rule.status.write();
+            st.status = "stopped".to_string();
+            st.message.clear();
+            handles
+        };
+        on_commit();
+        let _guard = drain_handles_under_lock(guard, old_handle, old_sink_handle).await?;
+
         self.persist_rule(id, &snapshot, "running").await?;
         {
-            let mut rule = rule_arc.write();
-            if let Some(handle) = rule.handle.take() {
-                handle.abort();
-            }
+            let rule = rule_arc.read();
             let mut st = rule.status.write();
             st.status = "running".to_string();
             st.last_start_timestamp = chrono::Utc::now().timestamp_millis();
@@ -1099,7 +1249,15 @@ impl RuleManager {
     }
 
     pub async fn delete_rule(&self, id: &str) -> Result<()> {
-        let _guard = self.op_lock.lock().await;
+        self.delete_rule_with_cleanup(id, || {}).await
+    }
+
+    pub async fn delete_rule_with_cleanup<F>(&self, id: &str, on_commit: F) -> Result<()>
+    where
+        F: FnOnce() + Send + 'static,
+    {
+        let rule_lock = self.rule_lock(id);
+        let guard = rule_lock.lock_owned().await;
         {
             let map = self.rules.read();
             if !map.contains_key(id) {
@@ -1108,13 +1266,22 @@ impl RuleManager {
         }
         self.unpersist_rule(id).await?;
         let _ = self.delete_rule_checkpoint(id).await;
-        {
+        let (old_handle, old_sink_handle) = {
             let mut map = self.rules.write();
             if let Some(rule_arc) = map.remove(id) {
                 let mut rule = rule_arc.write();
-                if let Some(handle) = rule.handle.take() {
-                    handle.abort();
-                }
+                (rule.handle.take(), rule.sink_handle.take())
+            } else {
+                (None, None)
+            }
+        };
+        on_commit();
+        let guard = drain_handles_under_lock(guard, old_handle, old_sink_handle).await?;
+        drop(guard);
+        let mut locks = self.rule_locks.write();
+        if let Some(lock) = locks.get(id) {
+            if Arc::strong_count(lock) == 1 {
+                locks.remove(id);
             }
         }
         Ok(())
@@ -1160,5 +1327,67 @@ impl RuleManager {
                 .insert(active.def.id.clone(), Arc::new(RwLock::new(active)));
         }
         Ok(())
+    }
+}
+
+/// Per-rule lock guard held across `begin_update_with_cleanup`, drain, and
+/// replacement worker startup/rollback so concurrent updates cannot observe
+/// an intermediate `stopped` state.
+pub struct RuleUpdateGuard {
+    _guard: tokio::sync::OwnedMutexGuard<()>,
+    rule_id: String,
+    was_running: bool,
+    prev_def: RuleDefinition,
+}
+
+impl RuleUpdateGuard {
+    pub fn was_running(&self) -> bool {
+        self.was_running
+    }
+
+    pub fn prev_def(&self) -> &RuleDefinition {
+        &self.prev_def
+    }
+}
+
+/// Drains old rule handles inside a detached task holding the per-rule lock so
+/// canceling the caller future never orphans an in-flight sink close. Returns the
+/// guard when the caller is still waiting so no gap opens in the lock hold.
+async fn drain_handles_under_lock(
+    guard: tokio::sync::OwnedMutexGuard<()>,
+    handle: Option<JoinHandle<()>>,
+    sink_handle: Option<JoinHandle<()>>,
+) -> Result<tokio::sync::OwnedMutexGuard<()>> {
+    let (tx, rx) = tokio::sync::oneshot::channel::<tokio::sync::OwnedMutexGuard<()>>();
+    tokio::spawn(async move {
+        stop_rule_handles(handle, sink_handle).await;
+        let _ = tx.send(guard);
+    });
+    rx.await
+        .map_err(|_| anyhow::anyhow!("rule handle drain task aborted"))
+}
+
+const SINK_DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Aborts the rule compute task so its sink channel closes, then awaits both the
+/// compute task and sink worker (bounded by `SINK_DRAIN_TIMEOUT`) so cache
+/// flushes/cleanup finish before any replacement starts without wedging forever.
+async fn stop_rule_handles(handle: Option<JoinHandle<()>>, sink_handle: Option<JoinHandle<()>>) {
+    if let Some(h) = handle {
+        h.abort();
+        let _ = h.await;
+    }
+    if let Some(mut sh) = sink_handle {
+        if tokio::time::timeout(SINK_DRAIN_TIMEOUT, &mut sh)
+            .await
+            .is_err()
+        {
+            tracing::warn!(
+                "sink worker did not finish draining within {:?}; aborting",
+                SINK_DRAIN_TIMEOUT
+            );
+            sh.abort();
+            let _ = sh.await;
+        }
     }
 }

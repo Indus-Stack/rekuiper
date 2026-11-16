@@ -200,13 +200,70 @@ impl Evaluator {
         let Some(obj) = args[0].as_object() else {
             return Value::Null;
         };
-        let mut map = serde_json::Map::new();
+
+        // Track full-parent selections so parent-child overlap is order-independent:
+        // a full parent copy always wins over a partial nested projection.
+        let mut full_selected_paths: std::collections::BTreeSet<Vec<String>> =
+            std::collections::BTreeSet::new();
+        let mut out = serde_json::Map::new();
+
         for key in Self::key_names(&args[1..]) {
             if let Some(v) = obj.get(&key) {
-                map.insert(key, v.clone());
+                let path = vec![key.clone()];
+                full_selected_paths.insert(path);
+                out.insert(key, v.clone());
+                continue;
             }
+            if !key.contains('.') {
+                continue;
+            }
+            let segments: Vec<String> = key.split('.').map(str::to_owned).collect();
+            if segments.iter().any(String::is_empty) {
+                continue;
+            }
+            let mut cur = &args[0];
+            let mut found = true;
+            for seg in &segments {
+                if let Some(next) = cur.as_object().and_then(|m| m.get(seg)) {
+                    cur = next;
+                } else {
+                    found = false;
+                    break;
+                }
+            }
+            if !found {
+                continue;
+            }
+            // If an ancestor was already selected as a full parent, keep it intact.
+            let ancestor_already_full = (1..segments.len())
+                .any(|prefix_len| full_selected_paths.contains(&segments[..prefix_len]));
+            if ancestor_already_full {
+                continue;
+            }
+            full_selected_paths.insert(segments.clone());
+            Self::insert_nested_pick(&mut out, &segments, cur.clone());
         }
-        Value::Object(map)
+        Value::Object(out)
+    }
+
+    fn insert_nested_pick(
+        dst: &mut serde_json::Map<String, Value>,
+        segments: &[String],
+        val: Value,
+    ) {
+        if segments.len() == 1 {
+            dst.insert(segments[0].clone(), val);
+            return;
+        }
+        let entry = dst
+            .entry(segments[0].clone())
+            .or_insert_with(|| Value::Object(serde_json::Map::new()));
+        if !entry.is_object() {
+            *entry = Value::Object(serde_json::Map::new());
+        }
+        if let Some(child_map) = entry.as_object_mut() {
+            Self::insert_nested_pick(child_map, &segments[1..], val);
+        }
     }
 
     /// Inverse of [`Self::func_kvpair_array_to_obj`]: object entries become
@@ -524,12 +581,15 @@ impl Evaluator {
         let (Some(a), Some(b)) = (args[0].as_array(), args[1].as_array()) else {
             return Value::Null;
         };
-        Value::Array(
-            a.iter()
-                .filter(|item| !b.iter().any(|other| Self::values_equal(item, other)))
-                .cloned()
-                .collect(),
-        )
+        let mut out = Vec::new();
+        for item in a {
+            if !b.iter().any(|other| Self::values_equal(item, other))
+                && !out.iter().any(|seen| Self::values_equal(seen, item))
+            {
+                out.push(item.clone());
+            }
+        }
+        Value::Array(out)
     }
 
     /// Shared numeric scan for `array_max`/`array_min`: extreme value among

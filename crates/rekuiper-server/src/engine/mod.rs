@@ -1,10 +1,18 @@
+pub mod barrier_alignment;
+pub mod batching;
 pub mod dag;
 pub mod dlq;
 pub mod joins;
+pub mod lookup_runtime;
 pub mod operators;
+pub mod outbox_dispatch;
+pub mod reliable_input;
+pub mod retry;
 pub mod runtime;
 pub mod sinks;
 pub mod sources;
+pub mod state;
+pub mod time;
 pub mod windows;
 
 pub use dag::*;
@@ -156,6 +164,45 @@ pub(crate) fn is_bus_predicate_exhaustive(expr: &rekuiper_sql::Expr) -> bool {
     }
 }
 
+fn subscribe_with_policy(
+    stream_bus: &StreamBus,
+    topic: &str,
+    filter: Option<rekuiper_core::SubscriberFilter>,
+    buffer_len: usize,
+    policy: rekuiper_core::BufferFullPolicy,
+) -> StreamReceiver {
+    match policy {
+        rekuiper_core::BufferFullPolicy::Block => match filter {
+            Some(f) => stream_bus.subscribe_filtered_with_capacity(topic, f, buffer_len),
+            None => stream_bus.subscribe_with_capacity(topic, buffer_len),
+        },
+        rekuiper_core::BufferFullPolicy::DropOldest => {
+            let mut lossy_rx = match filter {
+                Some(f) => stream_bus.subscribe_lossy_filtered(topic, f, buffer_len),
+                None => stream_bus.subscribe_lossy(topic, buffer_len),
+            };
+            let (tx, rx) = tokio::sync::mpsc::channel(1);
+            tokio::spawn(async move {
+                loop {
+                    tokio::select! {
+                        biased;
+                        () = tx.closed() => break,
+                        maybe_rec = lossy_rx.recv() => {
+                            let Some(rec) = maybe_rec else {
+                                break;
+                            };
+                            if tx.send(rec).await.is_err() {
+                                break;
+                            }
+                        }
+                    }
+                }
+            });
+            rx
+        }
+    }
+}
+
 /// Subscribe to the rule's source stream and spawn its window-aware
 /// execution task, registering the join handle on the rule manager.
 #[allow(clippy::too_many_arguments)]
@@ -172,7 +219,7 @@ pub(crate) fn spawn_rule_task(
     select_stmt: SelectStmt,
     actions: Vec<HashMap<String, Value>>,
     rule_options: Option<HashMap<String, Value>>,
-) {
+) -> anyhow::Result<()> {
     if rule_options
         .as_ref()
         .and_then(|o| o.get("enableRuleTracer"))
@@ -242,17 +289,23 @@ pub(crate) fn spawn_rule_task(
             (None, false)
         };
 
-    let rx = match bus_pred {
-        Some(pred) => {
-            let filter = rekuiper_core::SubscriberFilter {
-                predicate: pred,
-                source_in_counter: loop_counters.source_in.clone(),
-                filtered_counter: loop_counters.filtered.clone(),
-            };
-            stream_bus.subscribe_filtered_with_capacity(&from_topic, filter, buffer_len)
-        }
-        None => stream_bus.subscribe_with_capacity(&from_topic, buffer_len),
-    };
+    let from_stream_def = stream_manager.get_stream(&from_topic);
+    let from_policy = from_stream_def
+        .as_ref()
+        .and_then(|s| rekuiper_core::resolve_buffer_full_policy(&s.options).ok())
+        .unwrap_or(rekuiper_core::BufferFullPolicy::Block);
+
+    let rx = subscribe_with_policy(
+        stream_bus,
+        &from_topic,
+        bus_pred.map(|pred| rekuiper_core::SubscriberFilter {
+            predicate: pred,
+            source_in_counter: loop_counters.source_in.clone(),
+            filtered_counter: loop_counters.filtered.clone(),
+        }),
+        buffer_len,
+        from_policy,
+    );
     let rx = if !from_fields.is_empty() {
         let (tx, coerced_rx) = tokio::sync::mpsc::channel(buffer_len);
         let fields = from_fields;
@@ -312,7 +365,11 @@ pub(crate) fn spawn_rule_task(
             && !join_rxs.iter().any(|(s, _)| s == &join.target)
         {
             let topic = resolve_source_topic(stream_manager, &join.target);
-            let jrx = stream_bus.subscribe_with_capacity(&topic, buffer_len);
+            let join_policy = stream_manager
+                .get_stream(&topic)
+                .and_then(|s| rekuiper_core::resolve_buffer_full_policy(&s.options).ok())
+                .unwrap_or(rekuiper_core::BufferFullPolicy::Block);
+            let jrx = subscribe_with_policy(stream_bus, &topic, None, buffer_len, join_policy);
             let join_fields = stream_manager
                 .get_stream(&topic)
                 .map(|s| s.stream_fields)
@@ -391,28 +448,66 @@ pub(crate) fn spawn_rule_task(
         .iter()
         .zip(&cache_configs)
         .all(|(action, cache_cfg)| matches!(action, PreparedAction::Nop) && cache_cfg.is_none());
+    let cache_root = std::path::Path::new(SINK_CACHE_ROOT);
+    let runtimes =
+        match open_action_runtimes(cache_root, &sink_rule_id, &actions, prepared, cache_configs) {
+            Ok(rt) => rt,
+            Err(err) => {
+                tracing::error!(
+                    rule_id = %sink_rule_id,
+                    "Sink startup failed; marking rule as error: {err}"
+                );
+                let mut st = loop_running.write();
+                st.status = "error".to_owned();
+                st.message = err.to_string();
+                st.last_exception = err.to_string();
+                return Err(err);
+            }
+        };
     let sink_handle = tokio::spawn(async move {
         use std::collections::HashMap as Map;
         use std::sync::atomic::Ordering::Relaxed;
+        struct SinkRuntimeShutdownGuard {
+            rule_id: String,
+            runtimes: Vec<ActionRuntime>,
+        }
+        impl Drop for SinkRuntimeShutdownGuard {
+            fn drop(&mut self) {
+                for mut rt in std::mem::take(&mut self.runtimes) {
+                    if let Some(mut cache) = rt.cache.take() {
+                        if let Some(record) = rt.inflight_record.take() {
+                            cache.push(record);
+                        }
+                        if !rt.batch_buffer.is_empty() {
+                            let mut batch_data = HashMap::new();
+                            batch_data.insert(
+                                BATCH_ROWS_KEY.to_string(),
+                                Value::Array(std::mem::take(&mut rt.batch_buffer)),
+                            );
+                            cache.push(StreamRecord::new(batch_data));
+                        }
+                        if !cache.is_empty() && !cache.config().clean_at_stop {
+                            tracing::info!(
+                                "[RULE {}] persisting {} cached sink records on shutdown",
+                                self.rule_id,
+                                cache.len()
+                            );
+                        }
+                        cache.close();
+                    }
+                }
+            }
+        }
+        let mut rt_guard = SinkRuntimeShutdownGuard {
+            rule_id: sink_rule_id.clone(),
+            runtimes,
+        };
         let mut files: Map<std::path::PathBuf, FileBatchWriter> = Map::new();
-        // Per-action runtimes: persistent connections plus the offline cache
-        // (pages left by a previous run are adopted and resent first).
-        let cache_root = std::path::Path::new(SINK_CACHE_ROOT);
-        let mut runtimes: Vec<ActionRuntime> = prepared
-            .into_iter()
-            .zip(cache_configs)
-            .enumerate()
-            .map(|(idx, (action, cache_cfg))| {
-                let cache = cache_cfg.map(|cfg| {
-                    SinkCache::open(cfg, sink_cache::cache_dir(cache_root, &sink_rule_id, idx))
-                });
-                ActionRuntime::new(action, cache)
-            })
-            .collect();
         let mut ticker = tokio::time::interval(SINK_TICK);
         // First tick fires immediately; consume it so time-flushes align.
         ticker.tick().await;
-        let file_actions = runtimes
+        let file_actions = rt_guard
+            .runtimes
             .iter()
             .any(|rt| matches!(&rt.action, PreparedAction::File { .. }));
         let mut pending_file_records: u64 = 0;
@@ -422,11 +517,13 @@ pub(crate) fn spawn_rule_task(
                 rec = sink_rx.recv() => {
                     let Some(output_record) = rec else {
                         // Flush remaining batch_buffer for sinks with batching
-                        for rt in runtimes.iter_mut() {
+                        for rt in rt_guard.runtimes.iter_mut() {
                             if !rt.batch_buffer.is_empty() {
-                                let batch = std::mem::take(&mut rt.batch_buffer);
                                 let mut batch_data = HashMap::new();
-                                batch_data.insert(BATCH_ROWS_KEY.to_string(), Value::Array(batch));
+                                batch_data.insert(
+                                    BATCH_ROWS_KEY.to_string(),
+                                    Value::Array(rt.batch_buffer.clone()),
+                                );
                                 let batch_record = StreamRecord::new(batch_data);
                                 let enable_private_net = sink_config.read().basic.enable_private_net;
                                 let ctx = SinkContext {
@@ -437,7 +534,44 @@ pub(crate) fn spawn_rule_task(
                                     enable_private_net,
                                     dlq_router: Some(&sink_dlq_router),
                                 };
-                                let _ = send_action(rt, &batch_record, None, &ctx, &mut files).await;
+                                match tokio::time::timeout(
+                                    std::time::Duration::from_secs(2),
+                                    send_action(rt, &batch_record, None, &ctx, &mut files),
+                                )
+                                .await
+                                {
+                                    Ok(Ok(())) => {
+                                        rt.batch_buffer.clear();
+                                    }
+                                    Ok(Err(err)) => {
+                                        let cacheable = matches!(err, SendError::Retry(_))
+                                            && rt.cache.is_some();
+                                        if let (true, Some(cache)) =
+                                            (cacheable, rt.cache.as_mut())
+                                        {
+                                            cache.push(batch_record);
+                                        }
+                                        rt.batch_buffer.clear();
+                                        report_send_error(rt, &ctx, &err, cacheable);
+                                        if cacheable {
+                                            sync_cache_drops(rt, &ctx);
+                                        }
+                                    }
+                                    Err(_) => {
+                                        let err = SendError::Retry(
+                                            "shutdown batch flush timed out".to_owned(),
+                                        );
+                                        let cacheable = rt.cache.is_some();
+                                        if let Some(cache) = rt.cache.as_mut() {
+                                            cache.push(batch_record);
+                                        }
+                                        rt.batch_buffer.clear();
+                                        report_send_error(rt, &ctx, &err, cacheable);
+                                        if cacheable {
+                                            sync_cache_drops(rt, &ctx);
+                                        }
+                                    }
+                                }
                             }
                         }
                         // Rule end/cancel/update/delete/shutdown: drain, flush
@@ -459,18 +593,7 @@ pub(crate) fn spawn_rule_task(
                         } else {
                             sink_rule_mgr.inc_sink_failed(&sink_rule_id, pending_file_records);
                         }
-                        for rt in std::mem::take(&mut runtimes) {
-                            if let Some(cache) = rt.cache {
-                                if !cache.is_empty() && !cache.config().clean_at_stop {
-                                    tracing::info!(
-                                        "[RULE {}] persisting {} cached sink records for resend",
-                                        sink_rule_id,
-                                        cache.len()
-                                    );
-                                }
-                                cache.close();
-                            }
-                        }
+                        drop(rt_guard);
                         break;
                     };
                     let tracing_active = sink_trace_mgr.is_tracing(&sink_rule_id);
@@ -520,7 +643,7 @@ pub(crate) fn spawn_rule_task(
                             } else {
                                 1
                             };
-                            match deliver_record(&mut runtimes, &cur_output, &ctx, &mut files).await {
+                            match deliver_record(&mut rt_guard.runtimes, &cur_output, &ctx, &mut files).await {
                                 Delivery::Delivered => {
                                     if file_actions {
                                         pending_file_records += num_records;
@@ -604,24 +727,37 @@ pub(crate) fn spawn_rule_task(
                         dlq_router: Some(&sink_dlq_router),
                     };
                     let now = tokio::time::Instant::now();
-                    for rt in runtimes.iter_mut() {
+                    for rt in rt_guard.runtimes.iter_mut() {
                         let linger_interval = rt.action.common_opts().map(|o| o.linger_interval).unwrap_or(0);
                         if linger_interval > 0 && !rt.batch_buffer.is_empty() {
                             let elapsed = now.duration_since(rt.last_batch_time).as_millis() as u64;
                             if elapsed >= linger_interval {
-                                let batch = std::mem::take(&mut rt.batch_buffer);
-                                rt.last_batch_time = now;
                                 let mut batch_data = HashMap::new();
-                                batch_data.insert(BATCH_ROWS_KEY.to_string(), Value::Array(batch));
+                                batch_data.insert(
+                                    BATCH_ROWS_KEY.to_string(),
+                                    Value::Array(rt.batch_buffer.clone()),
+                                );
                                 let batch_record = StreamRecord::new(batch_data);
-                                if let Err(err) = send_action(rt, &batch_record, None, &ctx, &mut files).await {
-                                    report_send_error(rt, &ctx, &err, false);
+                                rt.last_batch_time = now;
+                                let send_res =
+                                    send_action(rt, &batch_record, None, &ctx, &mut files).await;
+                                rt.batch_buffer.clear();
+                                if let Err(err) = send_res {
+                                    let cacheable =
+                                        matches!(err, SendError::Retry(_)) && rt.cache.is_some();
+                                    if let (true, Some(cache)) = (cacheable, rt.cache.as_mut()) {
+                                        cache.push(batch_record);
+                                    }
+                                    report_send_error(rt, &ctx, &err, cacheable);
+                                    if cacheable {
+                                        sync_cache_drops(rt, &ctx);
+                                    }
                                 }
                             }
                         }
                     }
                     let live_recent = last_live.elapsed() < SINK_TICK * 2;
-                    for rt in runtimes.iter_mut() {
+                    for rt in rt_guard.runtimes.iter_mut() {
                         let resent = resend_cached(rt, live_recent, &ctx, &mut files).await;
                         if resent > 0 {
                             if file_actions {
@@ -835,6 +971,125 @@ pub(crate) fn spawn_rule_task(
     };
     rule_manager.set_rule_handle(&rule_id, handle);
     rule_manager.set_rule_sink_handle(&rule_id, sink_handle);
+    Ok(())
+}
+
+pub(crate) fn actions_to_typed_maps(
+    actions: &[HashMap<String, Value>],
+) -> Vec<HashMap<String, HashMap<String, Value>>> {
+    let mut out = Vec::new();
+    for action in actions {
+        for (sink_type, val) in action {
+            if sink_type == "disabled" || sink_type == "disable" || is_action_disabled(action, val)
+            {
+                continue;
+            }
+            let props = val
+                .as_object()
+                .map(|obj| obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+                .unwrap_or_default();
+            let mut single = HashMap::new();
+            single.insert(sink_type.clone(), props);
+            out.push(single);
+        }
+    }
+    out
+}
+
+pub(crate) fn validate_rule_actions(actions: &[HashMap<String, Value>]) -> anyhow::Result<()> {
+    let typed_actions = actions_to_typed_maps(actions);
+    resolve_rule_action_identities(&typed_actions)?;
+    Ok(())
+}
+
+pub(crate) fn preflight_rule_sinks(
+    rule_id: &str,
+    actions: &[HashMap<String, Value>],
+    _source_configs: &Arc<RwLock<HashMap<String, Value>>>,
+    _rule_options: Option<&HashMap<String, Value>>,
+) -> anyhow::Result<()> {
+    let cache_configs = action_cache_configs(actions);
+    let cache_root = std::path::Path::new(SINK_CACHE_ROOT);
+    let targets = resolve_action_cache_targets(cache_root, rule_id, actions, &cache_configs)?;
+    for (_, dir, manifest) in targets.into_iter().flatten() {
+        SinkCache::verify_ownership(&dir, &manifest)?;
+    }
+    Ok(())
+}
+
+fn resolve_action_cache_targets(
+    cache_root: &std::path::Path,
+    rule_id: &str,
+    actions: &[HashMap<String, Value>],
+    cache_configs: &[Option<crate::sink_cache::CacheConfig>],
+) -> anyhow::Result<
+    Vec<
+        Option<(
+            crate::sink_cache::CacheConfig,
+            std::path::PathBuf,
+            sink_cache::CacheOwnershipManifest,
+        )>,
+    >,
+> {
+    if cache_configs.iter().any(Option::is_some) {
+        let legacy_dirs = sink_cache::find_nonempty_legacy_cache_dirs(cache_root, rule_id);
+        if !legacy_dirs.is_empty() {
+            let paths: Vec<String> = legacy_dirs
+                .iter()
+                .map(|p| p.display().to_string())
+                .collect();
+            anyhow::bail!(
+                "legacy positional sink cache directory found ({}); drain or move legacy positional caches to `index.<pos>` / `named.<name>` before starting with identity-based cache ownership",
+                paths.join(", ")
+            );
+        }
+    }
+
+    let typed_actions = actions_to_typed_maps(actions);
+    let action_ids = resolve_rule_action_identities(&typed_actions)?;
+    let empty_props = HashMap::new();
+
+    Ok(cache_configs
+        .iter()
+        .zip(action_ids)
+        .enumerate()
+        .map(|(idx, (cache_cfg, action_id))| {
+            cache_cfg.clone().map(|cfg| {
+                let (sink_type, props) = typed_actions
+                    .get(idx)
+                    .and_then(|m| m.iter().next())
+                    .map(|(k, v)| (k.as_str(), v))
+                    .unwrap_or(("unknown", &empty_props));
+                let manifest =
+                    sink_cache::CacheOwnershipManifest::new(rule_id, &action_id, sink_type, props);
+                let dir = sink_cache::cache_dir_for_identity(cache_root, rule_id, &action_id);
+                (cfg, dir, manifest)
+            })
+        })
+        .collect())
+}
+
+pub(crate) fn open_action_runtimes(
+    cache_root: &std::path::Path,
+    rule_id: &str,
+    actions: &[HashMap<String, Value>],
+    prepared: Vec<PreparedAction>,
+    cache_configs: Vec<Option<crate::sink_cache::CacheConfig>>,
+) -> anyhow::Result<Vec<ActionRuntime>> {
+    let targets = resolve_action_cache_targets(cache_root, rule_id, actions, &cache_configs)?;
+    prepared
+        .into_iter()
+        .zip(targets)
+        .map(|(action, target)| {
+            let cache = match target {
+                Some((cfg, dir, manifest)) => {
+                    Some(SinkCache::open_with_ownership(cfg, dir, &manifest)?)
+                }
+                None => None,
+            };
+            Ok(ActionRuntime::new(action, cache))
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -1650,5 +1905,262 @@ mod tests {
         );
         let stmt_match = parser_match.parse_select().unwrap();
         assert!(reject_invalid_rule(&state, &stmt_match, None, false).is_none());
+    }
+
+    #[test]
+    fn p11_t01_reordering_named_actions_preserves_cache_ownership() {
+        let dir = std::env::temp_dir().join(format!(
+            "rekuiper_p11_t01_mod_{}_{}",
+            std::process::id(),
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let confs = test_source_configs(&[]);
+        let rule_id = "rule_swap_test";
+
+        let rest_a = serde_json::json!({
+            "name": "primary",
+            "url": "http://127.0.0.1:9001/a",
+            "method": "POST",
+            "enableCache": true
+        });
+        let rest_b = serde_json::json!({
+            "name": "secondary",
+            "url": "http://127.0.0.1:9002/b",
+            "method": "POST",
+            "enableCache": true
+        });
+
+        let mut m_a = HashMap::new();
+        m_a.insert("rest".to_owned(), rest_a);
+        let mut m_b = HashMap::new();
+        m_b.insert("rest".to_owned(), rest_b);
+
+        // First run: [primary, secondary] -> push cached item to primary only.
+        let actions1 = vec![m_a.clone(), m_b.clone()];
+        let prep1 = prepare_actions(&actions1, rule_id, &confs, None);
+        let ccfg1 = action_cache_configs(&actions1);
+        let mut rt1 = open_action_runtimes(&dir, rule_id, &actions1, prep1, ccfg1).unwrap();
+        rt1[0]
+            .cache
+            .as_mut()
+            .unwrap()
+            .push(StreamRecord::from_hashmap(HashMap::from([(
+                "for".to_owned(),
+                serde_json::json!("primary"),
+            )])));
+        for rt in rt1 {
+            if let Some(c) = rt.cache {
+                c.close();
+            }
+        }
+
+        // Second run: swap order [secondary, primary] -> primary's backlog stays on primary (index 1).
+        let actions2 = vec![m_b, m_a.clone()];
+        let prep2 = prepare_actions(&actions2, rule_id, &confs, None);
+        let ccfg2 = action_cache_configs(&actions2);
+        let mut rt2 = open_action_runtimes(&dir, rule_id, &actions2, prep2, ccfg2).unwrap();
+        assert!(rt2[0].cache.as_mut().unwrap().pop_front().is_none());
+        let adopted = rt2[1]
+            .cache
+            .as_mut()
+            .unwrap()
+            .pop_front()
+            .expect("primary must adopt its own backlog after reorder");
+        assert_eq!(
+            adopted.data.get("for").and_then(|v| v.as_str()),
+            Some("primary")
+        );
+        for rt in rt2 {
+            if let Some(c) = rt.cache {
+                c.close();
+            }
+        }
+
+        // Changing destination URL for existing actionName "primary" must fail visibly.
+        let mut m_a_hijack = HashMap::new();
+        m_a_hijack.insert(
+            "rest".to_owned(),
+            serde_json::json!({
+                "name": "primary",
+                "url": "http://127.0.0.1:9999/other",
+                "method": "POST",
+                "enableCache": true
+            }),
+        );
+        let actions3 = vec![m_a_hijack];
+        let prep3 = prepare_actions(&actions3, rule_id, &confs, None);
+        let ccfg3 = action_cache_configs(&actions3);
+        let err = match open_action_runtimes(&dir, rule_id, &actions3, prep3, ccfg3) {
+            Ok(_) => panic!("changed destination under same actionName must be rejected"),
+            Err(e) => e,
+        };
+        assert!(err.to_string().contains("ownership mismatch"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn p11_t01_disabled_action_does_not_shift_identity_or_legacy_cache_silently_ignored() {
+        let dir = std::env::temp_dir().join(format!(
+            "rekuiper_p11_t01_disabled_legacy_{}_{}",
+            std::process::id(),
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let confs = test_source_configs(&[]);
+        let rule_id = "rule_disabled_swap";
+
+        let disabled = HashMap::from([(
+            "rest".to_owned(),
+            serde_json::json!({
+                "name": "disabled_first",
+                "disabled": true,
+                "url": "http://127.0.0.1:9000/off",
+                "enableCache": true
+            }),
+        )]);
+        let rest_a = HashMap::from([(
+            "rest".to_owned(),
+            serde_json::json!({
+                "name": "alpha",
+                "url": "http://127.0.0.1:9001/alpha",
+                "method": "POST",
+                "enableCache": true
+            }),
+        )]);
+        let rest_b = HashMap::from([(
+            "rest".to_owned(),
+            serde_json::json!({
+                "name": "beta",
+                "url": "http://127.0.0.1:9002/beta",
+                "method": "POST",
+                "enableCache": true
+            }),
+        )]);
+
+        // First run: [disabled, alpha, beta] -> push cached item to alpha (runtime 0).
+        let actions1 = vec![disabled.clone(), rest_a.clone(), rest_b.clone()];
+        let prep1 = prepare_actions(&actions1, rule_id, &confs, None);
+        let ccfg1 = action_cache_configs(&actions1);
+        let mut rt1 = open_action_runtimes(&dir, rule_id, &actions1, prep1, ccfg1).unwrap();
+        assert_eq!(rt1.len(), 2);
+        rt1[0]
+            .cache
+            .as_mut()
+            .unwrap()
+            .push(StreamRecord::from_hashmap(HashMap::from([(
+                "for".to_owned(),
+                serde_json::json!("alpha"),
+            )])));
+        for rt in rt1 {
+            if let Some(c) = rt.cache {
+                c.close();
+            }
+        }
+
+        // Second run: [disabled, beta, alpha] -> alpha (runtime 1) adopts alpha's backlog, beta is empty.
+        let actions2 = vec![disabled, rest_b.clone(), rest_a];
+        let prep2 = prepare_actions(&actions2, rule_id, &confs, None);
+        let ccfg2 = action_cache_configs(&actions2);
+        let mut rt2 = open_action_runtimes(&dir, rule_id, &actions2, prep2, ccfg2).unwrap();
+        assert!(rt2[0].cache.as_mut().unwrap().pop_front().is_none());
+        let adopted = rt2[1]
+            .cache
+            .as_mut()
+            .unwrap()
+            .pop_front()
+            .expect("alpha must adopt its own backlog even with a leading disabled action");
+        assert_eq!(
+            adopted.data.get("for").and_then(|v| v.as_str()),
+            Some("alpha")
+        );
+        for rt in rt2 {
+            if let Some(c) = rt.cache {
+                c.close();
+            }
+        }
+
+        // Legacy positional cache directory with pending data must fail visibly rather than starting empty.
+        let legacy_dir = sink_cache::cache_dir(&dir, "rule_legacy", 0);
+        let mut legacy_cache =
+            SinkCache::open(crate::sink_cache::CacheConfig::default(), legacy_dir);
+        legacy_cache.push(StreamRecord::from_hashmap(HashMap::from([(
+            "legacy".to_owned(),
+            serde_json::json!(1),
+        )])));
+        legacy_cache.close();
+
+        let actions_legacy = vec![rest_b];
+        let prep_legacy = prepare_actions(&actions_legacy, "rule_legacy", &confs, None);
+        let ccfg_legacy = action_cache_configs(&actions_legacy);
+        let err = match open_action_runtimes(
+            &dir,
+            "rule_legacy",
+            &actions_legacy,
+            prep_legacy,
+            ccfg_legacy,
+        ) {
+            Ok(_) => panic!("non-empty legacy positional cache must block silent empty startup"),
+            Err(e) => e,
+        };
+        assert!(err.to_string().contains("legacy positional sink cache"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn p11_t01_sink_startup_failure_marks_rule_error_not_running() {
+        let bus = StreamBus::new();
+        let rm = RuleManager::new(bus.clone());
+        let sm = test_stream_manager(&[]).await;
+        let tm = TableManager::new();
+        let confs = test_source_configs(&[]);
+        let http = reqwest::Client::new();
+        let trace = TraceManager::new();
+        let cfg = Arc::new(RwLock::new(rekuiper_conf::KuiperConfig::default()));
+
+        let dup_action = HashMap::from([(
+            "rest".to_owned(),
+            serde_json::json!({
+                "name": "dup_name",
+                "url": "http://127.0.0.1:9001/a",
+                "method": "POST"
+            }),
+        )]);
+        let rule_def = rekuiper_core::RuleDefinition {
+            id: "rule_dup_startup".to_owned(),
+            name: None,
+            sql: "SELECT * FROM stream_a".to_owned(),
+            actions: vec![dup_action.clone(), dup_action.clone()],
+            options: None,
+            version: None,
+            tags: Vec::new(),
+            graph: None,
+        };
+        rm.create_rule(rule_def.clone()).await.unwrap();
+
+        let mut parser = Parser::new(&rule_def.sql);
+        let stmt = parser.parse_select().unwrap();
+        let spawn_res = spawn_rule_task(
+            &rm,
+            &bus,
+            &sm,
+            &tm,
+            &confs,
+            &http,
+            &trace,
+            &cfg,
+            rule_def.id.clone(),
+            stmt,
+            rule_def.actions,
+            None,
+        );
+        assert!(spawn_res.is_err());
+
+        let status = rm.get_rule_status(&rule_def.id).unwrap();
+        assert_eq!(status.status, "error");
+        assert!(!status.last_exception.is_empty());
+        assert_eq!(status.message, status.last_exception);
     }
 }

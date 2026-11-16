@@ -56,6 +56,29 @@ pub fn describe_table(def: &TableDefinition) -> Value {
     })
 }
 
+fn validate_rabbitmq_stream_options(options: &HashMap<String, String>) -> Result<(), String> {
+    if !options
+        .iter()
+        .any(|(k, v)| k.eq_ignore_ascii_case("type") && v.eq_ignore_ascii_case("rabbitmq"))
+    {
+        return Ok(());
+    }
+    if let Some((_, mode_raw)) = options
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("ackMode") || k.eq_ignore_ascii_case("ack_mode"))
+    {
+        let ack_mode: rekuiper_connectors::RabbitMqAckMode =
+            serde_json::from_value(Value::String(mode_raw.clone()))
+                .map_err(|e| format!("invalid RabbitMQ ackMode '{}': {}", mode_raw, e))?;
+        let cfg = rekuiper_connectors::RabbitMqConfig {
+            ack_mode,
+            ..Default::default()
+        };
+        cfg.validate_source_ack_mode().map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 fn validate_video_options(
     options: &HashMap<String, String>,
     source_configs: &std::sync::Arc<parking_lot::RwLock<HashMap<String, Value>>>,
@@ -173,20 +196,10 @@ pub async fn create_stream(
         let mut parser = Parser::new(&sql);
         match parser.parse_create_stream() {
             Ok(stmt) => {
+                if let Err(msg) = rekuiper_core::resolve_buffer_full_policy(&stmt.options) {
+                    return (StatusCode::BAD_REQUEST, msg).into_response();
+                }
                 for (k, v) in &stmt.options {
-                    if k.eq_ignore_ascii_case("buffer_full_policy")
-                        && !v.eq_ignore_ascii_case("block")
-                        && !v.eq_ignore_ascii_case("dropOldest")
-                    {
-                        return (
-                            StatusCode::BAD_REQUEST,
-                            format!(
-                                "Invalid buffer_full_policy: '{}', must be 'block' or 'dropOldest'",
-                                v
-                            ),
-                        )
-                            .into_response();
-                    }
                     if (k.eq_ignore_ascii_case("offset_reset")
                         || k.eq_ignore_ascii_case("offsetreset"))
                         && !v.eq_ignore_ascii_case("earliest")
@@ -203,6 +216,16 @@ pub async fn create_stream(
                     }
                 }
                 if let Err(e) = validate_video_options(&stmt.options, &state.source_configs) {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        Json(json!({
+                            "error": 3000,
+                            "message": format!("Stream command error: {}", e)
+                        })),
+                    )
+                        .into_response();
+                }
+                if let Err(e) = validate_rabbitmq_stream_options(&stmt.options) {
                     return (
                         StatusCode::BAD_REQUEST,
                         Json(json!({
@@ -360,20 +383,10 @@ pub async fn update_stream(
         Ok(s) => s,
         Err(e) => return (StatusCode::BAD_REQUEST, format!("Invalid SQL: {}", e)).into_response(),
     };
+    if let Err(msg) = rekuiper_core::resolve_buffer_full_policy(&stmt.options) {
+        return (StatusCode::BAD_REQUEST, msg).into_response();
+    }
     for (k, v) in &stmt.options {
-        if k.eq_ignore_ascii_case("buffer_full_policy")
-            && !v.eq_ignore_ascii_case("block")
-            && !v.eq_ignore_ascii_case("dropOldest")
-        {
-            return (
-                StatusCode::BAD_REQUEST,
-                format!(
-                    "Invalid buffer_full_policy: '{}', must be 'block' or 'dropOldest'",
-                    v
-                ),
-            )
-                .into_response();
-        }
         if (k.eq_ignore_ascii_case("offset_reset") || k.eq_ignore_ascii_case("offsetreset"))
             && !v.eq_ignore_ascii_case("earliest")
             && !v.eq_ignore_ascii_case("latest")
@@ -389,6 +402,16 @@ pub async fn update_stream(
         }
     }
     if let Err(e) = validate_video_options(&stmt.options, &state.source_configs) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "error": 3000,
+                "message": format!("Stream command error: {}", e)
+            })),
+        )
+            .into_response();
+    }
+    if let Err(e) = validate_rabbitmq_stream_options(&stmt.options) {
         return (
             StatusCode::BAD_REQUEST,
             Json(json!({
@@ -702,6 +725,20 @@ pub async fn create_table(
     let mut parser = Parser::new(&sql);
     match parser.parse_create_table() {
         Ok(stmt) => {
+            if let Err(msg) =
+                crate::engine::lookup_runtime::LookupQueueConfig::parse_and_validate_table_options(
+                    &stmt.options,
+                )
+            {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({
+                        "error": 3000,
+                        "message": format!("Table command error: {}", msg)
+                    })),
+                )
+                    .into_response();
+            }
             let table_def = TableDefinition {
                 name: stmt.name.clone(),
                 sql: sql.clone(),
@@ -812,6 +849,20 @@ pub async fn update_table(
         Ok(s) => s,
         Err(e) => return (StatusCode::BAD_REQUEST, format!("Invalid SQL: {}", e)).into_response(),
     };
+    if let Err(msg) =
+        crate::engine::lookup_runtime::LookupQueueConfig::parse_and_validate_table_options(
+            &stmt.options,
+        )
+    {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "error": 3000,
+                "message": format!("Table command error: {}", msg)
+            })),
+        )
+            .into_response();
+    }
     let table_def = TableDefinition {
         name: name.clone(),
         sql: sql.clone(),

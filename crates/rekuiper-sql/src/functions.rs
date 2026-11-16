@@ -1747,6 +1747,20 @@ pub fn is_builtin_function(name: &str) -> bool {
     BUILTIN_SET.contains(name.to_ascii_lowercase().as_str())
 }
 
+/// Shared planning descriptor registry for built-in functions.
+pub fn builtin_function_descriptors() -> &'static crate::planning::FunctionDescriptorRegistry {
+    static REGISTRY: std::sync::LazyLock<crate::planning::FunctionDescriptorRegistry> =
+        std::sync::LazyLock::new(
+            crate::planning::FunctionDescriptorRegistry::with_representative_builtins,
+        );
+    &REGISTRY
+}
+
+/// Looks up a planning descriptor or returns a conservative unknown descriptor.
+pub fn descriptor_for_function(name: &str) -> crate::planning::FunctionDescriptor {
+    builtin_function_descriptors().resolve_or_conservative(name)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

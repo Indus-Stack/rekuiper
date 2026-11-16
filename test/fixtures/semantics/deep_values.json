@@ -1,0 +1,38 @@
+{
+  "category": "deep_values",
+  "contract": "Nested objects and array indexing semantics (P01-T09)",
+  "cases": [
+    {
+      "id": "nested_object_path",
+      "contract_citation": "Dot-path navigation into nested JSON objects",
+      "disposition": "intentional",
+      "sql": "SELECT a.b.c AS v FROM s",
+      "input": { "a": { "b": { "c": "ok" } } },
+      "expected": { "kind": "row", "row": { "v": "ok" } }
+    },
+    {
+      "id": "array_index_zero",
+      "contract_citation": "0-based array indexing returns element 0",
+      "disposition": "intentional",
+      "sql": "SELECT arr[0] AS v FROM s",
+      "input": { "arr": [10, 20, 30] },
+      "expected": { "kind": "row", "row": { "v": 10 } }
+    },
+    {
+      "id": "array_index_oob_is_null",
+      "contract_citation": "Out-of-bounds array index evaluates to null",
+      "disposition": "intentional",
+      "sql": "SELECT arr[99] AS v FROM s",
+      "input": { "arr": [10, 20] },
+      "expected": { "kind": "row", "row": { "v": null } }
+    },
+    {
+      "id": "nested_object_equality_error",
+      "contract_citation": "eKuiper binary '=' rejects map=map comparison with invalid operation error",
+      "disposition": "intentional",
+      "sql": "SELECT id FROM s WHERE a = b",
+      "input": { "id": 4, "a": { "k": 1 }, "b": { "k": 1 } },
+      "expected": { "kind": "error" }
+    }
+  ]
+}

@@ -484,6 +484,19 @@ impl RecordMeta {
         self.custom = Some(Arc::new(custom));
         self
     }
+
+    /// Inserts or updates a metadata entry in `custom` without polluting payload `data`.
+    #[inline]
+    pub fn with_custom_entry(mut self, key: impl Into<String>, value: Value) -> Self {
+        let mut map = self
+            .custom
+            .as_ref()
+            .map(|c| (**c).clone())
+            .unwrap_or_default();
+        map.insert(key.into(), value);
+        self.custom = Some(Arc::new(map));
+        self
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

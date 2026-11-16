@@ -1,0 +1,22 @@
+{
+  "category": "timestamp_conversions",
+  "contract": "Timestamp parsing and formatting conversions (P01-T12)",
+  "cases": [
+    {
+      "id": "format_time_utc_iso",
+      "contract_citation": "format_time formats epoch millis in UTC deterministically",
+      "disposition": "intentional",
+      "sql": "SELECT format_time(ts, 'YYYY-MM-dd HH:mm:ss') AS v FROM s",
+      "input": { "ts": 0 },
+      "expected": { "kind": "row", "row": { "v": "1970-01-01 00:00:00" } }
+    },
+    {
+      "id": "to_seconds_from_millis",
+      "contract_citation": "to_seconds converts epoch millis to seconds",
+      "disposition": "intentional",
+      "sql": "SELECT to_seconds(ts) AS v FROM s",
+      "input": { "ts": 1500 },
+      "expected": { "kind": "row", "row": { "v": 1 } }
+    }
+  ]
+}

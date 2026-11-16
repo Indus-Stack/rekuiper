@@ -3,15 +3,213 @@ use rekuiper_core::model::{EdgeTargets, GraphDefinition, StreamRecord};
 use rekuiper_core::{RuleCounters, RuleManager, RuleStatus, StreamBus};
 use rekuiper_sql::eval::Evaluator;
 use rekuiper_sql::parse_expression;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::Ordering::Relaxed;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 
 use crate::comms::CommsHub;
 use crate::engine::is_rule_running;
-use crate::engine::operators::{RateLimitNode, SwitchNode, WatchdogNode};
+use crate::engine::operators::{
+    RateLimitEnqueueOutcome, RateLimitNode, RateLimitOverflowPolicy, RateLimitStrategy, SwitchNode,
+    WatchdogNode,
+};
+use rekuiper_core::contracts::clock::DeadlineCancellation;
+
+fn compute_backpressure_targets(graph: &GraphDefinition) -> HashSet<String> {
+    let mut backpressure_rl_nodes: Vec<String> = Vec::new();
+    for (node_id, node) in &graph.nodes {
+        if node.node_category == "operator" && node.node_type == "rate_limit" {
+            if let Ok(rl) = RateLimitNode::try_from_props(&node.props) {
+                let cfg = rl.config();
+                if cfg.strategy == RateLimitStrategy::Buffer
+                    && cfg.overflow_policy == RateLimitOverflowPolicy::Backpressure
+                {
+                    backpressure_rl_nodes.push(node_id.clone());
+                }
+            }
+        }
+    }
+    if backpressure_rl_nodes.is_empty() {
+        return HashSet::new();
+    }
+
+    let mut reverse_adj: HashMap<&str, Vec<&str>> = HashMap::new();
+    let mut forward_adj: HashMap<&str, Vec<&str>> = HashMap::new();
+    for (src, targets) in &graph.topo.edges {
+        for target in targets.all_targets() {
+            reverse_adj.entry(target).or_default().push(src.as_str());
+            forward_adj.entry(src.as_str()).or_default().push(target);
+        }
+    }
+
+    let mut covered: HashSet<String> = HashSet::new();
+    let mut queue: VecDeque<&str> = VecDeque::new();
+    for rl_id in &backpressure_rl_nodes {
+        if covered.insert(rl_id.clone()) {
+            queue.push_back(rl_id.as_str());
+        }
+    }
+    while let Some(curr) = queue.pop_front() {
+        if let Some(parents) = reverse_adj.get(curr) {
+            for &parent in parents {
+                if graph
+                    .nodes
+                    .get(parent)
+                    .is_some_and(|n| n.node_category != "source")
+                    && covered.insert(parent.to_string())
+                {
+                    queue.push_back(parent);
+                }
+            }
+        }
+    }
+
+    let mut fwd_queue: VecDeque<&str> = backpressure_rl_nodes.iter().map(String::as_str).collect();
+    let mut fwd_seen: HashSet<&str> = fwd_queue.iter().copied().collect();
+    while let Some(curr) = fwd_queue.pop_front() {
+        if let Some(children) = forward_adj.get(curr) {
+            for &child in children {
+                covered.insert(child.to_string());
+                if fwd_seen.insert(child) {
+                    fwd_queue.push_back(child);
+                }
+            }
+        }
+    }
+
+    covered
+}
+
+async fn send_to_port_targets(
+    senders: &HashMap<String, Sender<StreamRecord>>,
+    edges: &HashMap<String, EdgeTargets>,
+    backpressure_targets: &HashSet<String>,
+    running: &Arc<RwLock<RuleStatus>>,
+    node_id: &str,
+    port: usize,
+    record: StreamRecord,
+) {
+    let Some(target_edges) = edges.get(node_id) else {
+        return;
+    };
+    let targets = target_edges.targets_for_port(port);
+    for target in targets {
+        let Some(tx) = senders.get(target) else {
+            continue;
+        };
+        if backpressure_targets.contains(target) {
+            let mut send_fut = std::pin::pin!(tx.send(record.clone()));
+            loop {
+                tokio::select! {
+                    res = &mut send_fut => {
+                        let _ = res;
+                        break;
+                    }
+                    () = tokio::time::sleep(Duration::from_millis(20)) => {
+                        if !is_rule_running(running) {
+                            break;
+                        }
+                    }
+                }
+            }
+        } else {
+            let _ = tx.try_send(record.clone());
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn emit_dag_record(
+    comms_hub: &CommsHub,
+    rule_id: &str,
+    node_id: &str,
+    senders: &HashMap<String, Sender<StreamRecord>>,
+    edges: &HashMap<String, EdgeTargets>,
+    backpressure_targets: &HashSet<String>,
+    running: &Arc<RwLock<RuleStatus>>,
+    port: usize,
+    record: StreamRecord,
+) {
+    comms_hub.maybe_sample(rule_id, node_id, &record.data, record.timestamp);
+    send_to_port_targets(
+        senders,
+        edges,
+        backpressure_targets,
+        running,
+        node_id,
+        port,
+        record,
+    )
+    .await;
+}
+
+fn halt_graph_rule(
+    running: &Arc<RwLock<RuleStatus>>,
+    counters: &Arc<RuleCounters>,
+    err_msg: String,
+) {
+    counters.record_exception(&err_msg);
+    let mut st = running.write();
+    st.status = "stopped".to_string();
+    st.last_stop_timestamp = chrono::Utc::now().timestamp_millis();
+    st.message = format!("halted on error: {err_msg}");
+    st.last_exception = err_msg;
+}
+
+/// Validates configuration properties for native DAG operator nodes.
+pub fn validate_graph_nodes(graph: &GraphDefinition) -> Result<(), String> {
+    for (node_id, node) in &graph.nodes {
+        if node.node_category != "operator" {
+            continue;
+        }
+        match node.node_type.as_str() {
+            "rate_limit" => {
+                RateLimitNode::try_from_props(&node.props)
+                    .map_err(|e| format!("Invalid rate_limit config for node '{node_id}': {e}"))?;
+            }
+            "switch" => {
+                SwitchNode::from_props(&node.props)
+                    .map_err(|e| format!("Invalid switch config for node '{node_id}': {e}"))?;
+            }
+            "filter" => {
+                let expr_str = node
+                    .props
+                    .get("expr")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("true");
+                parse_expression(expr_str)
+                    .map_err(|e| format!("Invalid filter expr for node '{node_id}': {e}"))?;
+            }
+            _ => {}
+        }
+    }
+    validate_graph_acyclic(graph)?;
+    Ok(())
+}
+
+/// Rejects feedback cycles and self-loops in a graph topology.
+pub fn validate_graph_acyclic(graph: &GraphDefinition) -> Result<(), String> {
+    let mut nodes: Vec<String> = graph.nodes.keys().cloned().collect();
+    let mut edge_pairs: Vec<(String, String)> = Vec::new();
+    for (src, targets) in &graph.topo.edges {
+        if !nodes.contains(src) {
+            nodes.push(src.clone());
+        }
+        for t in targets.all_targets() {
+            if !nodes.iter().any(|n| n == t) {
+                nodes.push(t.to_string());
+            }
+            let pair = (src.clone(), t.to_string());
+            if !edge_pairs.contains(&pair) {
+                edge_pairs.push(pair);
+            }
+        }
+    }
+    crate::engine::barrier_alignment::validate_acyclic_reliable_graph(&nodes, &edge_pairs)
+        .map_err(|e| e.to_string())
+}
 
 /// Spawns a native DAG rule execution pipeline.
 /// Each node in `graph.nodes` runs as a decoupled async actor connected by bounded MPSC channels.
@@ -31,13 +229,24 @@ pub async fn run_graph_rule(
     comms_hub: CommsHub,
     buffer_len: usize,
 ) {
+    if let Err(err_msg) = validate_graph_nodes(&graph) {
+        tracing::error!(
+            rule_id = %rule_id,
+            error = %err_msg,
+            "Stopping graph rule due to invalid node configuration"
+        );
+        halt_graph_rule(&running, &counters, err_msg);
+        return;
+    }
+
     let mut senders: HashMap<String, Sender<StreamRecord>> = HashMap::new();
     let mut receivers: HashMap<String, Receiver<StreamRecord>> = HashMap::new();
+    let channel_cap = buffer_len.max(1);
 
     // 1. Allocate bounded channel for every non-source node
     for (node_id, node) in &graph.nodes {
         if node.node_category != "source" {
-            let (tx, rx) = channel::<StreamRecord>(buffer_len);
+            let (tx, rx) = channel::<StreamRecord>(channel_cap);
             senders.insert(node_id.clone(), tx);
             receivers.insert(node_id.clone(), rx);
         }
@@ -45,24 +254,7 @@ pub async fn run_graph_rule(
 
     let senders = Arc::new(senders);
     let edges = Arc::new(graph.topo.edges.clone());
-
-    // Helper to route records to targets
-    fn send_to_port_targets(
-        senders: &Arc<HashMap<String, Sender<StreamRecord>>>,
-        edges: &Arc<HashMap<String, EdgeTargets>>,
-        node_id: &str,
-        port: usize,
-        record: StreamRecord,
-    ) {
-        if let Some(target_edges) = edges.get(node_id) {
-            let targets = target_edges.targets_for_port(port);
-            for target in targets {
-                if let Some(tx) = senders.get(target) {
-                    let _ = tx.try_send(record.clone());
-                }
-            }
-        }
-    }
+    let backpressure_targets = Arc::new(compute_backpressure_targets(&graph));
 
     // Helper to abort all child actor tasks when the parent task aborts or completes
     struct TaskAbortGuard(Vec<tokio::task::JoinHandle<()>>);
@@ -91,6 +283,7 @@ pub async fn run_graph_rule(
         let comms_hub = comms_hub.clone();
         let senders = senders.clone();
         let edges = edges.clone();
+        let backpressure_targets = backpressure_targets.clone();
         let counters = counters.clone();
         let running = running.clone();
 
@@ -102,12 +295,12 @@ pub async fn run_graph_rule(
                             let switch = match SwitchNode::from_props(&node.props) {
                                 Ok(s) => s,
                                 Err(e) => {
-                                    tracing::error!(
+                                    let msg = format!(
                                         "[RULE {}][NODE {}] Invalid switch config: {}",
-                                        rule_id_clone,
-                                        node_id_clone,
-                                        e
+                                        rule_id_clone, node_id_clone, e
                                     );
+                                    tracing::error!("{}", msg);
+                                    halt_graph_rule(&running, &counters, msg);
                                     return;
                                 }
                             };
@@ -117,47 +310,174 @@ pub async fn run_graph_rule(
                                     break;
                                 }
                                 if let Some(port) = switch.route(&record) {
-                                    // Wire-tap probe at switch node exit
-                                    comms_hub.maybe_sample(
+                                    emit_dag_record(
+                                        &comms_hub,
                                         &rule_id_clone,
                                         &node_id_clone,
-                                        &record.data,
-                                        record.timestamp,
-                                    );
-                                    send_to_port_targets(
                                         &senders,
                                         &edges,
-                                        &node_id_clone,
+                                        &backpressure_targets,
+                                        &running,
                                         port,
                                         record,
-                                    );
+                                    )
+                                    .await;
                                 } else {
                                     counters.inc_filtered(1);
                                 }
                             }
                         }
                         "rate_limit" => {
-                            let limiter = RateLimitNode::from_props(&node.props);
-                            while let Some(record) = rx.recv().await {
+                            let limiter = match RateLimitNode::try_from_props(&node.props) {
+                                Ok(l) => l,
+                                Err(err) => {
+                                    let msg = format!(
+                                        "Invalid rate_limit configuration for node '{}': {}",
+                                        node_id_clone, err
+                                    );
+                                    tracing::error!(
+                                        rule_id = %rule_id_clone,
+                                        node_id = %node_id_clone,
+                                        error = %err,
+                                        "Invalid rate_limit configuration"
+                                    );
+                                    halt_graph_rule(&running, &counters, msg);
+                                    return;
+                                }
+                            };
+                            let budget = limiter.default_budget();
+                            let mut buffer = limiter.into_buffer::<StreamRecord>(budget);
+                            let cancellation = DeadlineCancellation::default();
+
+                            loop {
                                 if !is_rule_running(&running) {
+                                    cancellation.cancel();
+                                    buffer.clear();
                                     break;
                                 }
-                                if limiter.acquire().await {
-                                    comms_hub.maybe_sample(
-                                        &rule_id_clone,
-                                        &node_id_clone,
-                                        &record.data,
-                                        record.timestamp,
-                                    );
-                                    send_to_port_targets(
-                                        &senders,
-                                        &edges,
-                                        &node_id_clone,
-                                        0,
-                                        record,
-                                    );
-                                } else {
-                                    counters.inc_filtered(1);
+                                let has_pending = !buffer.is_empty();
+                                tokio::select! {
+                                    biased;
+                                    () = cancellation.cancelled() => {
+                                        buffer.clear();
+                                        break;
+                                    }
+                                    res = buffer.wait_next_token(&cancellation), if has_pending => {
+                                        if res.is_err() {
+                                            buffer.clear();
+                                            break;
+                                        }
+                                        for record in buffer.drain_ready() {
+                                            emit_dag_record(
+                                                &comms_hub,
+                                                &rule_id_clone,
+                                                &node_id_clone,
+                                                &senders,
+                                                &edges,
+                                                &backpressure_targets,
+                                                &running,
+                                                0,
+                                                record,
+                                            )
+                                            .await;
+                                        }
+                                    }
+                                    rec = rx.recv() => {
+                                        let Some(record) = rec else {
+                                            while !buffer.is_empty() && is_rule_running(&running) {
+                                                if buffer.wait_next_token(&cancellation).await.is_err() {
+                                                    break;
+                                                }
+                                                for record in buffer.drain_ready() {
+                                                    emit_dag_record(
+                                                        &comms_hub,
+                                                        &rule_id_clone,
+                                                        &node_id_clone,
+                                                        &senders,
+                                                        &edges,
+                                                        &backpressure_targets,
+                                                        &running,
+                                                        0,
+                                                        record,
+                                                    )
+                                                    .await;
+                                                }
+                                            }
+                                            buffer.clear();
+                                            break;
+                                        };
+                                        if !is_rule_running(&running) {
+                                            cancellation.cancel();
+                                            buffer.clear();
+                                            break;
+                                        }
+                                        let est_bytes = (record.data.len() as u64)
+                                            .saturating_mul(64)
+                                            .max(64);
+                                        let mut outcome = buffer.enqueue(record, est_bytes);
+                                        loop {
+                                            match outcome {
+                                                RateLimitEnqueueOutcome::AdmitNow(record) => {
+                                                    emit_dag_record(
+                                                        &comms_hub,
+                                                        &rule_id_clone,
+                                                        &node_id_clone,
+                                                        &senders,
+                                                        &edges,
+                                                        &backpressure_targets,
+                                                        &running,
+                                                        0,
+                                                        record,
+                                                    )
+                                                    .await;
+                                                    break;
+                                                }
+                                                RateLimitEnqueueOutcome::Buffered { .. } => break,
+                                                RateLimitEnqueueOutcome::BackpressureWait(pending) => {
+                                                    if !is_rule_running(&running)
+                                                        || buffer
+                                                            .wait_next_token(&cancellation)
+                                                            .await
+                                                            .is_err()
+                                                    {
+                                                        cancellation.cancel();
+                                                        buffer.clear();
+                                                        return;
+                                                    }
+                                                    for ready_rec in buffer.drain_ready() {
+                                                        emit_dag_record(
+                                                            &comms_hub,
+                                                            &rule_id_clone,
+                                                            &node_id_clone,
+                                                            &senders,
+                                                            &edges,
+                                                            &backpressure_targets,
+                                                            &running,
+                                                            0,
+                                                            ready_rec,
+                                                        )
+                                                        .await;
+                                                    }
+                                                    outcome = buffer.enqueue(pending, est_bytes);
+                                                }
+                                                RateLimitEnqueueOutcome::Dropped => {
+                                                    counters.inc_filtered(1);
+                                                    break;
+                                                }
+                                                RateLimitEnqueueOutcome::OverflowError(msg) => {
+                                                    tracing::warn!(
+                                                        rule_id = %rule_id_clone,
+                                                        node_id = %node_id_clone,
+                                                        error = %msg,
+                                                        "rate_limit buffer overflow"
+                                                    );
+                                                    counters.inc_exceptions(1);
+                                                    counters.inc_filtered(1);
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -174,8 +494,18 @@ pub async fn run_graph_rule(
                                         let Some(record) = rec else { break; };
                                         if !is_rule_running(&running) { break; }
                                         last_activity = Instant::now();
-                                        comms_hub.maybe_sample(&rule_id_clone, &node_id_clone, &record.data, record.timestamp);
-                                        send_to_port_targets(&senders, &edges, &node_id_clone, 0, record);
+                                        emit_dag_record(
+                                            &comms_hub,
+                                            &rule_id_clone,
+                                            &node_id_clone,
+                                            &senders,
+                                            &edges,
+                                            &backpressure_targets,
+                                            &running,
+                                            0,
+                                            record,
+                                        )
+                                        .await;
                                     }
                                     _ = interval.tick() => {
                                         if !is_rule_running(&running) { break; }
@@ -189,8 +519,18 @@ pub async fn run_graph_rule(
                                                 }
                                             };
                                             let alert_rec = StreamRecord::new(alert_map);
-                                            comms_hub.maybe_sample(&rule_id_clone, &node_id_clone, &alert_rec.data, alert_rec.timestamp);
-                                            send_to_port_targets(&senders, &edges, &node_id_clone, 0, alert_rec);
+                                            emit_dag_record(
+                                                &comms_hub,
+                                                &rule_id_clone,
+                                                &node_id_clone,
+                                                &senders,
+                                                &edges,
+                                                &backpressure_targets,
+                                                &running,
+                                                0,
+                                                alert_rec,
+                                            )
+                                            .await;
                                             if !watchdog.repeat {
                                                 break;
                                             }
@@ -208,12 +548,12 @@ pub async fn run_graph_rule(
                             let expr = match parse_expression(expr_str) {
                                 Ok(e) => e,
                                 Err(err) => {
-                                    tracing::error!(
+                                    let msg = format!(
                                         "[RULE {}][NODE {}] Filter expr error: {}",
-                                        rule_id_clone,
-                                        node_id_clone,
-                                        err
+                                        rule_id_clone, node_id_clone, err
                                     );
+                                    tracing::error!("{}", msg);
+                                    halt_graph_rule(&running, &counters, msg);
                                     return;
                                 }
                             };
@@ -222,19 +562,18 @@ pub async fn run_graph_rule(
                                     break;
                                 }
                                 if Evaluator::eval_bool(&expr, &record) {
-                                    comms_hub.maybe_sample(
+                                    emit_dag_record(
+                                        &comms_hub,
                                         &rule_id_clone,
                                         &node_id_clone,
-                                        &record.data,
-                                        record.timestamp,
-                                    );
-                                    send_to_port_targets(
                                         &senders,
                                         &edges,
-                                        &node_id_clone,
+                                        &backpressure_targets,
+                                        &running,
                                         0,
                                         record,
-                                    );
+                                    )
+                                    .await;
                                 } else {
                                     counters.inc_filtered(1);
                                 }
@@ -271,19 +610,18 @@ pub async fn run_graph_rule(
                                 } else {
                                     record
                                 };
-                                comms_hub.maybe_sample(
+                                emit_dag_record(
+                                    &comms_hub,
                                     &rule_id_clone,
                                     &node_id_clone,
-                                    &out_rec.data,
-                                    out_rec.timestamp,
-                                );
-                                send_to_port_targets(
                                     &senders,
                                     &edges,
-                                    &node_id_clone,
+                                    &backpressure_targets,
+                                    &running,
                                     0,
                                     out_rec,
-                                );
+                                )
+                                .await;
                             }
                         }
                         _ => {
@@ -292,19 +630,18 @@ pub async fn run_graph_rule(
                                 if !is_rule_running(&running) {
                                     break;
                                 }
-                                comms_hub.maybe_sample(
+                                emit_dag_record(
+                                    &comms_hub,
                                     &rule_id_clone,
                                     &node_id_clone,
-                                    &record.data,
-                                    record.timestamp,
-                                );
-                                send_to_port_targets(
                                     &senders,
                                     &edges,
-                                    &node_id_clone,
+                                    &backpressure_targets,
+                                    &running,
                                     0,
                                     record,
-                                );
+                                )
+                                .await;
                             }
                         }
                     }
@@ -350,6 +687,7 @@ pub async fn run_graph_rule(
         let comms_hub = comms_hub.clone();
         let senders = senders.clone();
         let edges = edges.clone();
+        let backpressure_targets = backpressure_targets.clone();
         let counters = counters.clone();
         let running = running.clone();
 
@@ -359,14 +697,18 @@ pub async fn run_graph_rule(
                     break;
                 }
                 counters.inc_source(1);
-                // Wire-tap probe at source output boundary
-                comms_hub.maybe_sample(
+                emit_dag_record(
+                    &comms_hub,
                     &rule_id_clone,
                     &node_id_clone,
-                    &record.data,
-                    record.timestamp,
-                );
-                send_to_port_targets(&senders, &edges, &node_id_clone, 0, record);
+                    &senders,
+                    &edges,
+                    &backpressure_targets,
+                    &running,
+                    0,
+                    record,
+                )
+                .await;
             }
         }));
     }
@@ -404,6 +746,40 @@ pub(crate) fn spawn_graph_rule_task(
     ));
 
     rule_manager.set_rule_handle(&rule_id, handle);
+}
+
+/// Validates that a DAG graph is eligible for opt-in reliable execution:
+/// - Rejects feedback cycles via [`crate::engine::barrier_alignment::validate_acyclic_reliable_graph`]
+/// - Rejects unqualified stateful DAG operator node types (`watchdog`, `window`, `join`, `cep`)
+///   unless a matching state participant is explicitly registered.
+/// - Preserves the default lightweight `run_dag_rule` path untouched.
+pub fn validate_reliable_dag_shape(
+    graph: &GraphDefinition,
+    registered_participants: &[&str],
+) -> Result<(), String> {
+    validate_graph_acyclic(graph)?;
+
+    for (node_id, node) in &graph.nodes {
+        let nt = node.node_type.to_ascii_lowercase();
+        let requires_participant = matches!(nt.as_str(), "window" | "join" | "cep");
+        if requires_participant
+            && !registered_participants
+                .iter()
+                .any(|p| p.eq_ignore_ascii_case(node_id) || p.to_ascii_lowercase().contains(&nt))
+        {
+            return Err(format!(
+                "unqualified or unregistered stateful DAG node '{}' (type '{}')",
+                node_id, node.node_type
+            ));
+        }
+        if nt == "watchdog" {
+            return Err(format!(
+                "unqualified DAG node '{}' of type 'watchdog' is not supported in reliable mode",
+                node_id
+            ));
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

@@ -1,4 +1,5 @@
 use crate::data_template::apply_data_template_value;
+use crate::image_paths::resolve_image_path;
 use base64::Engine;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
@@ -215,28 +216,6 @@ impl ImageSinkConfig {
     ) -> Result<(PathBuf, PathBuf), ImageSinkError> {
         let record_val =
             Value::Object(record.iter().map(|(k, v)| (k.clone(), v.clone())).collect());
-        let dir_str = if self.path.contains("{{") {
-            apply_data_template_value(&self.path, &record_val)
-        } else {
-            self.path.clone()
-        };
-        let dir_trimmed = dir_str.trim();
-        if dir_trimmed.is_empty() {
-            return Err(ImageSinkError::Validation(
-                "target directory path resolved to empty".to_string(),
-            ));
-        }
-        let dir_path = PathBuf::from(dir_trimmed);
-        if dir_trimmed.contains("..")
-            || dir_path
-                .components()
-                .any(|c| matches!(c, std::path::Component::ParentDir))
-        {
-            return Err(ImageSinkError::Validation(format!(
-                "invalid image directory path '{}': directory traversal '..' is prohibited",
-                dir_trimmed
-            )));
-        }
 
         let fmt_lower = self.format.to_lowercase();
         let ext = match fmt_lower.as_str() {
@@ -254,31 +233,12 @@ impl ImageSinkConfig {
         } else {
             format!("{}.{}", Uuid::new_v4(), ext)
         };
-        let file_trimmed = file_str.trim();
-        if file_trimmed.is_empty() {
-            return Err(ImageSinkError::Validation(
-                "image file name resolved to empty".to_string(),
-            ));
-        }
-        if file_trimmed.contains('/')
-            || file_trimmed.contains('\\')
-            || file_trimmed.contains(':')
-            || file_trimmed.contains("..")
-        {
-            return Err(ImageSinkError::Validation(format!(
-                "invalid image file name '{}': path separators, colons, and '..' are prohibited",
-                file_trimmed
-            )));
-        }
 
+        let validated = resolve_image_path(&self.path, &file_str, record)
+            .map_err(|e| ImageSinkError::Validation(e.to_string()))?;
+        let dir_path = validated.dir_path();
+        let file_trimmed = validated.file_name.as_str();
         let file_path_obj = Path::new(file_trimmed);
-        let components: Vec<_> = file_path_obj.components().collect();
-        if components.len() != 1 || !matches!(components[0], std::path::Component::Normal(_)) {
-            return Err(ImageSinkError::Validation(format!(
-                "invalid image file name '{}': must be a single normal file component",
-                file_trimmed
-            )));
-        }
 
         let stem = file_path_obj
             .file_stem()

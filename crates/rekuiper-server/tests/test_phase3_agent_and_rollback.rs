@@ -468,3 +468,47 @@ async fn test_secret_masking_interpolation_and_roundtrip_preservation() {
     assert_eq!(stored["password"].as_str(), Some("vault_secret_9999"));
     assert_eq!(stored["token"].as_str(), Some("sec_token_xyz_8888"));
 }
+
+#[tokio::test]
+async fn test_partial_reload_retry_keeps_known_good_empty_on_fresh_instance() {
+    use rekuiper_core::{DeclarativeManifest, MemKvStore};
+    use rekuiper_server::declarative::load_known_good_snapshot;
+
+    let mut state = build_test_state();
+    state.kv = Some(Arc::new(MemKvStore::new()));
+
+    // Rule `r_fail` has duplicate action names so `spawn_rule_task` fails and marks it `error`.
+    let yaml = r#"
+streams:
+  s1: 'CREATE STREAM s1 (v bigint) WITH (TYPE="memory", DATASOURCE="s1")'
+rules:
+  r_fail:
+    sql: "SELECT v FROM s1"
+    actions:
+      - log:
+          name: dup
+      - log:
+          name: dup
+"#;
+    let manifest = DeclarativeManifest::from_str(yaml, "yaml", false).unwrap();
+
+    let r1 = reconcile_manifest_with_watchdog(&state, &manifest, Duration::from_secs(1), 1)
+        .await
+        .unwrap();
+    assert_eq!(r1.status, "partial_error");
+    assert_eq!(r1.rules_failed, 1);
+    assert!(
+        load_known_good_snapshot(&state).await.unwrap().is_none(),
+        "first partial reload on fresh instance must not save known_good"
+    );
+
+    let r2 = reconcile_manifest_with_watchdog(&state, &manifest, Duration::from_secs(1), 1)
+        .await
+        .unwrap();
+    assert_eq!(r2.status, "partial_error");
+    assert_eq!(r2.rules_failed, 1);
+    assert!(
+        load_known_good_snapshot(&state).await.unwrap().is_none(),
+        "retrying partial reload on fresh instance must still keep known_good empty"
+    );
+}

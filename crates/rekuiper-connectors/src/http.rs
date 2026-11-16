@@ -83,53 +83,65 @@ pub struct HttpPullSource {
 impl HttpPullSource {
     pub fn spawn(
         self,
+        cancel_rx: tokio::sync::watch::Receiver<bool>,
+    ) -> tokio::task::JoinHandle<()> {
+        let interval = std::time::Duration::from_millis(self.config.interval.max(1));
+        self.spawn_with_schedule(
+            cancel_rx,
+            crate::scheduling::PollScheduleConfig {
+                interval,
+                ..Default::default()
+            },
+        )
+    }
+
+    pub fn spawn_with_schedule(
+        self,
         mut cancel_rx: tokio::sync::watch::Receiver<bool>,
+        schedule: crate::scheduling::PollScheduleConfig,
     ) -> tokio::task::JoinHandle<()> {
         tokio::spawn(async move {
             let client = reqwest::Client::new();
-            let mut ticker = tokio::time::interval(std::time::Duration::from_millis(
-                self.config.interval.max(1),
-            ));
-            loop {
-                tokio::select! {
-                    _ = ticker.tick() => {
-                        match self.fetch_once(&client).await {
-                            Ok(records) => {
-                                if let Some(ref cb) = self.status_callback {
-                                    cb(&self.config.url, "http", "connected", None);
-                                }
-                                for record in records {
-                                    // All subscribers dropped: shut down cleanly.
-                                    if self.tx.send(record).await.is_err() {
-                                        return;
-                                    }
-                                }
-                            }
-                            Err(e) => {
-                                tracing::warn!(
-                                    "HTTP pull source error for {}: {}",
-                                    self.config.url,
-                                    e
-                                );
-                                if let Some(ref cb) = self.status_callback {
-                                    cb(&self.config.url, "http", "error", Some(&e.to_string()));
-                                }
-                            }
-                        }
-                    }
-                    changed = cancel_rx.changed() => {
-                        match changed {
-                            Ok(_) => {
-                                if *cancel_rx.borrow() {
-                                    return;
-                                }
-                            }
-                            // Cancellation sender dropped: shut down.
-                            Err(_) => return,
-                        }
+            let clock = rekuiper_core::contracts::clock::RealClock::default();
+            let cancellation = rekuiper_core::contracts::clock::DeadlineCancellation::default();
+            let cancel_bridge = cancellation.clone();
+            tokio::spawn(async move {
+                loop {
+                    if *cancel_rx.borrow() || cancel_rx.changed().await.is_err() {
+                        cancel_bridge.cancel();
+                        return;
                     }
                 }
-            }
+            });
+
+            crate::scheduling::run_nonoverlapping_poll_loop(
+                schedule,
+                &clock,
+                &cancellation,
+                |_| async {
+                    match self.fetch_once(&client).await {
+                        Ok(records) => {
+                            if let Some(ref cb) = self.status_callback {
+                                cb(&self.config.url, "http", "connected", None);
+                            }
+                            for record in records {
+                                // All subscribers dropped: shut down cleanly.
+                                if self.tx.send(record).await.is_err() {
+                                    return crate::scheduling::PollIterationOutcome::Stop;
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!("HTTP pull source error for {}: {}", self.config.url, e);
+                            if let Some(ref cb) = self.status_callback {
+                                cb(&self.config.url, "http", "error", Some(&e.to_string()));
+                            }
+                        }
+                    }
+                    crate::scheduling::PollIterationOutcome::Continue
+                },
+            )
+            .await;
         })
     }
 

@@ -1,13 +1,30 @@
+use crate::engine::lookup_runtime::{lookup_runtime_for_backend, LookupQueueConfig, LookupRuntime};
 use crate::engine::{resolve_modbus_table_config, resolve_opcua_table_config, resolve_redis_addr};
 use indexmap::IndexMap;
 use parking_lot::RwLock;
 use rekuiper_connectors::SqlConnectorConfig;
+use rekuiper_core::contracts::clock::{Clock, DeadlineCancellation, RealClock};
 use rekuiper_core::TableManager;
 use rekuiper_sql::eval::RowLookup;
 use rekuiper_sql::{Evaluator, Expr, JoinClause, JoinType, RuleState, SelectStmt};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
+
+fn runtime_for_table(table_manager: &TableManager, target: &str) -> Arc<LookupRuntime> {
+    if let Some(def) = table_manager.get_table(target) {
+        let backend = def
+            .options
+            .get("TYPE")
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_ascii_lowercase())
+            .unwrap_or_else(|| "memory".to_string());
+        let cfg = LookupQueueConfig::from_table_options(&def.options);
+        lookup_runtime_for_backend(&backend, cfg)
+    } else {
+        lookup_runtime_for_backend("memory", LookupQueueConfig::default())
+    }
+}
 
 /// Resolve lookup JOINs for one stream record against table rows.
 ///
@@ -183,6 +200,33 @@ pub(crate) async fn lookup_candidates<R: RowLookup + ?Sized>(
     join: &JoinClause,
     combined: &R,
 ) -> Vec<HashMap<String, Value>> {
+    let runtime = runtime_for_table(table_manager, &join.target);
+    lookup_candidates_with_runtime(
+        table_manager,
+        source_configs,
+        from,
+        from_alias,
+        join,
+        combined,
+        &runtime,
+        &RealClock::default(),
+        &DeadlineCancellation::default(),
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn lookup_candidates_with_runtime<R: RowLookup + ?Sized>(
+    table_manager: &TableManager,
+    source_configs: &Arc<RwLock<HashMap<String, Value>>>,
+    from: &str,
+    from_alias: Option<&str>,
+    join: &JoinClause,
+    combined: &R,
+    lookup_runtime: &LookupRuntime,
+    clock: &dyn Clock,
+    cancellation: &DeadlineCancellation,
+) -> Vec<HashMap<String, Value>> {
     let table_type = table_manager
         .get_table(&join.target)
         .and_then(|def| def.options.get("TYPE").cloned())
@@ -196,7 +240,19 @@ pub(crate) async fn lookup_candidates<R: RowLookup + ?Sized>(
             .and_then(|def| def.options.get("CONF_KEY").cloned())
             .unwrap_or_default();
         let addr = resolve_redis_addr(source_configs, &conf_key);
-        return match rekuiper_connectors::redis_lookup_key(&addr, &key).await {
+        let req_bytes = u64::try_from(key.len()).unwrap_or(u64::MAX).max(1);
+        return match lookup_runtime
+            .execute_one(req_bytes, clock, cancellation, || {
+                let addr = addr.clone();
+                let key = key.clone();
+                async move {
+                    rekuiper_connectors::redis_lookup_key(&addr, &key)
+                        .await
+                        .map_err(|e| e.to_string())
+                }
+            })
+            .await
+        {
             Ok(Some(value)) => vec![lookup_value_to_row(value)],
             Ok(None) => Vec::new(),
             Err(e) => {
@@ -213,7 +269,21 @@ pub(crate) async fn lookup_candidates<R: RowLookup + ?Sized>(
             (Some((url, table)), Some((col, val))) => (url, table, col, val),
             _ => return Vec::new(),
         };
-        return match rekuiper_connectors::sql_lookup_key(&url, &table, &col, &val).await {
+        let req_bytes = u64::try_from(val.len()).unwrap_or(u64::MAX).max(1);
+        return match lookup_runtime
+            .execute_one(req_bytes, clock, cancellation, || {
+                let url = url.clone();
+                let table = table.clone();
+                let col = col.clone();
+                let val = val.clone();
+                async move {
+                    rekuiper_connectors::sql_lookup_key(&url, &table, &col, &val)
+                        .await
+                        .map_err(|e| e.to_string())
+                }
+            })
+            .await
+        {
             Ok(Some(value)) => vec![lookup_value_to_row(value)],
             Ok(None) => Vec::new(),
             Err(e) => {
@@ -226,7 +296,19 @@ pub(crate) async fn lookup_candidates<R: RowLookup + ?Sized>(
         if let Some(config) =
             resolve_modbus_table_config(table_manager, source_configs, &join.target)
         {
-            return match rekuiper_connectors::modbus_read_snapshot(&config).await {
+            let target = join.target.clone();
+            let req_bytes = u64::try_from(target.len()).unwrap_or(u64::MAX).max(1);
+            return match lookup_runtime
+                .execute_one(req_bytes, clock, cancellation, || {
+                    let config = config.clone();
+                    async move {
+                        rekuiper_connectors::modbus_read_snapshot(&config)
+                            .await
+                            .map_err(|e| e.to_string())
+                    }
+                })
+                .await
+            {
                 Ok(row) => vec![row],
                 Err(e) => {
                     tracing::warn!("Modbus lookup on {} failed: {}", join.target, e);
@@ -243,7 +325,19 @@ pub(crate) async fn lookup_candidates<R: RowLookup + ?Sized>(
         if let Some(config) =
             resolve_opcua_table_config(table_manager, source_configs, &join.target)
         {
-            return match rekuiper_connectors::opcua_read_snapshot(&config).await {
+            let target = join.target.clone();
+            let req_bytes = u64::try_from(target.len()).unwrap_or(u64::MAX).max(1);
+            return match lookup_runtime
+                .execute_one(req_bytes, clock, cancellation, || {
+                    let config = config.clone();
+                    async move {
+                        rekuiper_connectors::opcua_read_snapshot(&config)
+                            .await
+                            .map_err(|e| e.to_string())
+                    }
+                })
+                .await
+            {
                 Ok(row) => vec![row],
                 Err(e) => {
                     tracing::warn!("OPC-UA lookup on {} failed: {}", join.target, e);
@@ -262,6 +356,48 @@ pub(crate) async fn apply_lookup_joins(
     select_stmt: &SelectStmt,
     record: &IndexMap<String, Value>,
 ) -> Option<IndexMap<String, Value>> {
+    apply_lookup_joins_internal(
+        table_manager,
+        source_configs,
+        select_stmt,
+        record,
+        None,
+        &RealClock::default(),
+        &DeadlineCancellation::default(),
+    )
+    .await
+}
+
+pub async fn apply_lookup_joins_with_runtime(
+    table_manager: &TableManager,
+    source_configs: &Arc<RwLock<HashMap<String, Value>>>,
+    select_stmt: &SelectStmt,
+    record: &IndexMap<String, Value>,
+    lookup_runtime: &LookupRuntime,
+    clock: &dyn Clock,
+    cancellation: &DeadlineCancellation,
+) -> Option<IndexMap<String, Value>> {
+    apply_lookup_joins_internal(
+        table_manager,
+        source_configs,
+        select_stmt,
+        record,
+        Some(lookup_runtime),
+        clock,
+        cancellation,
+    )
+    .await
+}
+
+async fn apply_lookup_joins_internal(
+    table_manager: &TableManager,
+    source_configs: &Arc<RwLock<HashMap<String, Value>>>,
+    select_stmt: &SelectStmt,
+    record: &IndexMap<String, Value>,
+    override_runtime: Option<&LookupRuntime>,
+    clock: &dyn Clock,
+    cancellation: &DeadlineCancellation,
+) -> Option<IndexMap<String, Value>> {
     if select_stmt.joins.is_empty() {
         return Some(record.clone());
     }
@@ -278,14 +414,25 @@ pub(crate) async fn apply_lookup_joins(
         if matches!(join.join_type, JoinType::Asof | JoinType::LeftAsof) {
             continue;
         }
+        let table_runtime;
+        let runtime = match override_runtime {
+            Some(rt) => rt,
+            None => {
+                table_runtime = runtime_for_table(table_manager, &join.target);
+                &table_runtime
+            }
+        };
         let mut matched: Option<HashMap<String, Value>> = None;
-        for row in lookup_candidates(
+        for row in lookup_candidates_with_runtime(
             table_manager,
             source_configs,
             &select_stmt.from,
             select_stmt.from_alias.as_deref(),
             join,
             &combined,
+            runtime,
+            clock,
+            cancellation,
         )
         .await
         {

@@ -21,11 +21,16 @@ pub fn is_connector_compiled(kind: &str) -> bool {
 pub mod codec;
 pub use codec::*;
 
+pub mod image_paths;
+
 pub mod parquet_io;
 pub use parquet_io::*;
 
 pub mod secrets;
 pub use secrets::*;
+
+pub mod scheduling;
+pub use scheduling::*;
 
 pub mod rabbitmq;
 pub use rabbitmq::*;
@@ -120,6 +125,7 @@ mod tests {
                 partition: 0,
                 key: None,
                 offset_reset: "latest".to_string(),
+                next_offset: None,
             },
         };
         let mut data = HashMap::new();

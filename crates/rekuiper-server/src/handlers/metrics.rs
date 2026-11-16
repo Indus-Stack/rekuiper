@@ -549,6 +549,17 @@ pub async fn prometheus_metrics_handler(State(state): State<AppState>) -> impl I
     out.push_str(&src_exceptions_buf);
     out.push_str(&src_buffer_len_buf);
     out.push_str(&src_conn_status_buf);
+    for src in &known_sources {
+        let bm = state.stream_bus.stream_buffer_metrics(src);
+        out.push_str(&format!(
+            "kuiper_stream_buffer_depth{{stream=\"{}\"}} {}\n",
+            src, bm.depth
+        ));
+        out.push_str(&format!(
+            "kuiper_stream_buffer_dropped_total{{stream=\"{}\"}} {}\n",
+            src, bm.dropped
+        ));
+    }
     out.push_str(&src_latency_buf);
     out.push_str(&src_latency_hist_buf);
 
@@ -582,6 +593,29 @@ pub async fn prometheus_metrics_handler(State(state): State<AppState>) -> impl I
         "rekuiper_declarative_reload_failures_total {}\n",
         reload_failures
     ));
+
+    let lookup_stats = crate::engine::lookup_runtime::all_lookup_runtime_stats();
+    if !lookup_stats.is_empty() {
+        out.push_str("# HELP rekuiper_lookup_requests_total total external lookup requests by backend and outcome\n# TYPE rekuiper_lookup_requests_total counter\n");
+        for (backend, stats) in lookup_stats {
+            let escaped_backend = backend
+                .replace('\\', "\\\\")
+                .replace('"', "\\\"")
+                .replace('\n', "\\n");
+            for (outcome, value) in [
+                ("completed", stats.completed),
+                ("rejected", stats.rejected),
+                ("timed_out", stats.timed_out),
+                ("cancelled", stats.cancelled),
+                ("failed", stats.failed),
+            ] {
+                out.push_str(&format!(
+                    "rekuiper_lookup_requests_total{{backend=\"{}\",outcome=\"{}\"}} {}\n",
+                    escaped_backend, outcome, value
+                ));
+            }
+        }
+    }
 
     (
         StatusCode::OK,

@@ -30,6 +30,13 @@ The test suite verifies the following implemented capabilities:
 | **WASM Runtime Bounding** | Concurrency Pool Limits | Limits concurrent active WASM runtime instances to 64 per module, protecting memory under heavy load. | `crates/rekuiper-core/src/wasm.rs` (`test_wasm_concurrency_bounding`) |
 | **Process Qualification** | Process Harness (`kuiperd`) | Executes standalone child processes under paced traffic, measures crash losses, injects storage faults, and checks recovery criteria. | `crates/rekuiper-server/tests/qualification_harness.rs` (verified) |
 
+### 1.1a Gate 1–2 Runtime Wiring vs. Library Component Status
+
+While default `kuiperd` stream execution stays unchanged (`rule_manager` + SQL/DAG runners), the Gate 1–2 deliverables split into two categories:
+
+- **Wired in `kuiperd` runtime today**: bounded `rate_limit` DAG operator (with default `backpressure` under `buffer` strategy and upfront validation on create/update/validate/start), `BUFFER_FULL_POLICY` stream handling + `kuiper_stream_buffer_*` metrics, schema KV error propagation (`500`), and typed-plan REST/CLI reports with normalized secret redaction.
+- **`component_done` library & failpoint modules (scheduled for Gate 3+ daemon integration)**: `ReliableSqliteStore`, `SqliteOutbox`, `OutboxDispatcher` + `DispatchCoordinator`, `GenerationFence`, `SavepointBundle` + `MigrationRegistry`, `BarrierAligner`, window/join/CEP `StateParticipant` implementations, `ReliableSingleSourceRunner`, `QualifiedPlanRunner`, `ActionBatchAssembler`, `execute_with_retry`, `ReliableInputSender`, `KafkaPositionCodec`, and `KafkaReliablePartitionReader` (`crates/rekuiper-server/tests/ticket_p03_t20.rs`).
+
 ### 1.2 Outstanding Qualification Blockers
 
 The engineering team requires the following test completions before declaring GA:
@@ -112,7 +119,7 @@ To upgrade rekuiper:
 
 ## 4. Automated Reliability Qualification Harness
 
-The test suite includes a process-based qualification harness (`crates/rekuiper-server/tests/qualification_harness.rs`):
+The test suite includes both the process-based qualification harness (`crates/rekuiper-server/tests/qualification_harness.rs`) and in-process storage/recovery failpoint tests (`crates/rekuiper-server/tests/ticket_p03_t20.rs`):
 
 - **Process Isolation**: Launches `kuiperd` child processes with isolated configurations, dedicated storage, and ephemeral ports.
 - **Paced Ingestion**: Streams records at the requested rate (`msg/s`) for the configured duration (`Duration`).

@@ -4,14 +4,14 @@ rekuiper integrates natively with Prometheus to export streaming metrics, operat
 
 ## Prometheus Metrics
 
-rekuiper exposes 32 Prometheus metric families providing comprehensive observability across rules, sources, operators, sinks, and connections:
+rekuiper exposes Prometheus metric families across rules, streams, sources, operators, sinks, dead-letter queues, and connections:
 
 ### Rule & Global Metrics
 - `kuiper_rule_status`: Operational status of each rule (`1` = running, `0` = stopped/paused, `-1` = failed).
 - `kuiper_rule_count`: Total active and paused rules partitioned by `status="running"|"stopped"`.
 - `kuiper_conn_status_gauge`: External connection status partitioned by connection `name`.
 
-### Source Metrics
+### Source & Stream Bus Metrics
 - `kuiper_source_records_in_total`: Total input records received at sources (`rule`, `op`, `op_instance`, `type`).
 - `kuiper_source_records_out_total`: Total output records emitted by sources.
 - `kuiper_source_messages_processed_total`: Total messages processed by sources.
@@ -20,6 +20,8 @@ rekuiper exposes 32 Prometheus metric families providing comprehensive observabi
 - `kuiper_source_connection_status`: Source connection state (`1` = connected, `0` = connecting, `-1` = disconnected).
 - `kuiper_source_process_latency_us`: Source processing latency in microseconds.
 - `kuiper_source_process_latency_us_hist_bucket`, `_hist_count`, `_hist_sum`: Source processing latency histogram buckets and aggregates.
+- `kuiper_stream_buffer_depth`: Current buffered message count in each stream bus partitioned by `stream`.
+- `kuiper_stream_buffer_dropped_total`: Total messages dropped on stream bus overflow partitioned by `stream`.
 
 ### Operator Metrics
 - `kuiper_op_records_in_total`: Total input records received by pipeline operators (`rule`, `op`, `op_instance`, `type`).
@@ -39,6 +41,10 @@ rekuiper exposes 32 Prometheus metric families providing comprehensive observabi
 - `kuiper_sink_connection_status`: Target sink connection state (`1` = connected, `0` = connecting, `-1` = disconnected).
 - `kuiper_sink_process_latency_us`: Sink transmission latency in microseconds.
 - `kuiper_sink_process_latency_us_hist_bucket`, `_hist_count`, `_hist_sum`: Sink processing latency histogram buckets and aggregates.
+
+### Reliability & Reload Metrics
+- `rekuiper_rule_dlq_records_total`: Total records routed to the dead-letter queue partitioned by `stage`.
+- `rekuiper_declarative_reload_failures_total`: Total declarative configuration reload failures.
 
 > [!NOTE]
 > **Compatibility & Cloud-Native Scraping Note: Single-Port Metrics**
