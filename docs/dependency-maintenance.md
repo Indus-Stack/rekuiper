@@ -17,11 +17,11 @@ Track connector-side Arrow/Parquet and rskafka in [issue #66](https://github.com
 
 ### MQTT and TLS
 
-Track RUSTSEC-2026-0049, RUSTSEC-2026-0098, RUSTSEC-2026-0099, RUSTSEC-2026-0104, RUSTSEC-2026-0382 and RUSTSEC-2025-0134 through rumqttc and Rustls. The Rustls transport feature in rumqttc 0.25.1 couples the older WebPKI and PEM dependencies to the selected connector TLS implementation. The resolved workspace uses WebPKI 0.102.8 on the MQTT path and 0.103.17 elsewhere. Recheck both versions and the PEM parser after the next update. Rekuiper configures the MQTT verifier without CRLs. The signed-certificate and trust-chain risks remain applicable when a broker chain meets the advisory conditions. Verify TLS, mutual TLS, session reconnect and native certificate handling before removing exceptions.
+In [issue #68](https://github.com/Indus-Stack/rekuiper/issues/68), track RUSTSEC-2026-0049, RUSTSEC-2026-0098, RUSTSEC-2026-0099, RUSTSEC-2026-0104, RUSTSEC-2026-0382 and RUSTSEC-2025-0134 through rumqttc and Rustls. The Rustls transport feature in rumqttc 0.25.1 couples the older WebPKI and PEM dependencies to the selected connector TLS implementation. The resolved workspace uses WebPKI 0.102.8 on the MQTT path and 0.103.17 elsewhere. Recheck both versions and the PEM parser after the next update. Rekuiper configures the MQTT verifier without CRLs. The signed-certificate and trust-chain risks remain applicable when a broker chain meets the advisory conditions. Verify TLS, mutual TLS, session reconnect and native certificate handling before removing exceptions.
 
 ### Kafka and compression
 
-Track RUSTSEC-2026-0391, RUSTSEC-2026-0398 and RUSTSEC-2026-0403 through rskafka 0.6.0 and Zstd 0.13. Preserve codec support and verify compressed producer and consumer traffic before accepting a replacement. Re-evaluate when the Kafka client can resolve the patched compression stack.
+In [issue #68](https://github.com/Indus-Stack/rekuiper/issues/68), track RUSTSEC-2026-0391, RUSTSEC-2026-0398 and RUSTSEC-2026-0403 through rskafka 0.6.0 and Zstd 0.13. Preserve codec support and verify compressed producer and consumer traffic before accepting a replacement. Re-evaluate when the Kafka client can resolve the patched compression stack.
 
 ### Build and executor
 

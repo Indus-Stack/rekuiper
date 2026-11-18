@@ -1,6 +1,6 @@
 # Release Notes - rekuiper v1.0.0-rc6
 
-- Rekuiper now uses Jiff for SQL date and timezone handling and for timestamp parsing. SQL signatures and persisted timestamp units are unchanged.
+- Rekuiper now uses Jiff for SQL date and timezone handling and for timestamp parsing. SQL signatures and persisted timestamp units are unchanged. Calendar operations use Jiff's supported years, from -9999 through 9999.
 - SQLx 0.9.1 upgrades bundled SQLite to 3.54.1. Arrow/Parquet 60.1 removes Thrift, Lapin 4 removes instant, and Wasmi 1.1 and Boa 0.22 remove paste. Release archives include the SQLite version reported by the packaged daemon and the resolved Cargo dependencies. Docker images include SPDX SBOM attestations.
 - The standalone core/SQL advisory check runs without workspace exceptions. Arrow/Parquet and Kafka can still bring Chrono into connector builds. Owners, expiry dates and remaining upstream blockers are documented in [Dependency maintenance](docs/dependency-maintenance.md).
 - Downstream users of indramqtt should update both the Rekuiper core pin and the vendored SQL copy, then verify the resolved graph before removing advisory exceptions.
