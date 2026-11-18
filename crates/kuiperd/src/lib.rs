@@ -7,6 +7,7 @@ static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 use anyhow::Result;
 use clap::Parser;
 use rekuiper_conf::PathConfig;
+use sqlx::{Connection, SqliteConnection};
 
 #[derive(Parser, Debug)]
 #[command(name = "rule-engine")]
@@ -25,6 +26,10 @@ pub struct Args {
     /// Scaffold default configuration files into the target etc directory and exit
     #[arg(long)]
     pub init: bool,
+
+    /// Print the linked SQLite version and exit
+    #[arg(long, exclusive = true)]
+    pub sqlite_version: bool,
 
     /// Path of data dir
     #[arg(long, default_value = "data")]
@@ -329,6 +334,14 @@ pub fn scaffold_config(target_dir: &str, force: bool) -> Result<()> {
 
 pub async fn run_daemon() -> Result<()> {
     let args = Args::parse();
+    if args.sqlite_version {
+        let mut connection = SqliteConnection::connect("sqlite::memory:").await?;
+        let version: String = sqlx::query_scalar("SELECT sqlite_version()")
+            .fetch_one(&mut connection)
+            .await?;
+        println!("{version}");
+        return Ok(());
+    }
 
     if let Some(Commands::Init { dir, force }) = args.command {
         return scaffold_config(&dir, force);
