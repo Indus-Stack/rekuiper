@@ -136,7 +136,13 @@ def consumer_audit(root, offline):
         shutil.copyfile(root / "Cargo.lock", fixture / "Cargo.lock")
         (fixture / "deny.toml").write_text('[advisories]\nyanked = "deny"\nunmaintained = "all"\nignore = []\n', encoding="utf-8")
         check_chrono_edges(metadata(fixture, locked=False), consumer=True)
-        return audit(fixture, offline)
+        status = audit(fixture, offline)
+        if status:
+            return status
+        return subprocess.call(
+            ["cargo", "check", "--locked", "--target-dir", str(root / "target")],
+            cwd=fixture,
+        )
 
 
 def main():
