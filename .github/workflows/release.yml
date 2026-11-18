@@ -49,6 +49,15 @@ jobs:
         with:
           components: clippy, rustfmt
 
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny
+
+      - name: Check release dependency policy
+        run: |
+          python3 .github/scripts/dependency-audit.py workspace
+          python3 .github/scripts/dependency-audit.py consumer
+
       - name: Formatting & Lint Checks
         run: |
           cargo fmt --all -- --check
@@ -122,7 +131,7 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Build Release Binaries
-        run: cargo build --release --target ${{ matrix.target }}
+        run: cargo build --locked --release -p kuiperd -p rekuiper-cli --target ${{ matrix.target }}
 
       - name: Package Release Assets
         shell: bash
@@ -130,6 +139,11 @@ jobs:
           TAG_NAME="${{ inputs.tag || github.ref_name }}"
           PKG_NAME="rekuiper-${TAG_NAME}-${{ matrix.target }}"
           mkdir -p "dist/${PKG_NAME}/bin" "dist/${PKG_NAME}/etc"
+          cargo tree --locked --target "${{ matrix.target }}" -p kuiperd -p rekuiper-cli -e normal,build --prefix depth > "dist/${PKG_NAME}/cargo-dependencies.txt"
+          daemon="target/${{ matrix.target }}/release/kuiperd"
+          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then daemon="$daemon.exe"; fi
+          "$daemon" --sqlite-version > "dist/${PKG_NAME}/sqlite-version.txt"
+          python -c 'import sys; assert tuple(map(int, open(sys.argv[1]).read().strip().split("."))) >= (3, 54, 0)' "dist/${PKG_NAME}/sqlite-version.txt"
 
           if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
             cp "target/${{ matrix.target }}/release/kuiperd.exe" "dist/${PKG_NAME}/bin/"
@@ -200,6 +214,7 @@ jobs:
           context: .
           file: ./deploy/docker/Dockerfile
           push: true
+          sbom: true
           tags: ${{ steps.docker_meta.outputs.tags }}
 
       - name: Update Docker Hub Description

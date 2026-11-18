@@ -40,26 +40,14 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Check RustSec Advisories
-        uses: EmbarkStudios/cargo-deny-action@v2
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
         with:
-          command: check advisories
-
-      - name: Verify Downstream Core Crates Zero-Ignore Isolation
-        run: |
-          if cargo tree -p rekuiper-core -p rekuiper-sql -i rustls@0.21.12 2>/dev/null; then
-            echo "ERROR: rustls 0.21.12 found in core crates"
-            exit 1
-          fi
-          if cargo tree -p rekuiper-core -p rekuiper-sql -i unsafe-libyaml 2>/dev/null; then
-            echo "ERROR: unsafe-libyaml found in core crates"
-            exit 1
-          fi
-          if cargo tree -p rekuiper-core -p rekuiper-sql -i rustls-webpki@0.102.8 2>/dev/null; then
-            echo "ERROR: rustls-webpki 0.102.8 found in core crates"
-            exit 1
-          fi
-          echo "Verified: rekuiper-core and rekuiper-sql are completely free of ignored dependencies."
+          tool: cargo-deny
+      - name: Check workspace advisories and dependency policy
+        run: python3 .github/scripts/dependency-audit.py workspace
+      - name: Check isolated core and SQL consumer
+        run: python3 .github/scripts/dependency-audit.py consumer
 
   test:
     name: Test (${{ matrix.os }})
@@ -119,6 +107,27 @@ jobs:
         with:
           container-name: mosquitto-ci-broker
 
+  rabbitmq-integration:
+    name: RabbitMQ Broker Integration (Linux)
+    runs-on: ubuntu-latest
+    services:
+      rabbitmq:
+        image: rabbitmq:4.2
+        ports:
+          - 5672/tcp
+        options: >-
+          --health-cmd "rabbitmq-diagnostics -q ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-rust
+      - name: Run live publish and consume test
+        env:
+          TEST_RABBITMQ_URL: amqp://guest:guest@127.0.0.1:${{ job.services.rabbitmq.ports[5672] }}/%2f
+        run: cargo test --locked -p rekuiper-connectors --lib test_rabbitmq_live_cloudamqp_sink_and_source
+
   docker-validate:
     name: Validate Docker Configuration
     runs-on: ubuntu-latest
@@ -138,8 +147,17 @@ jobs:
           context: .
           file: ./deploy/docker/Dockerfile
           push: false
+          load: true
+          tags: rekuiper:ci-smoke
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Test packaged named timezone conversion
+        run: |
+          container=$(docker run --detach --rm -p 127.0.0.1::9081 rekuiper:ci-smoke)
+          trap 'docker logs "$container"; docker stop "$container"' EXIT
+          port=$(docker port "$container" 9081/tcp | cut -d: -f2)
+          python3 .github/scripts/docker-timezone-smoke.py "http://127.0.0.1:$port"
 
   package-verify:
     name: Verify Crate Packaging

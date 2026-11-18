@@ -18,7 +18,7 @@ COPY crates ./crates
 COPY etc ./etc
 
 # Build release binaries in parallel
-RUN cargo build --release -j6
+RUN cargo build --locked --release -j6
 
 # ==============================================================================
 # Runtime Stage: Ultra-lightweight secure Alpine runtime
@@ -52,6 +52,10 @@ COPY --from=builder --chown=${KUIPER_USER}:${KUIPER_USER} /usr/src/rekuiper/targ
 
 # Copy default configurations
 COPY --chown=${KUIPER_USER}:${KUIPER_USER} etc/ /kuiper/etc/
+
+# Record and verify the SQLite library actually linked into each image.
+RUN /kuiper/bin/rekuiperd --sqlite-version > /kuiper/sqlite-version.txt && \
+    awk -F. '$1 > 3 || ($1 == 3 && $2 >= 54) { patched = 1 } END { exit !patched }' /kuiper/sqlite-version.txt
 
 USER ${KUIPER_USER}
 
