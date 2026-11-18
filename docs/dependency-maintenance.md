@@ -17,7 +17,7 @@ Track connector-side Arrow/Parquet and rskafka in [issue #66](https://github.com
 
 ### MQTT and TLS
 
-Track RUSTSEC-2026-0049, RUSTSEC-2026-0098, RUSTSEC-2026-0099, RUSTSEC-2026-0104, RUSTSEC-2026-0382 and RUSTSEC-2025-0134 through rumqttc and Rustls. The Rustls transport feature in rumqttc 0.25.1 couples the older WebPKI and PEM dependencies to the selected connector TLS implementation. Check both WebPKI versions and the PEM parser when evaluating the next update. Verify TLS, mutual TLS, session reconnect and native certificate handling before removing exceptions.
+Track RUSTSEC-2026-0049, RUSTSEC-2026-0098, RUSTSEC-2026-0099, RUSTSEC-2026-0104, RUSTSEC-2026-0382 and RUSTSEC-2025-0134 through rumqttc and Rustls. The Rustls transport feature in rumqttc 0.25.1 couples the older WebPKI and PEM dependencies to the selected connector TLS implementation. The resolved workspace uses WebPKI 0.102.8 on the MQTT path and 0.103.17 elsewhere. Recheck both versions and the PEM parser after the next update. Rekuiper configures the MQTT verifier without CRLs. The signed-certificate and trust-chain risks remain applicable when a broker chain meets the advisory conditions. Verify TLS, mutual TLS, session reconnect and native certificate handling before removing exceptions.
 
 ### Kafka and compression
 
