@@ -1,7 +1,11 @@
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use futures::StreamExt;
-use lapin::{options::*, types::FieldTable, BasicProperties, Connection, ConnectionProperties};
+use lapin::{
+    options::*,
+    types::{FieldTable, MAX_SHORT_STRING_LENGTH},
+    BasicProperties, Connection, ConnectionProperties,
+};
 use rekuiper_core::model::StreamRecord;
 use rekuiper_core::StreamSender;
 use serde::{Deserialize, Serialize};
@@ -123,6 +127,20 @@ impl Default for RabbitMqConfig {
 }
 
 impl RabbitMqConfig {
+    fn validate_amqp_names(&self) -> Result<()> {
+        for (label, value) in [
+            ("queue", &self.queue),
+            ("exchange", &self.exchange),
+            ("routing key", &self.routing_key),
+        ] {
+            anyhow::ensure!(
+                value.len() <= MAX_SHORT_STRING_LENGTH,
+                "RabbitMQ {label} exceeds {MAX_SHORT_STRING_LENGTH} bytes"
+            );
+        }
+        Ok(())
+    }
+
     /// Dynamically resolve any secrets (e.g. `vault://` or `env://`) in server URL, username, or password.
     pub async fn resolve_secrets(&mut self, resolver: &SecretResolver) -> Result<()> {
         self.server = resolver.resolve(&self.server).await?;
@@ -178,6 +196,7 @@ impl RabbitMqSource {
     /// is supported by the live consumer.
     pub fn try_new(config: RabbitMqConfig, tx: StreamSender) -> Result<Self> {
         config.validate_source_ack_mode()?;
+        config.validate_amqp_names()?;
         Ok(Self { config, tx })
     }
 
@@ -187,7 +206,11 @@ impl RabbitMqSource {
         mut cancel_rx: tokio::sync::watch::Receiver<bool>,
     ) -> tokio::task::JoinHandle<()> {
         tokio::spawn(async move {
-            if let Err(err) = self.config.validate_source_ack_mode() {
+            if let Err(err) = self
+                .config
+                .validate_source_ack_mode()
+                .and_then(|()| self.config.validate_amqp_names())
+            {
                 tracing::error!("RabbitMQ source rejected: {err}");
                 return;
             }
@@ -226,7 +249,11 @@ impl RabbitMqSource {
                     passive: false,
                 };
                 match channel
-                    .queue_declare(&self.config.queue, opts, FieldTable::default())
+                    .queue_declare(
+                        self.config.queue.as_str().into(),
+                        opts,
+                        FieldTable::default(),
+                    )
                     .await
                 {
                     Ok(q) => q.name().to_string(),
@@ -247,9 +274,9 @@ impl RabbitMqSource {
             if !self.config.exchange.is_empty() && !queue_name.is_empty() {
                 let _ = channel
                     .queue_bind(
-                        &queue_name,
-                        &self.config.exchange,
-                        &self.config.routing_key,
+                        queue_name.as_str().into(),
+                        self.config.exchange.as_str().into(),
+                        self.config.routing_key.as_str().into(),
                         QueueBindOptions::default(),
                         FieldTable::default(),
                     )
@@ -259,8 +286,8 @@ impl RabbitMqSource {
             let auto_ack = self.config.auto_ack;
             let mut consumer = match channel
                 .basic_consume(
-                    &queue_name,
-                    "rekuiper_consumer",
+                    queue_name.as_str().into(),
+                    "rekuiper_consumer".into(),
                     BasicConsumeOptions {
                         no_ack: auto_ack,
                         ..Default::default()
@@ -385,7 +412,7 @@ impl RabbitMqSink {
                 passive: false,
             };
             let _ = channel
-                .queue_declare(&cfg.queue, opts, FieldTable::default())
+                .queue_declare(cfg.queue.as_str().into(), opts, FieldTable::default())
                 .await;
         }
 
@@ -394,6 +421,7 @@ impl RabbitMqSink {
     }
 
     pub async fn send_raw(&self, payload: &[u8]) -> Result<()> {
+        self.config.validate_amqp_names()?;
         let channel = self.get_or_connect().await?;
 
         let routing_key = if self.config.routing_key.is_empty() && !self.config.queue.is_empty() {
@@ -404,8 +432,8 @@ impl RabbitMqSink {
 
         let confirmation = channel
             .basic_publish(
-                &self.config.exchange,
-                routing_key,
+                self.config.exchange.as_str().into(),
+                routing_key.as_str().into(),
                 BasicPublishOptions::default(),
                 payload,
                 BasicProperties::default(),
@@ -415,10 +443,7 @@ impl RabbitMqSink {
             .await
             .context("Failed to confirm RabbitMQ publish")?;
 
-        if matches!(
-            confirmation,
-            lapin::publisher_confirm::Confirmation::Nack(_)
-        ) {
+        if confirmation.is_nack() {
             anyhow::bail!("RabbitMQ broker negatively acknowledged (nacked) message publish");
         }
 
@@ -761,6 +786,7 @@ mod tests {
             routing_key: queue_id.clone(),
             durable: false,
             auto_delete: true,
+            prefetch_count: 1,
             ..Default::default()
         };
 
@@ -796,6 +822,19 @@ mod tests {
             received.data.get("temperature").and_then(|v| v.as_f64()),
             Some(88.5)
         );
+        // The second delivery needs both a fresh publish channel and an ACK
+        // for the first delivery, since the consumer prefetch limit is one.
+        sink.get_or_connect()
+            .await
+            .expect("existing publish channel")
+            .close(200, "reconnect test".into())
+            .await
+            .expect("close publish channel");
+        sink.send(&record).await.expect("publish after reconnect");
+        tokio::time::timeout(tokio::time::Duration::from_secs(6), rx.recv())
+            .await
+            .expect("manual ACK must permit another delivery")
+            .expect("channel closed");
         let _ = cancel_tx.send(true);
         let _ = handle.await;
     }
