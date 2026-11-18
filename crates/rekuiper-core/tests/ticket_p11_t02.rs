@@ -153,7 +153,7 @@ async fn p11_t02_rejects_generations_above_sqlite_i64_max() {
     let dir = std::env::temp_dir().join(format!(
         "rekuiper_p11_t02_{}_{}",
         std::process::id(),
-        chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
+        i64::try_from(jiff::Timestamp::now().as_nanosecond()).unwrap_or(0)
     ));
     std::fs::create_dir_all(&dir).unwrap();
     let db_path = dir.join("catalog.db");

@@ -364,7 +364,7 @@ impl Evaluator {
                 .first()
                 .and_then(|r| r.get("__window_end__").or_else(|| r.get("window_end")))
                 .and_then(|v| v.as_i64())
-                .unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
+                .unwrap_or_else(|| rekuiper_core::contracts::clock::wall_time_millis());
             RuleState::insert_bounded(&mut guard, key.to_string(), Value::from(window_end));
             Value::from(prev)
         } else {
@@ -385,7 +385,7 @@ impl Evaluator {
             .first()
             .and_then(|r| r.get("__window_end__").or_else(|| r.get("window_end")))
             .and_then(|v| v.as_i64())
-            .unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
+            .unwrap_or_else(|| rekuiper_core::contracts::clock::wall_time_millis());
         LAST_TIME.store(window_end, std::sync::atomic::Ordering::Relaxed);
         Value::from(prev)
     }

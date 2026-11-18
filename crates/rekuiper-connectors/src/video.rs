@@ -1,6 +1,5 @@
 use anyhow::Result;
 use base64::Engine;
-use chrono::Utc;
 use rekuiper_core::model::StreamRecord;
 use rekuiper_core::StreamSender;
 use serde::{Deserialize, Serialize};
@@ -385,7 +384,7 @@ impl VideoSource {
         record_data.insert("format".to_string(), Value::String(codec.to_string()));
         record_data.insert(
             "ts".to_string(),
-            Value::Number(Utc::now().timestamp_millis().into()),
+            Value::Number(rekuiper_core::contracts::clock::wall_time_millis().into()),
         );
 
         let mut rec = StreamRecord::new(record_data);

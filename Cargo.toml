@@ -46,7 +46,7 @@ async-trait = "0.1"
 reqwest = { version = "0.12", features = ["json"] }
 tower = "0.4"
 tower-http = { version = "0.5", features = ["cors", "trace"] }
-chrono = { version = "0.4", features = ["serde"] }
+jiff = { version = "0.2.37", features = ["tzdb-bundle-always"] }
 sysinfo = "0.30"
 regex = "1.10"
 parking_lot = "0.12"

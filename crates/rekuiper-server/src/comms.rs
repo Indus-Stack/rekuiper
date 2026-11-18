@@ -164,7 +164,7 @@ impl CommsHub {
             source: source.into(),
             message: message.into(),
             level: level.into(),
-            timestamp: chrono::Utc::now().timestamp(),
+            timestamp: jiff::Timestamp::now().as_second(),
             details,
         });
     }

@@ -137,15 +137,15 @@ pub fn maybe_trace_record<M1: serde::Serialize + ?Sized, M2: serde::Serialize + 
     rule_id: &str,
     input_data: &M1,
     output_data: Option<&M2>,
-    start_dt: Option<chrono::DateTime<chrono::Utc>>,
+    start_dt: Option<jiff::Timestamp>,
 ) {
     if !trace_mgr.is_tracing(rule_id) {
         return;
     }
-    let end_dt = chrono::Utc::now();
+    let end_dt = jiff::Timestamp::now();
     let start_dt = start_dt.unwrap_or(end_dt);
-    let start_time = start_dt.to_rfc3339();
-    let end_time = end_dt.to_rfc3339();
+    let start_time = rekuiper_core::contracts::clock::format_utc_rfc3339(start_dt);
+    let end_time = rekuiper_core::contracts::clock::format_utc_rfc3339(end_dt);
     let trace_id = format!("{:032x}", uuid::Uuid::new_v4().as_u128());
     let root_span_id = format!("{:016x}", uuid::Uuid::new_v4().as_u128() >> 64);
     let decoder_span_id = format!("{:016x}", uuid::Uuid::new_v4().as_u128() >> 64);
@@ -245,7 +245,7 @@ impl TaskManager {
 
     pub fn register_task(&self, id: String) -> tokio::sync::watch::Receiver<bool> {
         let (tx, rx) = tokio::sync::watch::channel(false);
-        let now = chrono::Utc::now().timestamp_millis();
+        let now = rekuiper_core::contracts::clock::wall_time_millis();
         self.tasks.write().insert(
             id.clone(),
             TaskInfo {
@@ -265,7 +265,7 @@ impl TaskManager {
         if let Some(t) = tasks.get_mut(id) {
             t.status = status.to_string();
             t.message = message.to_string();
-            t.updated_timestamp = chrono::Utc::now().timestamp_millis();
+            t.updated_timestamp = rekuiper_core::contracts::clock::wall_time_millis();
         }
     }
 
@@ -281,7 +281,7 @@ impl TaskManager {
         if let Some(t) = tasks.get_mut(id) {
             t.status = "cancelled".to_string();
             t.message = "task cancelled".to_string();
-            t.updated_timestamp = chrono::Utc::now().timestamp_millis();
+            t.updated_timestamp = rekuiper_core::contracts::clock::wall_time_millis();
             true
         } else {
             false
@@ -806,7 +806,7 @@ pub fn verify_jwt_raw(token: &str, public_key_der: &[u8]) -> Result<(), &'static
     let payload: serde_json::Value =
         serde_json::from_slice(&payload_bytes).map_err(|_| "Invalid JWT format\n")?;
     if let Some(exp) = payload.get("exp").and_then(|v| v.as_i64()) {
-        if chrono::Utc::now().timestamp() > exp {
+        if jiff::Timestamp::now().as_second() > exp {
             return Err("Token has expired\n");
         }
     }

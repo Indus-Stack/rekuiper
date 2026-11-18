@@ -167,7 +167,7 @@ impl KafkaSink {
             key: key_bytes,
             value: Some(payload),
             headers: std::collections::BTreeMap::new(),
-            timestamp: chrono::Utc::now(),
+            timestamp: std::time::SystemTime::now().into(),
         };
         if let Err(e) = partition_client
             .produce(vec![kafka_record], Compression::NoCompression)

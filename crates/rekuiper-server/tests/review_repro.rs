@@ -449,7 +449,7 @@ async fn repro_strict_generation_retention_and_corrupt_generation_errors() {
     let unique = format!(
         "rekuiper_review_repro_{}_{}.db",
         std::process::id(),
-        chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
+        i64::try_from(jiff::Timestamp::now().as_nanosecond()).unwrap_or(0)
     );
     let db_path = std::env::temp_dir().join(unique);
     let _ = std::fs::remove_file(&db_path);
@@ -1918,7 +1918,7 @@ async fn repro_expired_outbox_worker_cannot_settle_reassigned_effect() {
     let unique = format!(
         "rekuiper_outbox_lease_{}_{}.db",
         std::process::id(),
-        chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
+        i64::try_from(jiff::Timestamp::now().as_nanosecond()).unwrap_or(0)
     );
     let db_path = std::env::temp_dir().join(unique);
     let _ = std::fs::remove_file(&db_path);
@@ -2899,7 +2899,7 @@ async fn repro_restore_rejects_conflicting_cursor_generation_in_metadata() {
     let dir = std::env::temp_dir().join(format!(
         "rekuiper_restore_pos_gen_{}_{}",
         std::process::id(),
-        chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
+        i64::try_from(jiff::Timestamp::now().as_nanosecond()).unwrap_or(0)
     ));
     std::fs::create_dir_all(&dir).unwrap();
     let db_path = dir.join("state.db");

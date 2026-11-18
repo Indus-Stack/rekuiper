@@ -108,6 +108,35 @@ fn wall_millis(value: i128) -> i64 {
     value.clamp(i128::from(i64::MIN), i128::from(i64::MAX)) as i64
 }
 
+/// Returns the current wall-clock time in signed Unix epoch milliseconds.
+pub fn wall_time_millis() -> i64 {
+    match SystemTime::now().duration_since(UNIX_EPOCH) {
+        Ok(duration) => wall_millis(duration.as_millis() as i128),
+        Err(error) => wall_millis(-(error.duration().as_nanos().div_ceil(1_000_000) as i128)),
+    }
+}
+
+/// Converts a timestamp to milliseconds, rounding pre-epoch fractions down.
+pub fn timestamp_millis(timestamp: jiff::Timestamp) -> i64 {
+    wall_millis(timestamp.as_nanosecond().div_euclid(1_000_000))
+}
+
+/// Formats a UTC timestamp using the precision and numeric offset of the
+/// trace and diagnostic RFC 3339 wire format.
+pub fn format_utc_rfc3339(timestamp: jiff::Timestamp) -> String {
+    let nanos = timestamp.subsec_nanosecond();
+    let pattern = if nanos == 0 {
+        "%Y-%m-%dT%H:%M:%S%:z"
+    } else if nanos % 1_000_000 == 0 {
+        "%Y-%m-%dT%H:%M:%S%.3f%:z"
+    } else if nanos % 1_000 == 0 {
+        "%Y-%m-%dT%H:%M:%S%.6f%:z"
+    } else {
+        "%Y-%m-%dT%H:%M:%S%.9f%:z"
+    };
+    timestamp.strftime(pattern).to_string()
+}
+
 /// Production clock with a process-local monotonic origin.
 #[derive(Debug, Clone)]
 pub struct RealClock {
@@ -125,12 +154,8 @@ impl Default for RealClock {
 #[async_trait]
 impl Clock for RealClock {
     fn now(&self) -> ClockReading {
-        let wall = match SystemTime::now().duration_since(UNIX_EPOCH) {
-            Ok(duration) => duration.as_millis() as i128,
-            Err(error) => -(error.duration().as_nanos().div_ceil(1_000_000) as i128),
-        };
         ClockReading {
-            wall_millis: wall_millis(wall),
+            wall_millis: wall_time_millis(),
             elapsed: self.origin.elapsed(),
         }
     }

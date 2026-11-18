@@ -61,7 +61,7 @@ fn unique(prefix: &str) -> String {
         "{}{}_{}",
         prefix,
         std::process::id(),
-        chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
+        i64::try_from(jiff::Timestamp::now().as_nanosecond()).unwrap_or(0)
     )
 }
 

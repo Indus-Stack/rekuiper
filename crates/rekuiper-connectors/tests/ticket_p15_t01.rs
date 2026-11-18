@@ -1,5 +1,4 @@
 use base64::Engine as _;
-use chrono::{TimeZone, Utc};
 use rekuiper_connectors::kafka::{decode_kafka_record_with_meta, KAFKA_METADATA_CAPABILITIES};
 use rskafka::record::{Record, RecordAndOffset};
 use serde_json::json;
@@ -18,14 +17,14 @@ fn p15_t01_kafka_metadata_boundary_binary_key_and_multirow_sharing() {
     headers.insert("raw_hdr".to_owned(), vec![0xff, 0x00, 0xfe]);
 
     let binary_key = vec![0x00, 0xfe, 0xff, 0x42];
-    let ts = Utc.timestamp_millis_opt(1_700_000_000_123).unwrap();
+    let ts = std::time::UNIX_EPOCH + std::time::Duration::from_millis(1_700_000_000_123);
 
     let rec = RecordAndOffset {
         record: Record {
             key: Some(binary_key.clone()),
             value: Some(br#"[{"temp": 21}, {"temp": 22}]"#.to_vec()),
             headers,
-            timestamp: ts,
+            timestamp: ts.into(),
         },
         offset: 42,
     };

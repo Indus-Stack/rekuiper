@@ -45,6 +45,23 @@ const T0: i64 = 1_704_067_200_000;
 // ---------------------------------------------------------------------------
 
 #[test]
+fn datetime_migration_preserves_epoch_precision_and_dst_conversion() {
+    for (sql, expected) in [
+        ("SELECT date_parse('1969-12-31 23:59:59.9995', '%Y-%m-%d %H:%M:%S%.f') AS v FROM demo", json!(-1)),
+        ("SELECT format_date('2024-01-01T00:00:00.12Z', '%f') AS v FROM demo", json!("120000000")),
+        ("SELECT format_date('2024-01-01T00:00:00.12+01:00', 'yyyy-MM-dd HH:mm:ss.SSS') AS v FROM demo", json!("2023-12-31 23:00:00.120")),
+        ("SELECT convert_tz('2024-03-10T06:59:59Z', 'America/New_York') AS v FROM demo", json!("2024-03-10 01:59:59")),
+        ("SELECT convert_tz('2024-03-10T07:00:00Z', 'America/New_York') AS v FROM demo", json!("2024-03-10 03:00:00")),
+        ("SELECT convert_tz(0, 'Not/AZone') AS v FROM demo", Value::Null),
+        ("SELECT format_date('2024-01-01T00:00:00.12Z', '%+') AS v FROM demo", json!("2024-01-01T00:00:00.120+00:00")),
+        ("SELECT date_parse('2024-01-01T01:00:00+01:00', '%+') AS v FROM demo", json!(T0)),
+        ("SELECT format_date(1704067200000, '%c') AS v FROM demo", json!("Mon Jan  1 00:00:00 2024")),
+    ] {
+        assert_eq!(eval_one(sql, &empty()), expected, "{sql}");
+    }
+}
+
+#[test]
 fn test_datetime_now() {
     let v = eval_one("SELECT now() AS v FROM demo", &empty());
     let s = v.as_str().expect("now() returns a string");
@@ -844,9 +861,9 @@ fn test_system_and_meta_functions() {
     }
 
     // tstamp(): epoch millis near now.
-    let before = chrono::Utc::now().timestamp_millis();
+    let before = rekuiper_core::contracts::clock::wall_time_millis();
     let v = eval_one("SELECT tstamp() AS v FROM demo", &empty());
-    let after = chrono::Utc::now().timestamp_millis();
+    let after = rekuiper_core::contracts::clock::wall_time_millis();
     let t = v.as_i64().expect("tstamp() returns an integer");
     assert!(
         t > 0 && t >= before && t <= after,

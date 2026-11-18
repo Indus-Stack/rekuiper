@@ -1911,7 +1911,9 @@ impl Evaluator {
             if let Some(Value::Number(n)) = state.state.read().get("__rule_start__") {
                 return Ok(Value::Number(n.clone()));
             }
-            return Ok(Value::from(chrono::Utc::now().timestamp_millis()));
+            return Ok(Value::from(
+                rekuiper_core::contracts::clock::wall_time_millis(),
+            ));
         }
         // Contextual system functions resolve against the record itself.
         if let Some(v) = Self::eval_context_call(name, args, record) {
@@ -3084,18 +3086,18 @@ impl Evaluator {
                 Some(v) => v.is_null(),
                 None => true,
             }),
-            "tstamp" => serde_json::json!(chrono::Utc::now().timestamp_millis()),
+            "tstamp" => serde_json::json!(rekuiper_core::contracts::clock::wall_time_millis()),
             "uuid" | "newuuid" => Self::func_uuid(args),
             // Contextual functions without record context: static defaults.
             // (With a record in scope, `eval_context_call` resolves them.)
             "window_start" | "window_end" => Value::Null,
             "rule_id" => Value::String(String::new()),
-            "rule_start" => serde_json::json!(chrono::Utc::now().timestamp_millis()),
+            "rule_start" => serde_json::json!(rekuiper_core::contracts::clock::wall_time_millis()),
             "last_hit_count" | "last_hit_time" => Value::from(0),
             "last_agg_hit_count" | "last_agg_hit_time" => Value::from(0),
             "get_keyed_state" => Self::func_get_keyed_state(args),
             "meta" | "mqtt" => Value::Null,
-            "event_time" => serde_json::json!(chrono::Utc::now().timestamp_millis()),
+            "event_time" => serde_json::json!(rekuiper_core::contracts::clock::wall_time_millis()),
             // ---- Registered UDFs (anything not built in) ----
             _ => Self::call_global_udf(name, args),
         }
@@ -3234,7 +3236,7 @@ impl Evaluator {
                 }
             }
         }
-        serde_json::json!(chrono::Utc::now().timestamp_millis())
+        serde_json::json!(rekuiper_core::contracts::clock::wall_time_millis())
     }
 
     fn resolve_rule_id<R: RowLookup + ?Sized>(record: &R) -> Value {
@@ -3247,7 +3249,7 @@ impl Evaluator {
     fn resolve_rule_start<R: RowLookup + ?Sized>(record: &R) -> Value {
         match record.get("__rule_start__") {
             Some(Value::Number(n)) => Value::Number(n.clone()),
-            _ => Value::from(chrono::Utc::now().timestamp_millis()),
+            _ => Value::from(rekuiper_core::contracts::clock::wall_time_millis()),
         }
     }
 

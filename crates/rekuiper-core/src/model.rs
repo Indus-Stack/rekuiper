@@ -510,7 +510,7 @@ pub struct StreamRecord {
 impl StreamRecord {
     pub fn new(data: impl Into<SharedMap>) -> Self {
         Self {
-            timestamp: chrono::Utc::now().timestamp_millis(),
+            timestamp: crate::contracts::clock::wall_time_millis(),
             data: data.into(),
             meta: None,
         }
@@ -518,7 +518,7 @@ impl StreamRecord {
 
     pub fn from_hashmap(data: HashMap<String, Value>) -> Self {
         Self {
-            timestamp: chrono::Utc::now().timestamp_millis(),
+            timestamp: crate::contracts::clock::wall_time_millis(),
             data: SharedMap::from_hashmap(data),
             meta: None,
         }
@@ -526,7 +526,7 @@ impl StreamRecord {
 
     pub fn from_shared(data: SharedMap) -> Self {
         Self {
-            timestamp: chrono::Utc::now().timestamp_millis(),
+            timestamp: crate::contracts::clock::wall_time_millis(),
             data,
             meta: None,
         }
@@ -1290,7 +1290,7 @@ impl Default for RuleStatus {
             status: "running".to_string(),
             message: "".to_string(),
             last_exception: "".to_string(),
-            last_start_timestamp: chrono::Utc::now().timestamp_millis(),
+            last_start_timestamp: crate::contracts::clock::wall_time_millis(),
             last_stop_timestamp: 0,
             next_start_timestamp: 0,
             source_records_in_total: 0,
@@ -1400,33 +1400,33 @@ pub fn coerce_value_to_type(val: Value, target_type: &str) -> Value {
             Value::Number(n) => Value::Number(n),
             Value::String(s) => {
                 let t = s.trim();
-                if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(t) {
-                    Value::from(dt.timestamp_millis())
-                } else if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(t, "%Y-%m-%d %H:%M:%S")
-                {
-                    Value::from(dt.and_utc().timestamp_millis())
-                } else if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(t, "%Y-%m-%dT%H:%M:%S")
-                {
-                    Value::from(dt.and_utc().timestamp_millis())
-                } else if let Ok(dt) =
-                    chrono::NaiveDateTime::parse_from_str(t, "%Y-%m-%d %H:%M:%S%.f")
-                {
-                    Value::from(dt.and_utc().timestamp_millis())
-                } else if let Ok(dt) =
-                    chrono::NaiveDateTime::parse_from_str(t, "%Y-%m-%dT%H:%M:%S%.f")
-                {
-                    Value::from(dt.and_utc().timestamp_millis())
-                } else if let Ok(d) = chrono::NaiveDate::parse_from_str(t, "%Y-%m-%d") {
-                    if let Some(dt) = d.and_hms_opt(0, 0, 0) {
-                        Value::from(dt.and_utc().timestamp_millis())
-                    } else {
-                        Value::Null
-                    }
-                } else if let Ok(n) = t.parse::<i64>() {
-                    Value::from(n)
-                } else {
-                    Value::Null
-                }
+                use crate::contracts::clock::timestamp_millis;
+                use jiff::{
+                    civil::{Date, DateTime, Time},
+                    tz::TimeZone,
+                    Timestamp,
+                };
+                let parsed = t
+                    .parse::<Timestamp>()
+                    .or_else(|_| {
+                        DateTime::strptime("%Y-%m-%d %H:%M:%S%.f", t)
+                            .and_then(|dt| TimeZone::UTC.to_timestamp(dt))
+                    })
+                    .or_else(|_| {
+                        DateTime::strptime("%Y-%m-%dT%H:%M:%S%.f", t)
+                            .and_then(|dt| TimeZone::UTC.to_timestamp(dt))
+                    })
+                    .or_else(|_| {
+                        Date::strptime("%Y-%m-%d", t).and_then(|date| {
+                            TimeZone::UTC.to_timestamp(date.to_datetime(Time::MIN))
+                        })
+                    });
+                parsed
+                    .map(timestamp_millis)
+                    .ok()
+                    .or_else(|| t.parse::<i64>().ok())
+                    .map(Value::from)
+                    .unwrap_or(Value::Null)
             }
             Value::Null => Value::Null,
             _ => Value::Null,
@@ -1729,7 +1729,7 @@ impl DlqEnvelope {
     pub fn new(rule_id: impl Into<String>, stage: DlqStage, error: impl Into<String>) -> Self {
         Self {
             rule_id: rule_id.into(),
-            timestamp: chrono::Utc::now().timestamp_millis(),
+            timestamp: crate::contracts::clock::wall_time_millis(),
             stage,
             error: error.into(),
             raw_payload: None,

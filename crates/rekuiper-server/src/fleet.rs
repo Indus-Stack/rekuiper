@@ -225,7 +225,7 @@ impl FleetManager {
     pub fn record_audit(&self, action: &str, actor: &str, target_id: &str, details: Value) {
         let entry = FleetAuditEntry {
             id: format!("aud_{}", uuid::Uuid::new_v4().simple()),
-            timestamp: chrono::Utc::now().timestamp(),
+            timestamp: jiff::Timestamp::now().as_second(),
             action: action.to_string(),
             actor: actor.to_string(),
             target_id: target_id.to_string(),
@@ -251,7 +251,7 @@ impl FleetManager {
     }
 
     pub fn register_or_update_heartbeat(&self, hb: AgentHeartbeat) {
-        let now = chrono::Utc::now().timestamp();
+        let now = jiff::Timestamp::now().as_second();
         let device_id = hb.agent_id.clone();
 
         let mut devices = self.devices.write();
@@ -342,7 +342,7 @@ impl FleetManager {
             .map(|b| format!("{:02x}", b))
             .collect::<String>();
         let snapshot_id = format!("snap_{}", uuid::Uuid::new_v4().simple());
-        let now = chrono::Utc::now().timestamp();
+        let now = jiff::Timestamp::now().as_second();
 
         let snap = FleetSnapshot {
             snapshot_id: snapshot_id.clone(),
@@ -422,7 +422,7 @@ impl FleetManager {
             .collect();
 
         let rollout_id = format!("ro_{}", uuid::Uuid::new_v4().simple());
-        let now = chrono::Utc::now().timestamp();
+        let now = jiff::Timestamp::now().as_second();
         let rollout = FleetRollout {
             rollout_id: rollout_id.clone(),
             snapshot_id: snapshot_id.to_string(),
@@ -513,7 +513,7 @@ impl FleetManager {
                 if let Some(r) = r_guard.get_mut(&rollout_id) {
                     r.status = RolloutStatus::RolledBack;
                     r.message = halt_msg.clone();
-                    r.updated_at = chrono::Utc::now().timestamp();
+                    r.updated_at = jiff::Timestamp::now().as_second();
                     self.persist_rollout(r);
                 }
             }
@@ -545,7 +545,7 @@ impl FleetManager {
                         "Canary healthy. Promoting to 100% Production ({} devices)",
                         prod_devs.len()
                     );
-                    r.updated_at = chrono::Utc::now().timestamp();
+                    r.updated_at = jiff::Timestamp::now().as_second();
                 }
             }
             self.record_audit(
@@ -574,7 +574,7 @@ impl FleetManager {
                     r.status = RolloutStatus::Completed;
                     r.message =
                         "Staged rollout promoted to 100% production successfully.".to_string();
-                    r.updated_at = chrono::Utc::now().timestamp();
+                    r.updated_at = jiff::Timestamp::now().as_second();
                     self.persist_rollout(r);
                 }
             }
@@ -600,7 +600,7 @@ impl FleetManager {
                 .ok_or_else(|| anyhow::anyhow!("Rollout '{}' not found", rollout_id))?;
             r.current_stage = RolloutStage::Production;
             r.message = "Promoted manually to 100% Production".to_string();
-            r.updated_at = chrono::Utc::now().timestamp();
+            r.updated_at = jiff::Timestamp::now().as_second();
             (r.snapshot_id.clone(), r.production_devices.clone())
         };
 
@@ -625,7 +625,7 @@ impl FleetManager {
                 r.current_stage = RolloutStage::Completed;
                 r.status = RolloutStatus::Completed;
                 r.message = "Rollout completed successfully across entire fleet.".to_string();
-                r.updated_at = chrono::Utc::now().timestamp();
+                r.updated_at = jiff::Timestamp::now().as_second();
                 self.persist_rollout(r);
             }
         }
@@ -647,7 +647,7 @@ impl FleetManager {
                 .ok_or_else(|| anyhow::anyhow!("Rollout not found"))?;
             r.status = RolloutStatus::RolledBack;
             r.message = "Rollout halted & rolled back manually by administrator.".to_string();
-            r.updated_at = chrono::Utc::now().timestamp();
+            r.updated_at = jiff::Timestamp::now().as_second();
             self.persist_rollout(r);
             (r.canary_devices.clone(), r.production_devices.clone())
         };
@@ -1041,7 +1041,7 @@ pub async fn handle_fleet_ws_client(socket: AxumWebSocket, state: AppState) {
         ConnectedDeviceHandle {
             conn_id,
             cmd_tx: cmd_tx.clone(),
-            connected_at: chrono::Utc::now().timestamp(),
+            connected_at: jiff::Timestamp::now().as_second(),
         },
     );
     state.fleet.record_audit(

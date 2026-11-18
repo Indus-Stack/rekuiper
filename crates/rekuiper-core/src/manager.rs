@@ -1075,7 +1075,7 @@ impl RuleManager {
                 rule.counters.record_exception(error_msg);
                 let mut st = rule.status.write();
                 st.status = "stopped".to_string();
-                st.last_stop_timestamp = chrono::Utc::now().timestamp_millis();
+                st.last_stop_timestamp = crate::contracts::clock::wall_time_millis();
                 st.message = format!("halted on error: {}", error_msg);
                 st.last_exception = error_msg.to_string();
             }
@@ -1156,7 +1156,7 @@ impl RuleManager {
                 let active = rule_arc.read();
                 let mut st = active.status.write();
                 st.status = "running".to_string();
-                st.last_start_timestamp = chrono::Utc::now().timestamp_millis();
+                st.last_start_timestamp = crate::contracts::clock::wall_time_millis();
                 st.message.clear();
             }
         }
@@ -1187,7 +1187,7 @@ impl RuleManager {
                 let handles = (rule.handle.take(), rule.sink_handle.take());
                 let mut st = rule.status.write();
                 st.status = "stopped".to_string();
-                st.last_stop_timestamp = chrono::Utc::now().timestamp_millis();
+                st.last_stop_timestamp = crate::contracts::clock::wall_time_millis();
                 st.message = "canceled manually".to_string();
                 handles
             } else {
@@ -1242,7 +1242,7 @@ impl RuleManager {
             let rule = rule_arc.read();
             let mut st = rule.status.write();
             st.status = "running".to_string();
-            st.last_start_timestamp = chrono::Utc::now().timestamp_millis();
+            st.last_start_timestamp = crate::contracts::clock::wall_time_millis();
             st.message.clear();
         }
         Ok(())

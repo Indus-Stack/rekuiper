@@ -12,7 +12,7 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
-chrono = { workspace = true }
+jiff = { workspace = true }
 futures = { workspace = true }
 reqwest = { workspace = true }
 tokio = { workspace = true }

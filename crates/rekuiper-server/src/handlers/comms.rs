@@ -132,7 +132,7 @@ async fn handle_comms_socket(socket: WebSocket, state: AppState) {
             }
             _ = ticker.tick() => {
                 let hb = CommsEvent::Heartbeat {
-                    timestamp: chrono::Utc::now().timestamp_millis(),
+                    timestamp: rekuiper_core::contracts::clock::wall_time_millis(),
                     active_taps: state.comms_hub.active_tap_count(),
                 };
                 if let Ok(msg_text) = serde_json::to_string(&hb) {
