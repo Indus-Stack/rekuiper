@@ -312,7 +312,7 @@ impl TestEnvDir {
             "rekuiper_qual_{}_{}_{}",
             prefix,
             std::process::id(),
-            chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
+            i64::try_from(jiff::Timestamp::now().as_nanosecond()).unwrap_or(0)
         ));
         let _ = std::fs::remove_dir_all(&path);
         std::fs::create_dir_all(&path).unwrap();
@@ -730,7 +730,9 @@ pub async fn run_qualification(
         host_memory_mb: sys.total_memory() as f64 / (1024.0 * 1024.0),
         requested_duration_seconds: requested_duration.as_secs_f64(),
         requested_rate: target_rate,
-        timestamp_utc: chrono::Utc::now().to_rfc3339(),
+        timestamp_utc: jiff::Timestamp::now()
+            .strftime("%Y-%m-%dT%H:%M:%S%.f%:z")
+            .to_string(),
         status: "RUNNING".to_string(),
         ..Default::default()
     };
@@ -1003,7 +1005,7 @@ pub async fn run_qualification(
         let payload = json!({
             "seq": current_seq,
             "payload": format!("sensor_reading_{}", current_seq),
-            "ts": chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
+            "ts": i64::try_from(jiff::Timestamp::now().as_nanosecond()).unwrap_or(0)
         });
 
         match client.post(&stream_url).json(&payload).send().await {

@@ -35,10 +35,8 @@ impl WasmModule {
             .context("Failed to initialize WASM fuel budget")?;
         let linker = Linker::new(engine);
         let instance = linker
-            .instantiate(&mut store, module)
-            .context("Failed to instantiate WASM module")?
-            .start(&mut store)
-            .context("Failed to start WASM instance")?;
+            .instantiate_and_start(&mut store, module)
+            .context("Failed to instantiate and start WASM module")?;
         Ok(WasmRuntimeInstance {
             store,
             instance,
@@ -123,25 +121,25 @@ impl WasmModule {
             params_buf.clear();
             for (idx, (arg, p_type)) in args.iter().zip(param_types).enumerate() {
                 match p_type {
-                    wasmi::core::ValType::I32 => {
+                    wasmi::ValType::I32 => {
                         let i = arg
                             .as_i64()
                             .or_else(|| arg.as_f64().map(|f| f as i64))
                             .unwrap_or(0) as i32;
                         params_buf.push(Val::I32(i));
                     }
-                    wasmi::core::ValType::I64 => {
+                    wasmi::ValType::I64 => {
                         let i = arg
                             .as_i64()
                             .or_else(|| arg.as_f64().map(|f| f as i64))
                             .unwrap_or(0);
                         params_buf.push(Val::I64(i));
                     }
-                    wasmi::core::ValType::F32 => {
+                    wasmi::ValType::F32 => {
                         let f = arg.as_f64().unwrap_or(0.0) as f32;
                         params_buf.push(Val::F32(f.into()));
                     }
-                    wasmi::core::ValType::F64 => {
+                    wasmi::ValType::F64 => {
                         let f = arg.as_f64().unwrap_or(0.0);
                         params_buf.push(Val::F64(f.into()));
                     }

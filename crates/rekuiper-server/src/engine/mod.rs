@@ -629,7 +629,7 @@ pub(crate) fn spawn_rule_task(
                     let mut batch_sink_out = 0u64;
                     loop {
                         let trace_start = if tracing_active {
-                            Some(chrono::Utc::now())
+                            Some(jiff::Timestamp::now())
                         } else {
                             None
                         };
@@ -1912,7 +1912,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!(
             "rekuiper_p11_t01_mod_{}_{}",
             std::process::id(),
-            chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
+            i64::try_from(jiff::Timestamp::now().as_nanosecond()).unwrap_or(0)
         ));
         std::fs::create_dir_all(&dir).unwrap();
         let confs = test_source_configs(&[]);
@@ -2005,7 +2005,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!(
             "rekuiper_p11_t01_disabled_legacy_{}_{}",
             std::process::id(),
-            chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
+            i64::try_from(jiff::Timestamp::now().as_nanosecond()).unwrap_or(0)
         ));
         std::fs::create_dir_all(&dir).unwrap();
         let confs = test_source_configs(&[]);

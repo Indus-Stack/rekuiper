@@ -9,12 +9,13 @@ use crate::contracts::{
     StateSnapshot,
 };
 use async_trait::async_trait;
-use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
 use sqlx::{Row, SqlitePool};
 use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 
 pub const RELIABLE_SQLITE_SCHEMA_VERSION: u32 = 1;
 pub const DEFAULT_CHECKPOINT_RETENTION: usize = 5;
@@ -28,13 +29,6 @@ pub enum SqliteDurabilityMode {
 }
 
 impl SqliteDurabilityMode {
-    fn pragma_name(self) -> &'static str {
-        match self {
-            Self::Full => "FULL",
-            Self::Extra => "EXTRA",
-        }
-    }
-
     fn pragma_code(self) -> i64 {
         match self {
             Self::Full => 2,
@@ -90,23 +84,24 @@ impl ReliableSqliteStore {
 
         let options = SqliteConnectOptions::from_str(&db_url)
             .map_err(|e| CheckpointError::StorageFailure(e.to_string()))?
-            .create_if_missing(true);
+            .create_if_missing(true)
+            .journal_mode(if is_memory {
+                SqliteJournalMode::Memory
+            } else {
+                SqliteJournalMode::Wal
+            })
+            .synchronous(match durability {
+                SqliteDurabilityMode::Full => SqliteSynchronous::Full,
+                SqliteDurabilityMode::Extra => SqliteSynchronous::Extra,
+            })
+            .foreign_keys(true)
+            .busy_timeout(Duration::from_secs(5));
 
         // Use max_connections(1) so per-connection PRAGMAs (synchronous, foreign_keys)
         // apply deterministically to the single reliable writer/reader connection.
         let pool = SqlitePoolOptions::new()
             .max_connections(1)
             .connect_with(options)
-            .await
-            .map_err(|e| CheckpointError::StorageFailure(e.to_string()))?;
-
-        let pragmas = format!(
-            "PRAGMA journal_mode = {}; PRAGMA synchronous = {}; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;",
-            if is_memory { "MEMORY" } else { "WAL" },
-            durability.pragma_name()
-        );
-        sqlx::query(&pragmas)
-            .execute(&pool)
             .await
             .map_err(|e| CheckpointError::StorageFailure(e.to_string()))?;
 

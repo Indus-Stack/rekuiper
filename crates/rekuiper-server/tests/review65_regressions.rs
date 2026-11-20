@@ -400,7 +400,7 @@ async fn shutdown_batch_flush_timeout_persists_batch_to_cache() {
     let rule_id = format!(
         "r_batch_timeout_{}_{}",
         std::process::id(),
-        chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
+        i64::try_from(jiff::Timestamp::now().as_nanosecond()).unwrap_or(0)
     );
     let cache_dir = std::path::Path::new("data/cache/sink").join(&rule_id);
     let _ = std::fs::remove_dir_all(&cache_dir);
@@ -527,7 +527,7 @@ async fn inflight_batch_send_aborted_by_stop_persists_to_cache() {
     let rule_id = format!(
         "r_batch_abort_{}_{}",
         std::process::id(),
-        chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
+        i64::try_from(jiff::Timestamp::now().as_nanosecond()).unwrap_or(0)
     );
     let cache_dir = std::path::Path::new("data/cache/sink").join(&rule_id);
     let _ = std::fs::remove_dir_all(&cache_dir);
@@ -656,7 +656,7 @@ async fn inflight_single_record_aborted_by_stop_persists_to_cache() {
     let rule_id = format!(
         "r_single_abort_{}_{}",
         std::process::id(),
-        chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
+        i64::try_from(jiff::Timestamp::now().as_nanosecond()).unwrap_or(0)
     );
     let cache_dir = std::path::Path::new("data/cache/sink").join(&rule_id);
     let _ = std::fs::remove_dir_all(&cache_dir);

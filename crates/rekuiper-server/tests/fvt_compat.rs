@@ -29,7 +29,7 @@ async fn spawn_test_server_with_state() -> (String, tokio::task::JoinHandle<()>,
     );
 
     // Seed OpenAPI smoke-test fixtures in test harness state (not production).
-    let now = chrono::Utc::now();
+    let now = jiff::Timestamp::now();
     state.trace_manager.record_trace(
         "rule_openapi",
         rekuiper_server::state::TraceSpan {
@@ -39,8 +39,11 @@ async fn spawn_test_server_with_state() -> (String, tokio::task::JoinHandle<()>,
             parent_span_id: "0000000000000000".to_string(),
             attribute: None,
             links: None,
-            start_time: now.to_rfc3339(),
-            end_time: (now + chrono::Duration::microseconds(150)).to_rfc3339(),
+            start_time: now.strftime("%Y-%m-%dT%H:%M:%S%.f%:z").to_string(),
+            end_time: now
+                .checked_add(jiff::SignedDuration::from_micros(150))
+                .unwrap()
+                .to_string(),
             rule_id: Some("rule_openapi".to_string()),
             child_span: vec![],
         },

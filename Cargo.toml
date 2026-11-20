@@ -14,7 +14,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "1.0.0-rc5"
+version = "1.0.0-rc6"
 edition = "2021"
 authors = ["I-Dacs Labs <measure@i-dacs.com>", "rekuiper contributors"]
 license = "MIT OR Apache-2.0"
@@ -46,7 +46,7 @@ async-trait = "0.1"
 reqwest = { version = "0.12", features = ["json"] }
 tower = "0.4"
 tower-http = { version = "0.5", features = ["cors", "trace"] }
-chrono = { version = "0.4", features = ["serde"] }
+jiff = { version = "0.2.37", features = ["tzdb-bundle-always"] }
 sysinfo = "0.30"
 regex = "1.10"
 parking_lot = "0.12"
@@ -57,24 +57,25 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "logg
 tokio-tungstenite = "0.23"
 redis = { version = "0.27", default-features = false, features = ["tokio-comp", "aio"] }
 rskafka = "0.6"
-sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "tls-rustls-ring", "sqlite", "postgres"] }
+sqlx = { version = "0.9.1", default-features = false, features = ["runtime-tokio", "tls-rustls-ring", "sqlite", "postgres"] }
+libsqlite3-sys = { version = "0.39.1", default-features = false }
 base64 = "0.22"
 ring = "0.17"
 crc32fast = "1.5"
 sha1 = "0.10"
 uuid = { version = "1", features = ["v4"] }
 rand = "0.8"
-boa_engine = "0.20"
+boa_engine = "0.22"
 yamux = "0.13"
 
 # Internal crate dependencies
-rekuiper-core = { path = "crates/rekuiper-core", version = "1.0.0-rc5" }
-rekuiper-sql = { path = "crates/rekuiper-sql", version = "1.0.0-rc5" }
-rekuiper-conf = { path = "crates/rekuiper-conf", version = "1.0.0-rc5" }
-rekuiper-connectors = { path = "crates/rekuiper-connectors", version = "1.0.0-rc5" }
-rekuiper-server = { path = "crates/rekuiper-server", version = "1.0.0-rc5" }
-kuiperd = { path = "crates/kuiperd", version = "1.0.0-rc5" }
-rule-engine = { path = "crates/rule-engine", version = "1.0.0-rc5" }
+rekuiper-core = { path = "crates/rekuiper-core", version = "1.0.0-rc6" }
+rekuiper-sql = { path = "crates/rekuiper-sql", version = "1.0.0-rc6" }
+rekuiper-conf = { path = "crates/rekuiper-conf", version = "1.0.0-rc6" }
+rekuiper-connectors = { path = "crates/rekuiper-connectors", version = "1.0.0-rc6" }
+rekuiper-server = { path = "crates/rekuiper-server", version = "1.0.0-rc6" }
+kuiperd = { path = "crates/kuiperd", version = "1.0.0-rc6" }
+rule-engine = { path = "crates/rule-engine", version = "1.0.0-rc6" }
 
 [profile.release]
 opt-level = 3

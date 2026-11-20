@@ -1219,9 +1219,7 @@ impl EdgeXCodec {
         profile_name: &str,
         source_name: &str,
     ) -> Result<Vec<u8>> {
-        let now_nanos = chrono::Utc::now()
-            .timestamp_nanos_opt()
-            .unwrap_or_else(|| chrono::Utc::now().timestamp_millis() * 1_000_000);
+        let now_nanos = i64::try_from(jiff::Timestamp::now().as_nanosecond()).unwrap_or(0);
         let event_id = uuid::Uuid::new_v4().to_string();
 
         let mut readings = Vec::with_capacity(record_data.len());

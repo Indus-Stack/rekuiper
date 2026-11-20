@@ -153,7 +153,7 @@ fn halt_graph_rule(
     counters.record_exception(&err_msg);
     let mut st = running.write();
     st.status = "stopped".to_string();
-    st.last_stop_timestamp = chrono::Utc::now().timestamp_millis();
+    st.last_stop_timestamp = rekuiper_core::contracts::clock::wall_time_millis();
     st.message = format!("halted on error: {err_msg}");
     st.last_exception = err_msg;
 }

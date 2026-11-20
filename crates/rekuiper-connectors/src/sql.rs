@@ -349,9 +349,9 @@ fn json_to_bind(v: Option<&serde_json::Value>) -> Option<SqlBindVal> {
 }
 
 fn bind_sqlite_arg<'q>(
-    query: sqlx::query::Query<'q, sqlx::Sqlite, sqlx::sqlite::SqliteArguments<'q>>,
+    query: sqlx::query::Query<'q, sqlx::Sqlite, sqlx::sqlite::SqliteArguments>,
     val: &'q SqlBindVal,
-) -> sqlx::query::Query<'q, sqlx::Sqlite, sqlx::sqlite::SqliteArguments<'q>> {
+) -> sqlx::query::Query<'q, sqlx::Sqlite, sqlx::sqlite::SqliteArguments> {
     match val {
         SqlBindVal::Int(i) => query.bind(*i),
         SqlBindVal::Float(f) => query.bind(*f),
@@ -479,9 +479,12 @@ impl SqlSink {
         if self.config.url.starts_with("sqlite") {
             let pool = sqlite_pool(&self.config.url).await?;
             if cells.is_empty() {
-                let res = sqlx::query(&format!("INSERT INTO {} DEFAULT VALUES", self.config.table))
-                    .execute(&pool)
-                    .await;
+                let res = sqlx::query(sqlx::AssertSqlSafe(format!(
+                    "INSERT INTO {} DEFAULT VALUES",
+                    self.config.table
+                )))
+                .execute(&pool)
+                .await;
                 if let Err(e) = res {
                     evict_sql_pool(&self.config.url);
                     return Err(e.into());
@@ -491,7 +494,7 @@ impl SqlSink {
             let cols: Vec<String> = cells.iter().map(|(f, _)| (*f).clone()).collect();
             let nulls: Vec<bool> = cells.iter().map(|(_, v)| v.is_none()).collect();
             let sql = sqlite_insert_row_sql(&self.config.table, &cols, &nulls);
-            let mut query = sqlx::query(&sql);
+            let mut query = sqlx::query(sqlx::AssertSqlSafe(sql));
             for v in cells.iter().filter_map(|(_, v)| v.as_ref()) {
                 query = bind_sqlite_arg(query, v);
             }
@@ -502,9 +505,12 @@ impl SqlSink {
         } else if self.config.url.starts_with("postgres") {
             let pool = pg_pool(&self.config.url).await?;
             if cells.is_empty() {
-                let res = sqlx::query(&format!("INSERT INTO {} DEFAULT VALUES", self.config.table))
-                    .execute(&pool)
-                    .await;
+                let res = sqlx::query(sqlx::AssertSqlSafe(format!(
+                    "INSERT INTO {} DEFAULT VALUES",
+                    self.config.table
+                )))
+                .execute(&pool)
+                .await;
                 if let Err(e) = res {
                     evict_sql_pool(&self.config.url);
                     return Err(e.into());
@@ -514,7 +520,7 @@ impl SqlSink {
             let cols: Vec<String> = cells.iter().map(|(f, _)| (*f).clone()).collect();
             let nulls: Vec<bool> = cells.iter().map(|(_, v)| v.is_none()).collect();
             let sql = pg_insert_row_sql(&self.config.table, &cols, &nulls);
-            let mut query = sqlx::query(&sql);
+            let mut query = sqlx::query(sqlx::AssertSqlSafe(sql));
             for v in cells.iter().filter_map(|(_, v)| v.as_ref()) {
                 query = bind_pg_arg(query, v);
             }
@@ -612,7 +618,7 @@ impl SqlSink {
                     }
                     sql.push(')');
                 }
-                let mut query = sqlx::query(&sql);
+                let mut query = sqlx::query(sqlx::AssertSqlSafe(sql));
                 for v in &all_vals {
                     query = bind_sqlite_arg(query, v);
                 }
@@ -654,7 +660,7 @@ impl SqlSink {
                     }
                     sql.push(')');
                 }
-                let mut query = sqlx::query(&sql);
+                let mut query = sqlx::query(sqlx::AssertSqlSafe(sql));
                 for v in &all_vals {
                     query = bind_pg_arg(query, v);
                 }
@@ -844,7 +850,11 @@ pub async fn sql_lookup_key(
     if url.starts_with("sqlite") {
         let pool = sqlite_pool(url).await?;
         let sql = format!("SELECT * FROM {} WHERE {} = ? LIMIT 1", table, key_col);
-        let row = match sqlx::query(&sql).bind(key_val).fetch_optional(&pool).await {
+        let row = match sqlx::query(sqlx::AssertSqlSafe(sql))
+            .bind(key_val)
+            .fetch_optional(&pool)
+            .await
+        {
             Ok(r) => r,
             Err(e) => {
                 evict_sql_pool(url);
@@ -863,7 +873,11 @@ pub async fn sql_lookup_key(
     } else if url.starts_with("postgres") {
         let pool = pg_pool(url).await?;
         let sql = pg_lookup_sql(table, key_col);
-        let row = match sqlx::query(&sql).bind(key_val).fetch_optional(&pool).await {
+        let row = match sqlx::query(sqlx::AssertSqlSafe(sql))
+            .bind(key_val)
+            .fetch_optional(&pool)
+            .await
+        {
             Ok(r) => r,
             Err(e) => {
                 evict_sql_pool(url);
@@ -954,7 +968,7 @@ impl SqlSource {
         let sql = sql_source_query_with(&self.config, &self.index);
         if self.config.url.starts_with("sqlite") {
             let pool = sqlite_pool(&self.config.url).await?;
-            let rows = match sqlx::query(&sql).fetch_all(&pool).await {
+            let rows = match sqlx::query(sqlx::AssertSqlSafe(sql)).fetch_all(&pool).await {
                 Ok(r) => r,
                 Err(e) => {
                     evict_sql_pool(&self.config.url);
@@ -978,7 +992,7 @@ impl SqlSource {
         }
         if self.config.url.starts_with("postgres") {
             let pool = pg_pool(&self.config.url).await?;
-            let rows = match sqlx::query(&sql).fetch_all(&pool).await {
+            let rows = match sqlx::query(sqlx::AssertSqlSafe(sql)).fetch_all(&pool).await {
                 Ok(r) => r,
                 Err(e) => {
                     evict_sql_pool(&self.config.url);

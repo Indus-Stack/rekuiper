@@ -24,10 +24,10 @@ impl Evaluator {
             "datetime" | "timestamp" => {
                 if let Some(ms) = Self::to_epoch_millis(&args[0]) {
                     if let Some(dt) = Self::datetime_from_millis(ms) {
-                        let formatted = if dt.timestamp_subsec_millis() == 0 {
-                            dt.format("%Y-%m-%dT%H:%M:%SZ").to_string()
+                        let formatted = if dt.subsec_nanosecond() == 0 {
+                            dt.strftime("%Y-%m-%dT%H:%M:%SZ").to_string()
                         } else {
-                            dt.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string()
+                            dt.strftime("%Y-%m-%dT%H:%M:%S%.3fZ").to_string()
                         };
                         Ok(Value::String(formatted))
                     } else {

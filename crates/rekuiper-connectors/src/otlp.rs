@@ -158,7 +158,7 @@ fn extract_unix_nano(dp: &Value) -> i64 {
             }
         }
     }
-    chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
+    i64::try_from(jiff::Timestamp::now().as_nanosecond()).unwrap_or(0)
 }
 
 /// Parses an OTLP JSON payload containing `resourceMetrics`, `resourceLogs`, or `resourceSpans`,
@@ -748,7 +748,7 @@ impl OtlpSink {
             }
         }
 
-        let now_nano = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
+        let now_nano = i64::try_from(jiff::Timestamp::now().as_nanosecond()).unwrap_or(0);
         let time_nano = record
             .get("timestamp_unix_nano")
             .and_then(|v| {

@@ -399,7 +399,7 @@ where
                             dlq_count: dlq_total,
                             snapshot_id: None,
                             snapshot_hash: active_hash,
-                            timestamp: chrono::Utc::now().timestamp(),
+                            timestamp: jiff::Timestamp::now().as_second(),
                             last_rollback_reason: rollback,
                         };
                         let payload = serde_json::to_vec(&hb).unwrap_or_default();

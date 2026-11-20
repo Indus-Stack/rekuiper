@@ -170,8 +170,8 @@ pub(crate) fn parse_timestamp_val(v: &Value) -> Option<i64> {
         if let Ok(n) = s.parse::<i64>() {
             return Some(n);
         }
-        if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(s) {
-            return Some(dt.timestamp_millis());
+        if let Ok(dt) = s.parse::<jiff::Timestamp>() {
+            return Some(rekuiper_core::contracts::clock::timestamp_millis(dt));
         }
     }
     None
@@ -191,7 +191,7 @@ pub(crate) fn extract_event_timestamp<R: RowLookup + ?Sized>(
             return v;
         }
     }
-    chrono::Utc::now().timestamp_millis()
+    rekuiper_core::contracts::clock::wall_time_millis()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -217,7 +217,7 @@ pub(crate) async fn run_stateless_rule(
     // even for rows the WHERE filter later drops, mirroring eKuiper analytic
     // semantics); the input-row filter then decides emission.
     let rule_state = RuleState::default();
-    let start_time_ms = chrono::Utc::now().timestamp_millis();
+    let start_time_ms = rekuiper_core::contracts::clock::wall_time_millis();
     rule_state
         .state
         .write()

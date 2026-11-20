@@ -16,7 +16,7 @@ fn temp_dir(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!(
         "rekuiper_p03_t21_{name}_{}_{}",
         std::process::id(),
-        chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
+        i64::try_from(jiff::Timestamp::now().as_nanosecond()).unwrap_or(0)
     ));
     std::fs::create_dir_all(&dir).unwrap();
     dir

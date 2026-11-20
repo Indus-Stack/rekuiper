@@ -1,0 +1,47 @@
+name: Scheduled dependency audit
+
+on:
+  schedule:
+    - cron: '17 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        ref: [main, dev, latest-release]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny
+      - name: Scan resolved ref
+        shell: bash
+        env:
+          AUDIT_REF: ${{ matrix.ref }}
+        run: |
+          set -euo pipefail
+          ref="refs/remotes/origin/$AUDIT_REF"
+          if [ "$AUDIT_REF" = latest-release ]; then
+            tag=$(git -c versionsort.suffix=-rc tag --sort=-version:refname | awk '/^v[0-9]+\.[0-9]+\.[0-9]+(-rc[0-9]+)?$/ && !tag { tag=$0 } END { print tag }')
+            test -n "$tag"
+            ref="refs/tags/$tag"
+          fi
+          echo "## Auditing $ref" >> "$GITHUB_STEP_SUMMARY"
+          snapshot=$(mktemp -d)
+          trap 'rm -rf -- "$snapshot"' EXIT
+          export DEPENDENCY_AUDIT_REF="$ref"
+          git archive "$ref" | tar -xf - -C "$snapshot"
+          profile=historical
+          if [ "$AUDIT_REF" != latest-release ] && [ -f "$snapshot/.github/scripts/dependency-audit.py" ]; then
+            profile=workspace
+          fi
+          python3 .github/scripts/dependency-audit.py "$profile" --root "$snapshot"

@@ -1,5 +1,10 @@
 use super::Evaluator;
-use chrono::{Datelike, Timelike};
+use jiff::{
+    civil::{Date, DateTime, Time},
+    tz::TimeZone,
+    SignedDuration, Timestamp, Zoned,
+};
+use rekuiper_core::contracts::clock::{format_utc_rfc3339, timestamp_millis};
 use serde_json::Value;
 
 impl Evaluator {
@@ -10,52 +15,49 @@ impl Evaluator {
     pub(crate) fn to_epoch_millis(v: &Value) -> Option<i64> {
         if let Some(s) = v.as_str() {
             let t = s.trim();
-            if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(t) {
-                return Some(dt.timestamp_millis());
+            if let Ok(timestamp) = t.parse::<Timestamp>() {
+                return Some(timestamp_millis(timestamp));
             }
-            if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(t, "%Y-%m-%d %H:%M:%S%.f") {
-                return Some(dt.and_utc().timestamp_millis());
-            }
-            if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(t, "%Y-%m-%d %H:%M:%S") {
-                return Some(dt.and_utc().timestamp_millis());
-            }
-            if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(t, "%Y-%m-%dT%H:%M:%S%.f") {
-                return Some(dt.and_utc().timestamp_millis());
-            }
-            if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(t, "%Y-%m-%dT%H:%M:%S") {
-                return Some(dt.and_utc().timestamp_millis());
-            }
-            if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(t, "%Y/%m/%d %H:%M:%S%.f") {
-                return Some(dt.and_utc().timestamp_millis());
-            }
-            if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(t, "%Y/%m/%d %H:%M:%S") {
-                return Some(dt.and_utc().timestamp_millis());
-            }
-            if let Ok(d) = chrono::NaiveDate::parse_from_str(t, "%Y-%m-%d") {
-                if let Some(dt) = d.and_hms_opt(0, 0, 0) {
-                    return Some(dt.and_utc().timestamp_millis());
+            for format in [
+                "%Y-%m-%d %H:%M:%S%.f",
+                "%Y-%m-%dT%H:%M:%S%.f",
+                "%Y/%m/%d %H:%M:%S%.f",
+            ] {
+                if let Ok(timestamp) =
+                    DateTime::strptime(format, t).and_then(|dt| TimeZone::UTC.to_timestamp(dt))
+                {
+                    return Some(timestamp_millis(timestamp));
                 }
             }
-            if let Ok(d) = chrono::NaiveDate::parse_from_str(t, "%Y/%m/%d") {
-                if let Some(dt) = d.and_hms_opt(0, 0, 0) {
-                    return Some(dt.and_utc().timestamp_millis());
+            for format in ["%Y-%m-%d", "%Y/%m/%d"] {
+                if let Ok(timestamp) = Date::strptime(format, t)
+                    .and_then(|date| TimeZone::UTC.to_timestamp(date.to_datetime(Time::MIN)))
+                {
+                    return Some(timestamp_millis(timestamp));
                 }
             }
         }
         Self::to_i64_arg(v)
     }
 
-    pub(crate) fn datetime_from_millis(ms: i64) -> Option<chrono::DateTime<chrono::Utc>> {
-        chrono::DateTime::from_timestamp_millis(ms)
+    pub(super) fn datetime_from_millis(ms: i64) -> Option<Zoned> {
+        Timestamp::from_millisecond(ms)
+            .ok()
+            .map(|timestamp| timestamp.to_zoned(TimeZone::UTC))
     }
 
     pub(crate) fn func_now(args: &[Value]) -> Value {
         match args.len() {
-            0 => Value::String(chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string()),
+            0 => Value::String(
+                Timestamp::now()
+                    .to_zoned(TimeZone::UTC)
+                    .strftime("%Y-%m-%d %H:%M:%S")
+                    .to_string(),
+            ),
             1 => {
                 if let Some(fmt_str) = args[0].as_str() {
                     let pattern = Self::java_to_strftime(fmt_str);
-                    Value::String(chrono::Utc::now().format(&pattern).to_string())
+                    Self::format_datetime(&Timestamp::now().to_zoned(TimeZone::UTC), &pattern)
                 } else {
                     Value::Null
                 }
@@ -88,49 +90,63 @@ impl Evaluator {
         let Some(fmt) = args[1].as_str() else {
             return Value::Null;
         };
-        let dt = match &args[0] {
-            Value::Number(_) => {
-                Self::to_epoch_millis(&args[0]).and_then(Self::datetime_from_millis)
-            }
-            Value::String(_) => {
-                if let Some(s) = args[0].as_str().and_then(|s| {
-                    chrono::DateTime::parse_from_rfc3339(s.trim())
-                        .ok()
-                        .map(|dt| dt.with_timezone(&chrono::Utc))
-                }) {
-                    Some(s)
-                } else {
-                    Self::to_epoch_millis(&args[0]).and_then(Self::datetime_from_millis)
-                }
-            }
-            _ => None,
-        };
+        let dt = args[0]
+            .as_str()
+            .and_then(|s| s.trim().parse::<Timestamp>().ok())
+            .map(|timestamp| timestamp.to_zoned(TimeZone::UTC))
+            .or_else(|| Self::to_epoch_millis(&args[0]).and_then(Self::datetime_from_millis));
         let pattern = Self::java_to_strftime(fmt);
-        match dt {
-            Some(dt) => Value::String(dt.format(&pattern).to_string()),
-            None => Value::Null,
+        dt.map(|dt| Self::format_datetime(&dt, &pattern))
+            .unwrap_or(Value::Null)
+    }
+
+    fn format_datetime(dt: &Zoned, pattern: &str) -> Value {
+        // Chrono's bare %f prints nine digits. Jiff needs the width explicitly.
+        let mut format = String::with_capacity(pattern.len());
+        let mut chars = pattern.chars();
+        while let Some(ch) = chars.next() {
+            if ch != '%' {
+                format.push(ch);
+                continue;
+            }
+            match chars.next() {
+                Some('f') => format.push_str("%9f"),
+                Some('+') => format.push_str(&format_utc_rfc3339(dt.timestamp())),
+                Some('c') => format.push_str("%a %b %e %T %Y"),
+                Some('x') => format.push_str("%m/%d/%y"),
+                Some('X') => format.push_str("%T"),
+                Some('r') => format.push_str("%I:%M:%S %p"),
+                Some(ch) => {
+                    format.push('%');
+                    format.push(ch);
+                }
+                None => return Value::Null,
+            }
         }
+        jiff::fmt::strtime::format(format, dt)
+            .map(Value::String)
+            .unwrap_or(Value::Null)
     }
 
     pub(crate) fn func_date_parse(args: &[Value]) -> Value {
-        if args.len() != 2 {
-            return Value::Null;
-        }
-        let (Some(s), Some(fmt)) = (args[0].as_str(), args[1].as_str()) else {
+        let [Value::String(s), Value::String(fmt)] = args else {
             return Value::Null;
         };
-        if let Ok(dt) = chrono::DateTime::parse_from_str(s, fmt) {
-            return Value::from(dt.timestamp_millis());
+        if fmt == "%+" {
+            return s
+                .parse::<Timestamp>()
+                .map(|ts| Value::from(timestamp_millis(ts)))
+                .unwrap_or(Value::Null);
         }
-        if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(s, fmt) {
-            return Value::from(dt.and_utc().timestamp_millis());
-        }
-        if let Ok(d) = chrono::NaiveDate::parse_from_str(s, fmt) {
-            if let Some(dt) = d.and_hms_opt(0, 0, 0) {
-                return Value::from(dt.and_utc().timestamp_millis());
-            }
-        }
-        Value::Null
+        let parsed = Timestamp::strptime(fmt, s)
+            .or_else(|_| DateTime::strptime(fmt, s).and_then(|dt| TimeZone::UTC.to_timestamp(dt)))
+            .or_else(|_| {
+                Date::strptime(fmt, s)
+                    .and_then(|date| TimeZone::UTC.to_timestamp(date.to_datetime(Time::MIN)))
+            });
+        parsed
+            .map(|ts| Value::from(timestamp_millis(ts)))
+            .unwrap_or(Value::Null)
     }
 
     /// Milliseconds per interval unit: dd|day, hh|hour, mi|minute|min,
@@ -287,37 +303,31 @@ impl Evaluator {
         }) else {
             return Value::Null;
         };
-        let is_local = to_tz_name.eq_ignore_ascii_case("local");
-        let to_tz: Option<chrono_tz::Tz> = if is_local {
-            None
+        let timezone = if to_tz_name.eq_ignore_ascii_case("local") {
+            TimeZone::system()
         } else if to_tz_name.eq_ignore_ascii_case("utc") {
-            Some(chrono_tz::UTC)
+            TimeZone::UTC
+        } else if let Ok(timezone) = TimeZone::get(to_tz_name) {
+            timezone
         } else {
-            to_tz_name.parse().ok()
-        };
-        if !is_local && to_tz.is_none() {
-            return Value::Null;
-        }
-
-        let Some(millis) = Self::to_epoch_millis(&args[0]) else {
             return Value::Null;
         };
-        let Some(dt) = Self::datetime_from_millis(millis) else {
+        let Some(timestamp) =
+            Self::to_epoch_millis(&args[0]).and_then(|ms| Timestamp::from_millisecond(ms).ok())
+        else {
             return Value::Null;
         };
-
-        if is_local {
-            let converted = dt.with_timezone(&chrono::Local);
-            Value::String(converted.format("%Y-%m-%d %H:%M:%S").to_string())
-        } else {
-            let converted = dt.with_timezone(&to_tz.unwrap());
-            Value::String(converted.format("%Y-%m-%d %H:%M:%S").to_string())
-        }
+        Value::String(
+            timestamp
+                .to_zoned(timezone)
+                .strftime("%Y-%m-%d %H:%M:%S")
+                .to_string(),
+        )
     }
 
     fn datetime_component<F>(args: &[Value], extract: F) -> Value
     where
-        F: Fn(chrono::DateTime<chrono::Utc>) -> i32,
+        F: Fn(Zoned) -> i32,
     {
         if args.len() != 1 {
             return Value::Null;
@@ -329,7 +339,7 @@ impl Evaluator {
     }
 
     pub(crate) fn func_year(args: &[Value]) -> Value {
-        Self::datetime_component(args, |dt| dt.year())
+        Self::datetime_component(args, |dt| i32::from(dt.year()))
     }
 
     pub(crate) fn func_month(args: &[Value]) -> Value {
@@ -356,14 +366,24 @@ impl Evaluator {
         if !args.is_empty() {
             return Value::Null;
         }
-        Value::String(chrono::Utc::now().format("%Y-%m-%d").to_string())
+        Value::String(
+            Timestamp::now()
+                .to_zoned(TimeZone::UTC)
+                .strftime("%Y-%m-%d")
+                .to_string(),
+        )
     }
 
     pub(crate) fn func_current_time(args: &[Value]) -> Value {
         if !args.is_empty() {
             return Value::Null;
         }
-        Value::String(chrono::Utc::now().format("%H:%M:%S").to_string())
+        Value::String(
+            Timestamp::now()
+                .to_zoned(TimeZone::UTC)
+                .strftime("%H:%M:%S")
+                .to_string(),
+        )
     }
 
     pub(crate) fn func_from_unix_time(args: &[Value]) -> Value {
@@ -377,18 +397,18 @@ impl Evaluator {
             return Self::func_format_date(args);
         }
         match Self::to_epoch_millis(&args[0]).and_then(Self::datetime_from_millis) {
-            Some(dt) => Value::String(dt.format("%Y-%m-%d %H:%M:%S").to_string()),
+            Some(dt) => Value::String(dt.strftime("%Y-%m-%d %H:%M:%S").to_string()),
             None => Value::Null,
         }
     }
 
     /// MySQL convention: 1 = Sunday through 7 = Saturday.
     pub(crate) fn func_day_of_week(args: &[Value]) -> Value {
-        Self::datetime_component(args, |dt| dt.weekday().num_days_from_sunday() as i32 + 1)
+        Self::datetime_component(args, |dt| dt.weekday().to_sunday_zero_offset() as i32 + 1)
     }
 
     pub(crate) fn func_day_of_year(args: &[Value]) -> Value {
-        Self::datetime_component(args, |dt| dt.ordinal() as i32)
+        Self::datetime_component(args, |dt| dt.day_of_year() as i32)
     }
 
     pub(crate) fn func_day_name(args: &[Value]) -> Value {
@@ -406,7 +426,7 @@ impl Evaluator {
         ];
         match Self::to_epoch_millis(&args[0]).and_then(Self::datetime_from_millis) {
             Some(dt) => {
-                Value::String(NAMES[dt.weekday().num_days_from_sunday() as usize].to_string())
+                Value::String(NAMES[dt.weekday().to_sunday_zero_offset() as usize].to_string())
             }
             None => Value::Null,
         }
@@ -437,7 +457,7 @@ impl Evaluator {
     }
 
     pub(crate) fn func_microsecond(args: &[Value]) -> Value {
-        Self::datetime_component(args, |dt| (dt.timestamp_subsec_micros() % 1_000_000) as i32)
+        Self::datetime_component(args, |dt| dt.subsec_nanosecond() / 1_000)
     }
 
     /// Last calendar day of the argument's month as `"YYYY-MM-DD"`.
@@ -446,20 +466,10 @@ impl Evaluator {
             return Value::Null;
         }
         let dt = match Self::to_epoch_millis(&args[0]).and_then(Self::datetime_from_millis) {
-            Some(dt) => dt.date_naive(),
+            Some(dt) => dt.date(),
             None => return Value::Null,
         };
-        let (next_year, next_month) = if dt.month() == 12 {
-            (dt.year() + 1, 1)
-        } else {
-            (dt.year(), dt.month() + 1)
-        };
-        match chrono::NaiveDate::from_ymd_opt(next_year, next_month, 1)
-            .and_then(|first| first.pred_opt())
-        {
-            Some(last) => Value::String(last.format("%Y-%m-%d").to_string()),
-            None => Value::Null,
-        }
+        Value::String(dt.last_of_month().strftime("%Y-%m-%d").to_string())
     }
 
     /// MySQL `TO_SECONDS`: seconds from year 0 to `ts`.
@@ -483,17 +493,20 @@ impl Evaluator {
         let Some(n) = Self::to_i64_arg(&args[0]) else {
             return Value::Null;
         };
-        // The chrono constructor takes i32 days; out-of-range inputs fail.
-        let days = n.checked_sub(365).and_then(|d| i32::try_from(d).ok());
-        match days.and_then(chrono::NaiveDate::from_num_days_from_ce_opt) {
-            Some(date) => Value::String(date.format("%Y-%m-%d").to_string()),
-            None => Value::Null,
-        }
+        n.checked_sub(366)
+            .and_then(|days| i32::try_from(days).ok())
+            .and_then(|days| {
+                Date::constant(1, 1, 1)
+                    .checked_add(SignedDuration::from_secs(i64::from(days) * 86_400))
+                    .ok()
+            })
+            .map(|date| Value::String(date.strftime("%Y-%m-%d").to_string()))
+            .unwrap_or(Value::Null)
     }
 }
 
 /// Validate whether a timezone identifier is a supported named timezone
-/// (case-insensitive "local" or "utc", or any valid IANA/chrono-tz timezone).
+/// (case-insensitive "local" or "utc", or any valid IANA timezone).
 pub fn is_valid_timezone(tz_name: &str) -> bool {
     let s = tz_name.trim();
     if s.is_empty() {
@@ -502,5 +515,5 @@ pub fn is_valid_timezone(tz_name: &str) -> bool {
     if s.eq_ignore_ascii_case("local") || s.eq_ignore_ascii_case("utc") {
         return true;
     }
-    s.parse::<chrono_tz::Tz>().is_ok()
+    TimeZone::get(s).is_ok()
 }

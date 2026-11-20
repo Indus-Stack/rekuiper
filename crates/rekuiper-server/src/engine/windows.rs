@@ -188,7 +188,7 @@ impl WindowRows {
 /// window ends at :00, :10, :20 regardless of rule start, as in eKuiper).
 pub(crate) fn aligned_interval(period: std::time::Duration) -> tokio::time::Interval {
     let period_ms = (period.as_millis() as i64).max(1);
-    let now_ms = chrono::Utc::now().timestamp_millis();
+    let now_ms = rekuiper_core::contracts::clock::wall_time_millis();
     let wait_ms = period_ms - now_ms.rem_euclid(period_ms);
     let start = tokio::time::Instant::now() + std::time::Duration::from_millis(wait_ms as u64);
     let mut interval = tokio::time::interval_at(start, period);
@@ -240,7 +240,7 @@ pub(crate) async fn run_count_window_rule(
     let count = size.max(1);
     let hop = interval.unwrap_or(count).max(1);
     let rule_state = RuleState::default();
-    let start_time_ms = chrono::Utc::now().timestamp_millis();
+    let start_time_ms = rekuiper_core::contracts::clock::wall_time_millis();
     rule_state
         .state
         .write()
@@ -287,7 +287,7 @@ pub(crate) async fn run_count_window_rule(
                             buffer.drain(0..hop.min(buffer.len()));
                             batch
                         };
-                        let now_ms = chrono::Utc::now().timestamp_millis();
+                        let now_ms = rekuiper_core::contracts::clock::wall_time_millis();
                         emit_window_batch(&counters, &table_manager, &source_configs, &select_stmt, batch, false, Some((now_ms, now_ms)), &sink, Some(&rule_state)).await;
                     }
                 } else {
@@ -297,7 +297,7 @@ pub(crate) async fn run_count_window_rule(
                     }
                     if events_since_trigger >= hop {
                         if !buffer.is_empty() {
-                            let now_ms = chrono::Utc::now().timestamp_millis();
+                            let now_ms = rekuiper_core::contracts::clock::wall_time_millis();
                             let batch: Vec<TaggedRow> = buffer.drain(..).collect();
                             emit_window_batch(&counters, &table_manager, &source_configs, &select_stmt, batch, false, Some((now_ms, now_ms)), &sink, Some(&rule_state)).await;
                         }
@@ -337,7 +337,7 @@ pub(crate) async fn run_count_window_rule(
                                     buffer.drain(0..hop.min(buffer.len()));
                                     batch
                                 };
-                                let now_ms = chrono::Utc::now().timestamp_millis();
+                                let now_ms = rekuiper_core::contracts::clock::wall_time_millis();
                                 emit_window_batch(&counters, &table_manager, &source_configs, &select_stmt, batch, false, Some((now_ms, now_ms)), &sink, Some(&rule_state)).await;
                             }
                         } else if events_since_trigger >= hop {
@@ -345,7 +345,7 @@ pub(crate) async fn run_count_window_rule(
                                 buffer.pop_front();
                             }
                             if !buffer.is_empty() {
-                                let now_ms = chrono::Utc::now().timestamp_millis();
+                                let now_ms = rekuiper_core::contracts::clock::wall_time_millis();
                                 let batch: Vec<TaggedRow> = buffer.drain(..).collect();
                                 emit_window_batch(&counters, &table_manager, &source_configs, &select_stmt, batch, false, Some((now_ms, now_ms)), &sink, Some(&rule_state)).await;
                             }
@@ -397,7 +397,7 @@ pub(crate) async fn run_tumbling_window_rule(
     dlq_router: crate::engine::dlq::DlqRouter,
 ) {
     let rule_state = RuleState::default();
-    let start_time_ms = chrono::Utc::now().timestamp_millis();
+    let start_time_ms = rekuiper_core::contracts::clock::wall_time_millis();
     rule_state
         .state
         .write()
@@ -571,7 +571,7 @@ pub(crate) async fn run_tumbling_window_rule(
                 if window.is_empty() {
                     continue;
                 }
-                let now_ms = chrono::Utc::now().timestamp_millis();
+                let now_ms = rekuiper_core::contracts::clock::wall_time_millis();
                 let end_ms = now_ms - now_ms.rem_euclid(window_millis.max(1));
                 let start_ms = end_ms - window_millis;
                 window.emit(&counters, &table_manager, &source_configs, &select_stmt, Some((start_ms, end_ms)), &sink, Some(&rule_state)).await;
@@ -601,7 +601,7 @@ pub(crate) async fn run_session_window_rule(
     dlq_router: crate::engine::dlq::DlqRouter,
 ) {
     let rule_state = RuleState::default();
-    let start_time_ms = chrono::Utc::now().timestamp_millis();
+    let start_time_ms = rekuiper_core::contracts::clock::wall_time_millis();
     rule_state
         .state
         .write()
@@ -743,7 +743,7 @@ pub(crate) async fn run_session_window_rule(
                 let now = tokio::time::Instant::now();
                 if opened_at.is_none() {
                     opened_at = Some(now);
-                    opened_at_ms = Some(chrono::Utc::now().timestamp_millis());
+                    opened_at_ms = Some(rekuiper_core::contracts::clock::wall_time_millis());
                 }
                 idle.as_mut().reset(now + timeout);
             }
@@ -798,14 +798,14 @@ pub(crate) async fn run_session_window_rule(
             }
             _ = &mut idle, if opened_at.is_some() && !event_time.enabled => {
                 opened_at = None;
-                let now_ms = chrono::Utc::now().timestamp_millis();
+                let now_ms = rekuiper_core::contracts::clock::wall_time_millis();
                 let start_ms = opened_at_ms.take().unwrap_or(now_ms);
                 window.emit(&counters, &table_manager, &source_configs, &select_stmt, Some((start_ms, now_ms)), &sink, Some(&rule_state)).await;
             }
             _ = max_check.tick() => {
                 if !event_time.enabled && opened_at.is_some_and(|start| start.elapsed() >= max_duration) {
                     opened_at = None;
-                    let now_ms = chrono::Utc::now().timestamp_millis();
+                    let now_ms = rekuiper_core::contracts::clock::wall_time_millis();
                     let start_ms = opened_at_ms.take().unwrap_or(now_ms);
                     window.emit(&counters, &table_manager, &source_configs, &select_stmt, Some((start_ms, now_ms)), &sink, Some(&rule_state)).await;
                 }
@@ -850,7 +850,7 @@ pub(crate) async fn run_hopping_window_rule(
     dlq_router: crate::engine::dlq::DlqRouter,
 ) {
     let rule_state = RuleState::default();
-    let start_time_ms = chrono::Utc::now().timestamp_millis();
+    let start_time_ms = rekuiper_core::contracts::clock::wall_time_millis();
     rule_state
         .state
         .write()
@@ -1024,7 +1024,7 @@ pub(crate) async fn run_hopping_window_rule(
                 if buffer.is_empty() {
                     continue;
                 }
-                let now_ms = chrono::Utc::now().timestamp_millis();
+                let now_ms = rekuiper_core::contracts::clock::wall_time_millis();
                 let end_ms = now_ms - now_ms.rem_euclid(hop_ms);
                 let start_ms = end_ms.saturating_sub(length_ms);
                 let batch: Vec<TaggedRow> =
@@ -1053,7 +1053,7 @@ pub(crate) async fn run_sliding_window_rule(
     dlq_router: crate::engine::dlq::DlqRouter,
 ) {
     let rule_state = RuleState::default();
-    let start_time_ms = chrono::Utc::now().timestamp_millis();
+    let start_time_ms = rekuiper_core::contracts::clock::wall_time_millis();
     rule_state
         .state
         .write()
@@ -1200,7 +1200,7 @@ pub(crate) async fn run_sliding_window_rule(
                     et_buffer.retain(|(ts, _)| *ts >= retain_ts);
                 }
             } else if let Some(ref mut inc) = sliding_inc {
-                let now_ms = chrono::Utc::now().timestamp_millis();
+                let now_ms = rekuiper_core::contracts::clock::wall_time_millis();
                 let cutoff_ms = now_ms.saturating_sub(window_millis);
                 inc.evict_before(cutoff_ms);
                 let _ = inc.push(now_ms, &tagged.data);
@@ -1223,7 +1223,7 @@ pub(crate) async fn run_sliding_window_rule(
                 };
 
                 if should_trigger && !buffer.is_empty() {
-                    let now_ms = chrono::Utc::now().timestamp_millis();
+                    let now_ms = rekuiper_core::contracts::clock::wall_time_millis();
                     if let Some(delay_dur) = delay.filter(|d| !d.is_zero()) {
                         pending_pt_triggers.push_back((now, now + delay_dur, now_ms));
                     } else {
@@ -1319,7 +1319,7 @@ pub(crate) async fn run_sliding_window_rule(
                         .map(|(_, row)| row.clone())
                         .collect();
                     if !batch.is_empty() {
-                        let end_ms = chrono::Utc::now().timestamp_millis();
+                        let end_ms = rekuiper_core::contracts::clock::wall_time_millis();
                         let start_ms = trigger_ms.saturating_sub(window_millis);
                         emit_window_batch(
                             &counters,
@@ -1372,7 +1372,7 @@ pub(crate) async fn run_state_window_rule(
     }
 
     let rule_state = RuleState::default();
-    let start_time_ms = chrono::Utc::now().timestamp_millis();
+    let start_time_ms = rekuiper_core::contracts::clock::wall_time_millis();
     rule_state
         .state
         .write()
@@ -1400,7 +1400,7 @@ pub(crate) async fn run_state_window_rule(
                         .or(event_time.timestamp_field.as_deref());
                     extract_event_timestamp(&tagged.data, ts_field)
                 } else {
-                    chrono::Utc::now().timestamp_millis()
+                    rekuiper_core::contracts::clock::wall_time_millis()
                 };
 
                 let partition_key = match &select_stmt.window_partition_by {

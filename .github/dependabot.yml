@@ -1,0 +1,28 @@
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      date-time:
+        patterns: ["jiff*"]
+        update-types: ["minor", "patch"]
+      storage:
+        patterns: ["sqlx*", "libsqlite3-sys", "arrow*", "parquet"]
+        update-types: ["minor", "patch"]
+      connectors:
+        patterns: ["rumqttc", "rustls*", "tokio-rustls", "lapin", "rskafka", "zstd*"]
+        update-types: ["minor", "patch"]
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: docker
+    directories: ["/deploy/docker", "/crates/rekuiper-mcp"]
+    schedule:
+      interval: weekly
+  - package-ecosystem: npm
+    directory: /docs
+    schedule:
+      interval: weekly
